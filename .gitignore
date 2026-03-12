@@ -1,1 +1,22 @@
-node_modules
+node_modules/
+
+# Next.js
+.next/
+out/
+dist/
+
+# Env (never commit)
+.env
+.env.*
+
+# Prisma (local sqlite)
+prisma/*.db
+prisma/*.db-journal
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store

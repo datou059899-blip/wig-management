@@ -4,20 +4,24 @@ import bcrypt from 'bcryptjs'
 const prisma = new PrismaClient()
 
 async function main() {
-  // 创建管理员账号
-  const hashedPassword = await bcrypt.hash('password', 10)
+  const adminEmail = (process.env.ADMIN_EMAIL || 'admin@test.com').trim()
+  const adminPassword = (process.env.ADMIN_PASSWORD || 'password').trim()
+  const adminName = (process.env.ADMIN_NAME || '管理员').trim()
+
+  // 创建管理员账号（建议在生产环境通过环境变量设置 ADMIN_EMAIL/ADMIN_PASSWORD）
+  const hashedPassword = await bcrypt.hash(adminPassword, 10)
   
   await prisma.user.upsert({
-    where: { email: 'admin@test.com' },
+    where: { email: adminEmail },
     create: {
-      email: 'admin@test.com',
+      email: adminEmail,
       password: hashedPassword,
-      name: '管理员',
+      name: adminName,
       role: 'admin',
     },
     update: {
       password: hashedPassword,
-      name: '管理员',
+      name: adminName,
       role: 'admin',
     },
   })
@@ -42,7 +46,7 @@ async function main() {
   })
 
   console.log('Seed completed!')
-  console.log('Admin account: admin@test.com / password')
+  console.log(`Admin account: ${adminEmail}`)
 }
 
 main()
