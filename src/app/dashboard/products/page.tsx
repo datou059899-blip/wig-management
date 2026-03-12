@@ -287,7 +287,11 @@ export default function ProductsPage() {
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">SKU</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">分类</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">成本(CNY)</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">售价(USD)</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">头程物流(USD)</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">尾程物流(USD)</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">折扣价(USD)</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">达人佣金(USD)</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">广告费用(USD)</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">TikTok 价格</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">毛利率</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">库存</th>
@@ -321,6 +325,7 @@ export default function ProductsPage() {
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-500">{product.sku || '-'}</td>
                     <td className="px-4 py-3 text-sm text-gray-700">{category}</td>
+                    {/* 成本价，可编辑 */}
                     <td className="px-4 py-3 text-sm">
                       {canEdit ? (
                         <input
@@ -340,7 +345,135 @@ export default function ProductsPage() {
                         <>¥{product.costCny.toFixed(2)}</>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-sm">${product.priceUsd.toFixed(2)}</td>
+                    {/* 头程物流成本，可编辑 */}
+                    <td className="px-4 py-3 text-sm">
+                      {canEdit ? (
+                        <input
+                          type="number"
+                          className="w-24 px-2 py-1 border rounded text-sm"
+                          value={product.firstLegLogisticsCostUsd ?? 0}
+                          onChange={(e) =>
+                            handleFieldChange(
+                              product.id,
+                              'firstLegLogisticsCostUsd',
+                              parseFloat(e.target.value) || 0,
+                            )
+                          }
+                          onBlur={(e) =>
+                            handleFieldBlur(product.id, {
+                              firstLegLogisticsCostUsd: parseFloat(e.target.value) || 0,
+                            })
+                          }
+                        />
+                      ) : (
+                        <>${product.firstLegLogisticsCostUsd.toFixed(2)}</>
+                      )}
+                    </td>
+
+                    {/* 尾程物流成本，可编辑 */}
+                    <td className="px-4 py-3 text-sm">
+                      {canEdit ? (
+                        <input
+                          type="number"
+                          className="w-24 px-2 py-1 border rounded text-sm"
+                          value={product.lastLegLogisticsCostUsd ?? 0}
+                          onChange={(e) =>
+                            handleFieldChange(
+                              product.id,
+                              'lastLegLogisticsCostUsd',
+                              parseFloat(e.target.value) || 0,
+                            )
+                          }
+                          onBlur={(e) =>
+                            handleFieldBlur(product.id, {
+                              lastLegLogisticsCostUsd: parseFloat(e.target.value) || 0,
+                            })
+                          }
+                        />
+                      ) : (
+                        <>${product.lastLegLogisticsCostUsd.toFixed(2)}</>
+                      )}
+                    </td>
+
+                    {/* 折扣价，可编辑（为空则用标价参与毛利计算） */}
+                    <td className="px-4 py-3 text-sm">
+                      {canEdit ? (
+                        <input
+                          type="number"
+                          className="w-24 px-2 py-1 border rounded text-sm"
+                          value={product.discountPriceUsd ?? ''}
+                          onChange={(e) =>
+                            handleFieldChange(
+                              product.id,
+                              'discountPriceUsd',
+                              e.target.value === '' ? null : parseFloat(e.target.value) || 0,
+                            )
+                          }
+                          onBlur={(e) =>
+                            handleFieldBlur(product.id, {
+                              discountPriceUsd:
+                                e.target.value === '' ? null : parseFloat(e.target.value) || 0,
+                            })
+                          }
+                        />
+                      ) : product.discountPriceUsd != null ? (
+                        <>${product.discountPriceUsd.toFixed(2)}</>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
+
+                    {/* 达人佣金，可编辑 */}
+                    <td className="px-4 py-3 text-sm">
+                      {canEdit ? (
+                        <input
+                          type="number"
+                          className="w-24 px-2 py-1 border rounded text-sm"
+                          value={product.influencerCommissionUsd ?? 0}
+                          onChange={(e) =>
+                            handleFieldChange(
+                              product.id,
+                              'influencerCommissionUsd',
+                              parseFloat(e.target.value) || 0,
+                            )
+                          }
+                          onBlur={(e) =>
+                            handleFieldBlur(product.id, {
+                              influencerCommissionUsd: parseFloat(e.target.value) || 0,
+                            })
+                          }
+                        />
+                      ) : (
+                        <>${product.influencerCommissionUsd.toFixed(2)}</>
+                      )}
+                    </td>
+
+                    {/* 广告费用，可编辑 */}
+                    <td className="px-4 py-3 text-sm">
+                      {canEdit ? (
+                        <input
+                          type="number"
+                          className="w-24 px-2 py-1 border rounded text-sm"
+                          value={product.adCostUsd ?? 0}
+                          onChange={(e) =>
+                            handleFieldChange(
+                              product.id,
+                              'adCostUsd',
+                              parseFloat(e.target.value) || 0,
+                            )
+                          }
+                          onBlur={(e) =>
+                            handleFieldBlur(product.id, {
+                              adCostUsd: parseFloat(e.target.value) || 0,
+                            })
+                          }
+                        />
+                      ) : (
+                        <>${product.adCostUsd.toFixed(2)}</>
+                      )}
+                    </td>
+
+                    {/* TikTok 价格&原价，用于看平台侧售价情况 */}
                     <td className="px-4 py-3 text-sm">
                       <div className="space-y-1">
                         <div className={abnormal ? 'text-red-700 font-medium' : 'text-gray-900'}>
@@ -351,11 +484,13 @@ export default function ProductsPage() {
                         </div>
                       </div>
                     </td>
+                    {/* 毛利率（后端按折扣价+各项成本计算） */}
                     <td className="px-4 py-3 text-sm">
                       <span className={product.profitMargin >= 20 ? 'text-green-600' : 'text-red-600'}>
                         {product.profitMargin.toFixed(1)}%
                       </span>
                     </td>
+                    {/* 库存 */}
                     <td className="px-4 py-3 text-sm">
                       <span className={product.warningStock ? 'text-red-600 font-medium' : ''}>
                         {product.stock}
