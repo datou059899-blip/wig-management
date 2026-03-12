@@ -33,15 +33,27 @@ model Product {
   color       String?  // 颜色
   style       String?  // 款式
   
-  // 成本 (CNY)
+  // 采购成本 (CNY)
   costCny     Float    @default(0)
+
+  // 头程/尾程物流成本 (USD/每件)
+  firstLegLogisticsCostUsd Float @default(0)
+  lastLegLogisticsCostUsd  Float @default(0)
+
+  // 蕾丝大小
+  laceSize    String?
+
+  // 售价 & 折扣价 (USD)
+  priceUsd            Float    @default(0)   // 标价
+  discountPriceUsd    Float?                 // 实际成交/折扣价（用于毛利计算，如为空则回退到 priceUsd）
   
-  // 售价 (USD)
-  priceUsd    Float    @default(0)
+  // 达人佣金 & 广告费用 (USD/每件)
+  influencerCommissionUsd Float @default(0)
+  adCostUsd               Float @default(0)
   
   // TikTok售价相关
-  tiktokPriceUsd    Float?  // TikTok展示价
-  tiktokDiscountPriceUsd Float? // TikTok折扣价
+  tiktokPriceUsd          Float?  // TikTok展示价
+  tiktokDiscountPriceUsd  Float?  // TikTok折扣价
   
   // 库存
   stock       Int      @default(0)

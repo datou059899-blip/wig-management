@@ -100,35 +100,37 @@ export default function PriceCheckPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">价格对账</h1>
-        <p className="text-gray-600">对比本地定价与 TikTok 实际售价</p>
+        <h1 className="text-2xl font-bold text-gray-900">TikTok 价格体检</h1>
+        <p className="text-gray-600">
+          对比商品仓定价与 TikTok 实际售价，揪出价格偏高/偏低的假发 SKU，避免亏本卖货或浪费流量。
+        </p>
       </div>
 
-      {/* 统计卡片 */}
+      {/* 价格体检概览 */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <div className="bg-white p-4 rounded-xl shadow-sm border">
-          <p className="text-sm text-gray-500">总 SKU</p>
+          <p className="text-sm text-gray-500">参与体检的 SKU 数</p>
           <p className="text-2xl font-bold">{stats.total}</p>
         </div>
         <div className="bg-white p-4 rounded-xl shadow-sm border">
-          <p className="text-sm text-gray-500">本地价高于 TikTok</p>
+          <p className="text-sm text-gray-500">本地价高于 TikTok（需下调）</p>
           <p className="text-2xl font-bold text-red-600">{stats.higher}</p>
         </div>
         <div className="bg-white p-4 rounded-xl shadow-sm border">
-          <p className="text-sm text-gray-500">本地价低于 TikTok</p>
+          <p className="text-sm text-gray-500">本地价低于 TikTok（有提价空间）</p>
           <p className="text-2xl font-bold text-green-600">{stats.lower}</p>
         </div>
         <div className="bg-white p-4 rounded-xl shadow-sm border">
-          <p className="text-sm text-gray-500">价格一致</p>
+          <p className="text-sm text-gray-500">价格基本一致</p>
           <p className="text-2xl font-bold text-blue-600">{stats.match}</p>
         </div>
         <div className="bg-white p-4 rounded-xl shadow-sm border">
-          <p className="text-sm text-gray-500">未同步到 TikTok</p>
+          <p className="text-sm text-gray-500">商品仓有价 · TikTok 无价</p>
           <p className="text-2xl font-bold text-gray-600">{stats.noTikTok}</p>
         </div>
       </div>
 
-      {/* 筛选 */}
+      {/* 按价格场景筛选 */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6">
         <div className="flex gap-2 flex-wrap">
           <button

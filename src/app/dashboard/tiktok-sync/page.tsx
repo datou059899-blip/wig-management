@@ -278,8 +278,10 @@ export default function TikTokSyncPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">TikTok 数据同步</h1>
-        <p className="text-gray-600">从 TikTok 后台导出的 Excel 文件中导入 SKU、价格、库存</p>
+        <h1 className="text-2xl font-bold text-gray-900">TikTok 后台导出 · 数据导入</h1>
+        <p className="text-gray-600">
+          每天把 TikTok 后台导出的 Excel 导入到系统，更新每个假发 SKU 的售价与库存，为价格体检和毛利计算提供最新底数。
+        </p>
       </div>
 
       {/* 消息提示 */}
@@ -291,7 +293,7 @@ export default function TikTokSyncPage() {
 
       {/* 文件上传 */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">导入数据</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">步骤一：上传 TikTok 导出文件</h2>
         
         <div className="flex items-center gap-4 mb-4">
           <input
@@ -365,7 +367,7 @@ export default function TikTokSyncPage() {
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-900">
-            已同步数据 ({syncData.length})
+            步骤二：已写入系统的 TikTok 商品 ({syncData.length})
           </h2>
           {canEdit && syncData.length > 0 && (
             <button
