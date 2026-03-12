@@ -280,7 +280,7 @@ export default function ProductsPage() {
       ) : (
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
+            <table className="min-w-full divide-y divide-gray-200 text-xs">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">产品</th>
@@ -312,27 +312,26 @@ export default function ProductsPage() {
 
                   return (
                   <tr key={product.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2">
-                      <div className="flex items-center">
+                    <td className="px-3 py-1.5">
+                      <div className="flex items-center gap-2">
                         {product.image && (
-                          <img src={product.image} alt="" className="w-9 h-9 rounded object-cover mr-3" />
+                          <img src={product.image} alt="" className="w-7 h-7 rounded object-cover" />
                         )}
                         <div className="min-w-0">
-                          <div className="font-medium text-gray-900 truncate max-w-[220px] text-sm">
+                          <div className="font-medium text-gray-900 truncate max-w-[220px]">
                             {product.name}
                           </div>
-                          <div className="text-xs text-gray-500 truncate max-w-[240px]">{product.description || '-'}</div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-xs text-gray-500">{product.sku || '-'}</td>
-                    <td className="px-3 py-2 text-xs text-gray-700">{category}</td>
+                    <td className="px-3 py-1.5 text-[11px] text-gray-500">{product.sku || '-'}</td>
+                    <td className="px-3 py-1.5 text-[11px] text-gray-700">{category}</td>
                     {/* 成本价，可编辑 */}
-                    <td className="px-3 py-2 text-sm">
+                    <td className="px-3 py-1.5">
                       {canEdit ? (
                         <input
                           type="number"
-                          className="w-20 px-2 py-1 border rounded text-xs"
+                          className="w-20 px-2 py-0.5 border rounded text-[11px]"
                           value={product.costCny ?? 0}
                           onChange={(e) =>
                             handleFieldChange(product.id, 'costCny', parseFloat(e.target.value) || 0)
@@ -348,7 +347,7 @@ export default function ProductsPage() {
                       )}
                     </td>
                     {/* 头程物流成本，可编辑 */}
-                    <td className="px-3 py-2 text-sm">
+                    <td className="px-3 py-1.5">
                       {canEdit ? (
                         <input
                           type="number"
@@ -373,7 +372,7 @@ export default function ProductsPage() {
                     </td>
 
                     {/* 尾程物流成本，可编辑 */}
-                    <td className="px-3 py-2 text-sm">
+                    <td className="px-3 py-1.5">
                       {canEdit ? (
                         <input
                           type="number"
@@ -398,7 +397,7 @@ export default function ProductsPage() {
                     </td>
 
                     {/* 折扣价，可编辑（为空则用标价参与毛利计算） */}
-                    <td className="px-3 py-2 text-sm">
+                    <td className="px-3 py-1.5">
                       {canEdit ? (
                         <input
                           type="number"
@@ -426,7 +425,7 @@ export default function ProductsPage() {
                     </td>
 
                     {/* 达人佣金，可编辑 */}
-                    <td className="px-3 py-2 text-sm">
+                    <td className="px-3 py-1.5">
                       {canEdit ? (
                         <input
                           type="number"
@@ -451,7 +450,7 @@ export default function ProductsPage() {
                     </td>
 
                     {/* 广告费用，可编辑 */}
-                    <td className="px-4 py-3 text-sm">
+                    <td className="px-3 py-1.5">
                       {canEdit ? (
                         <input
                           type="number"
@@ -476,7 +475,7 @@ export default function ProductsPage() {
                     </td>
 
                     {/* TikTok 价格&原价，用于看平台侧售价情况 */}
-                    <td className="px-3 py-2 text-sm">
+                    <td className="px-3 py-1.5">
                       <div className="space-y-0.5">
                         <div className={abnormal ? 'text-red-700 font-medium' : 'text-gray-900'}>
                           {tiktokPrice ? `$${tiktokPrice.toFixed(2)}` : '-'}
@@ -487,7 +486,7 @@ export default function ProductsPage() {
                       </div>
                     </td>
                     {/* 毛利率（后端按折扣价+各项成本计算） */}
-                    <td className="px-3 py-2 text-sm">
+                    <td className="px-3 py-1.5">
                       <span className={product.profitMargin >= 20 ? 'text-green-600' : 'text-red-600'}>
                         {product.profitMargin.toFixed(1)}%
                       </span>
@@ -498,7 +497,7 @@ export default function ProductsPage() {
                         {product.stock}
                       </span>
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-1.5">
                       <div className="flex flex-wrap gap-1.5">
                         {product.warningMissing && <Tag color="yellow">缺信息</Tag>}
                         {abnormal && <Tag color="red">价格异常</Tag>}
@@ -510,14 +509,14 @@ export default function ProductsPage() {
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">
+                    <td className="px-3 py-1.5 text-[11px] text-gray-600 whitespace-nowrap">
                       {formatTime(syncTime)}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-1.5">
                       <div className="space-y-0.5">
-                        <div className="text-xs font-medium text-gray-900">{action.label}</div>
+                        <div className="text-[11px] font-medium text-gray-900">{action.label}</div>
                         <div className="text-[11px] text-gray-500">{action.hint}</div>
-                        <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        <div className="flex flex-wrap gap-1 pt-0.5">
                           {isMissing(product) && (
                             <button
                               onClick={() => setQuickFilter('missing')}
