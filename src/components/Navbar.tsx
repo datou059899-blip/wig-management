@@ -61,6 +61,12 @@ export default function Navbar() {
                 {(session?.user as any)?.role}
               </span>
             </span>
+            <Link
+              href="/dashboard/account"
+              className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded mr-1"
+            >
+              修改密码
+            </Link>
             <button
               onClick={() => signOut({ callbackUrl: '/' })}
               className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"

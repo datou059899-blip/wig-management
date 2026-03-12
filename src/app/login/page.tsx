@@ -87,7 +87,8 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div className="mt-6 text-center text-sm text-gray-500">
+        <div className="mt-6 text-center text-sm text-gray-500 space-y-2">
+          <p>忘记密码：请联系管理员在「用户管理」中重置</p>
           <p>测试账号: admin@test.com / password</p>
         </div>
       </div>
