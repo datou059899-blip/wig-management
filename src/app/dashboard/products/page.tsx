@@ -512,41 +512,10 @@ export default function ProductsPage() {
                     <td className="px-3 py-1.5 text-[11px] text-gray-600 whitespace-nowrap">
                       {formatTime(syncTime)}
                     </td>
-                    <td className="px-3 py-1.5">
-                      <div className="space-y-0.5">
-                        <div className="text-[11px] font-medium text-gray-900">{action.label}</div>
-                        <div className="text-[11px] text-gray-500">{action.hint}</div>
-                        <div className="flex flex-wrap gap-1 pt-0.5">
-                          {isMissing(product) && (
-                            <button
-                              onClick={() => setQuickFilter('missing')}
-                              className="text-xs text-primary-700 hover:underline"
-                            >
-                              只看缺信息
-                            </button>
-                          )}
-                          {abnormal && (
-                            <Link href="/dashboard/price-check" className="text-xs text-primary-700 hover:underline">
-                              去价格对账
-                            </Link>
-                          )}
-                          {view === 'advertiser' && (
-                            <>
-                              {product.tiktokSync?.materialUrl ? (
-                                <a
-                                  href={product.tiktokSync.materialUrl}
-                                  target="_blank"
-                                  className="text-xs text-primary-700 hover:underline"
-                                >
-                                  查看素材
-                                </a>
-                              ) : (
-                                <span className="text-xs text-gray-400">缺素材链接</span>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </div>
+                    <td className="px-3 py-1.5 align-middle w-32">
+                      <span className="text-xs text-gray-800 truncate block">
+                        {action.label}
+                      </span>
                     </td>
                   </tr>
                   )
