@@ -14,7 +14,7 @@ type ScriptListItem = {
   breakdowns?: { id: string; version: number; updatedAt: string }[]
 }
 
-type ScriptDetail = ScriptListItem & {
+type ScriptDetail = Omit<ScriptListItem, 'breakdowns'> & {
   breakdowns: {
     id: string
     version: number
