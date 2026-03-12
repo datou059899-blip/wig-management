@@ -1,0 +1,150 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  role      String   @default("operator") // admin, operator, advertiser, editor
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  scripts   ViralScript[]
+  edits     ScriptBreakdown[] @relation("BreakdownEditor")
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  name        String   // 产品名称
+  sku         String?  @unique // 商家SKU
+  skuId       String?  // TikTok SKU ID
+  image       String?  // 主图URL
+  images      String?  // 多图，JSON数组
+  description String?  // 产品描述/卖点
+  material    String?  // 材质
+  length      String?  // 长度
+  color       String?  // 颜色
+  style       String?  // 款式
+  
+  // 成本 (CNY)
+  costCny     Float    @default(0)
+  
+  // 售价 (USD)
+  priceUsd    Float    @default(0)
+  
+  // TikTok售价相关
+  tiktokPriceUsd    Float?  // TikTok展示价
+  tiktokDiscountPriceUsd Float? // TikTok折扣价
+  
+  // 库存
+  stock       Int      @default(0)
+  
+  // 核心场景
+  scene       String?
+  
+  // 素材链接
+  materialUrl String?
+  
+  // 预警状态
+  warningStock      Boolean @default(false) // 库存预警
+  warningProfit     Boolean @default(false) // 低毛利预警
+  warningMissing    Boolean @default(false) // 缺信息
+  
+  // 运营标记
+  tags        String?  // JSON数组
+  notes       String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // 关联
+  tiktokSync  TiktokSync?
+}
+
+model TiktokSync {
+  id        String   @id @default(cuid())
+  sku       String   @unique // 商家SKU
+  skuId     String?  // TikTok SKU ID
+  title     String?  // 商品标题
+  
+  // 价格 (USD)
+  priceUsd  Float    @default(0)
+  originalPriceUsd Float? // 原价
+  
+  // 库存
+  stock     Int      @default(0)
+  
+  // 状态
+  status    String?  // 商品状态
+  
+  // 同步时间
+  syncedAt  DateTime @default(now())
+  
+  // 关联产品
+  product   Product? @relation(fields: [sku], references: [sku])
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Config {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+  
+  // 常用配置
+  // - exchange_rate: 汇率 (CNY -> USD)
+  // - stock_warning_threshold: 库存预警阈值
+  // - profit_margin_warning_threshold: 毛利率预警阈值 (百分比)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// 爆款脚本（用于剪辑师拆解）
+model ViralScript {
+  id          String   @id @default(cuid())
+  title       String
+  platform    String?  // TikTok / 抖音 / 小红书...
+  sourceUrl   String?  // 原视频/脚本链接
+  productSku  String?  // 关联产品 SKU（可选）
+  tags        String?  // JSON 数组
+  status      String   @default("active") // active, archived
+
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id])
+
+  breakdowns  ScriptBreakdown[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([productSku])
+  @@index([updatedAt])
+}
+
+// 脚本拆解（支持实时更新 + 版本）
+model ScriptBreakdown {
+  id          String   @id @default(cuid())
+  scriptId    String
+  script      ViralScript @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+
+  version     Int      @default(1)
+  content     String   // Markdown / 结构化文本
+
+  editedById  String?
+  editedBy    User?    @relation("BreakdownEditor", fields: [editedById], references: [id])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([scriptId, version])
+  @@index([updatedAt])
+}
