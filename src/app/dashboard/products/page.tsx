@@ -280,24 +280,18 @@ export default function ProductsPage() {
       ) : (
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
+            <table className="min-w-full text-sm divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">产品</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">SKU</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">分类</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">成本(CNY)</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">头程物流(USD)</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">尾程物流(USD)</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">折扣价(USD)</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">达人佣金(USD)</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">广告费用(USD)</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">TikTok 价格</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">毛利率</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">库存</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">状态/异常</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">状态 / 异常</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">最近同步</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">接下来做什么</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">操作建议</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -311,245 +305,145 @@ export default function ProductsPage() {
                   const syncTime = product.tiktokSync?.syncedAt
 
                   return (
-                  <tr key={product.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2">
-                      <div className="flex items-center">
-                        {product.image && (
-                          <img src={product.image} alt="" className="w-9 h-9 rounded object-cover mr-3" />
-                        )}
-                        <div className="min-w-0">
-                          <div className="font-medium text-gray-900 truncate max-w-[220px] text-sm">
-                            {product.name}
+                    <tr key={product.id} className="hover:bg-gray-50">
+                      {/* 产品：图片 + 两行信息 */}
+                      <td className="px-3 py-2 align-top">
+                        <div className="flex items-start gap-2">
+                          {product.image && (
+                            <img
+                              src={product.image}
+                              alt=""
+                              className="w-8 h-8 rounded object-cover"
+                            />
+                          )}
+                          <div className="min-w-0">
+                            <div className="font-medium text-gray-900 truncate max-w-[220px] text-sm">
+                              {product.name}
+                            </div>
+                            <div className="mt-0.5 text-xs text-gray-500 truncate max-w-[220px]">
+                              {category}
+                            </div>
                           </div>
-                          <div className="text-xs text-gray-500 truncate max-w-[240px]">{product.description || '-'}</div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-xs text-gray-500">{product.sku || '-'}</td>
-                    <td className="px-3 py-2 text-xs text-gray-700">{category}</td>
-                    {/* 成本价，可编辑 */}
-                    <td className="px-3 py-2 text-sm">
-                      {canEdit ? (
-                        <input
-                          type="number"
-                          className="w-20 px-2 py-1 border rounded text-xs"
-                          value={product.costCny ?? 0}
-                          onChange={(e) =>
-                            handleFieldChange(product.id, 'costCny', parseFloat(e.target.value) || 0)
-                          }
-                          onBlur={(e) =>
-                            handleFieldBlur(product.id, {
-                              costCny: parseFloat(e.target.value) || 0,
-                            })
-                          }
-                        />
-                      ) : (
-                        <>¥{product.costCny.toFixed(2)}</>
-                      )}
-                    </td>
-                    {/* 头程物流成本，可编辑 */}
-                    <td className="px-3 py-2 text-sm">
-                      {canEdit ? (
-                        <input
-                          type="number"
-                          className="w-20 px-2 py-1 border rounded text-xs"
-                          value={product.firstLegLogisticsCostUsd ?? 0}
-                          onChange={(e) =>
-                            handleFieldChange(
-                              product.id,
-                              'firstLegLogisticsCostUsd',
-                              parseFloat(e.target.value) || 0,
-                            )
-                          }
-                          onBlur={(e) =>
-                            handleFieldBlur(product.id, {
-                              firstLegLogisticsCostUsd: parseFloat(e.target.value) || 0,
-                            })
-                          }
-                        />
-                      ) : (
-                        <>${product.firstLegLogisticsCostUsd.toFixed(2)}</>
-                      )}
-                    </td>
+                      </td>
 
-                    {/* 尾程物流成本，可编辑 */}
-                    <td className="px-3 py-2 text-sm">
-                      {canEdit ? (
-                        <input
-                          type="number"
-                          className="w-20 px-2 py-1 border rounded text-xs"
-                          value={product.lastLegLogisticsCostUsd ?? 0}
-                          onChange={(e) =>
-                            handleFieldChange(
-                              product.id,
-                              'lastLegLogisticsCostUsd',
-                              parseFloat(e.target.value) || 0,
-                            )
-                          }
-                          onBlur={(e) =>
-                            handleFieldBlur(product.id, {
-                              lastLegLogisticsCostUsd: parseFloat(e.target.value) || 0,
-                            })
-                          }
-                        />
-                      ) : (
-                        <>${product.lastLegLogisticsCostUsd.toFixed(2)}</>
-                      )}
-                    </td>
+                      {/* SKU */}
+                      <td className="px-3 py-2 align-top text-xs text-gray-500">
+                        {product.sku || '-'}
+                      </td>
 
-                    {/* 折扣价，可编辑（为空则用标价参与毛利计算） */}
-                    <td className="px-3 py-2 text-sm">
-                      {canEdit ? (
-                        <input
-                          type="number"
-                          className="w-20 px-2 py-1 border rounded text-xs"
-                          value={product.discountPriceUsd ?? ''}
-                          onChange={(e) =>
-                            handleFieldChange(
-                              product.id,
-                              'discountPriceUsd',
-                              e.target.value === '' ? null : parseFloat(e.target.value) || 0,
-                            )
-                          }
-                          onBlur={(e) =>
-                            handleFieldBlur(product.id, {
-                              discountPriceUsd:
-                                e.target.value === '' ? null : parseFloat(e.target.value) || 0,
-                            })
-                          }
-                        />
-                      ) : product.discountPriceUsd != null ? (
-                        <>${product.discountPriceUsd.toFixed(2)}</>
-                      ) : (
-                        '-'
-                      )}
-                    </td>
-
-                    {/* 达人佣金，可编辑 */}
-                    <td className="px-3 py-2 text-sm">
-                      {canEdit ? (
-                        <input
-                          type="number"
-                          className="w-20 px-2 py-1 border rounded text-xs"
-                          value={product.influencerCommissionUsd ?? 0}
-                          onChange={(e) =>
-                            handleFieldChange(
-                              product.id,
-                              'influencerCommissionUsd',
-                              parseFloat(e.target.value) || 0,
-                            )
-                          }
-                          onBlur={(e) =>
-                            handleFieldBlur(product.id, {
-                              influencerCommissionUsd: parseFloat(e.target.value) || 0,
-                            })
-                          }
-                        />
-                      ) : (
-                        <>${product.influencerCommissionUsd.toFixed(2)}</>
-                      )}
-                    </td>
-
-                    {/* 广告费用，可编辑 */}
-                    <td className="px-4 py-3 text-sm">
-                      {canEdit ? (
-                        <input
-                          type="number"
-                          className="w-24 px-2 py-1 border rounded text-sm"
-                          value={product.adCostUsd ?? 0}
-                          onChange={(e) =>
-                            handleFieldChange(
-                              product.id,
-                              'adCostUsd',
-                              parseFloat(e.target.value) || 0,
-                            )
-                          }
-                          onBlur={(e) =>
-                            handleFieldBlur(product.id, {
-                              adCostUsd: parseFloat(e.target.value) || 0,
-                            })
-                          }
-                        />
-                      ) : (
-                        <>${product.adCostUsd.toFixed(2)}</>
-                      )}
-                    </td>
-
-                    {/* TikTok 价格&原价，用于看平台侧售价情况 */}
-                    <td className="px-3 py-2 text-sm">
-                      <div className="space-y-0.5">
-                        <div className={abnormal ? 'text-red-700 font-medium' : 'text-gray-900'}>
-                          {tiktokPrice ? `$${tiktokPrice.toFixed(2)}` : '-'}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {tiktokDiscount ? `原价 $${tiktokDiscount.toFixed(2)}` : '—'}
-                        </div>
-                      </div>
-                    </td>
-                    {/* 毛利率（后端按折扣价+各项成本计算） */}
-                    <td className="px-3 py-2 text-sm">
-                      <span className={product.profitMargin >= 20 ? 'text-green-600' : 'text-red-600'}>
-                        {product.profitMargin.toFixed(1)}%
-                      </span>
-                    </td>
-                    {/* 库存 */}
-                    <td className="px-3 py-2 text-sm">
-                      <span className={product.warningStock ? 'text-red-600 font-medium' : ''}>
-                        {product.stock}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap gap-1.5">
-                        {product.warningMissing && <Tag color="yellow">缺信息</Tag>}
-                        {abnormal && <Tag color="red">价格异常</Tag>}
-                        {product.warningProfit && <Tag color="orange">低毛利</Tag>}
-                        {product.warningStock && <Tag color="red">库存不足</Tag>}
-                        {scalable && <Tag color="green">可投放</Tag>}
-                        {!product.warningMissing && !abnormal && !product.warningProfit && !product.warningStock && !scalable && (
-                          <Tag color="gray">正常</Tag>
+                      {/* 成本价（可编辑） */}
+                      <td className="px-3 py-2 align-top">
+                        {canEdit ? (
+                          <input
+                            type="number"
+                            className="w-20 px-2 py-1 border border-gray-300 rounded text-xs"
+                            value={product.costCny ?? 0}
+                            onChange={(e) =>
+                              handleFieldChange(
+                                product.id,
+                                'costCny',
+                                parseFloat(e.target.value) || 0,
+                              )
+                            }
+                            onBlur={(e) =>
+                              handleFieldBlur(product.id, {
+                                costCny: parseFloat(e.target.value) || 0,
+                              })
+                            }
+                          />
+                        ) : (
+                          <span className="text-sm">¥{product.costCny.toFixed(2)}</span>
                         )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">
-                      {formatTime(syncTime)}
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="space-y-0.5">
-                        <div className="text-xs font-medium text-gray-900">{action.label}</div>
-                        <div className="text-[11px] text-gray-500">{action.hint}</div>
-                        <div className="flex flex-wrap gap-1.5 pt-0.5">
-                          {isMissing(product) && (
-                            <button
-                              onClick={() => setQuickFilter('missing')}
-                              className="text-xs text-primary-700 hover:underline"
-                            >
-                              只看缺信息
-                            </button>
-                          )}
-                          {abnormal && (
-                            <Link href="/dashboard/price-check" className="text-xs text-primary-700 hover:underline">
-                              去价格对账
-                            </Link>
-                          )}
-                          {view === 'advertiser' && (
-                            <>
-                              {product.tiktokSync?.materialUrl ? (
-                                <a
-                                  href={product.tiktokSync.materialUrl}
-                                  target="_blank"
-                                  className="text-xs text-primary-700 hover:underline"
-                                >
-                                  查看素材
-                                </a>
-                              ) : (
-                                <span className="text-xs text-gray-400">缺素材链接</span>
-                              )}
-                            </>
-                          )}
+                      </td>
+
+                      {/* TikTok 价格（紧凑两行） */}
+                      <td className="px-3 py-2 align-top">
+                        <div className="space-y-0.5">
+                          <div
+                            className={
+                              abnormal ? 'text-red-700 font-medium' : 'text-gray-900'
+                            }
+                          >
+                            {tiktokPrice ? `$${tiktokPrice.toFixed(2)}` : '-'}
+                          </div>
+                          <div className="text-[11px] text-gray-500">
+                            {tiktokDiscount ? `原价 $${tiktokDiscount.toFixed(2)}` : '—'}
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+
+                      {/* 毛利率 */}
+                      <td className="px-3 py-2 align-top">
+                        <span
+                          className={
+                            product.profitMargin >= 20 ? 'text-green-600' : 'text-red-600'
+                          }
+                        >
+                          {product.profitMargin.toFixed(1)}%
+                        </span>
+                      </td>
+
+                      {/* 库存 */}
+                      <td className="px-3 py-2 align-top">
+                        <span
+                          className={
+                            product.warningStock ? 'text-red-600 font-medium' : ''
+                          }
+                        >
+                          {product.stock}
+                        </span>
+                      </td>
+
+                      {/* 状态 / 异常：横向 badge + wrap */}
+                      <td className="px-3 py-2 align-top">
+                        <div className="flex flex-wrap gap-1.5">
+                          {product.warningMissing && <Tag color="yellow">缺信息</Tag>}
+                          {abnormal && <Tag color="red">价格异常</Tag>}
+                          {product.warningProfit && <Tag color="orange">低毛利</Tag>}
+                          {product.warningStock && <Tag color="red">库存不足</Tag>}
+                          {scalable && <Tag color="green">可投放</Tag>}
+                          {!product.warningMissing &&
+                            !abnormal &&
+                            !product.warningProfit &&
+                            !product.warningStock &&
+                            !scalable && <Tag color="gray">正常</Tag>}
+                        </div>
+                      </td>
+
+                      {/* 最近同步时间 */}
+                      <td className="px-3 py-2 align-top text-xs text-gray-600 whitespace-nowrap">
+                        {formatTime(syncTime)}
+                      </td>
+
+                      {/* 操作建议：短文案 + 横向操作 */}
+                      <td className="px-3 py-2 align-top">
+                        <div className="flex flex-col gap-1">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-100 text-xs">
+                            {action.label}
+                          </span>
+                          <div className="text-[11px] text-gray-500">{action.hint}</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {isMissing(product) && (
+                              <button
+                                onClick={() => setQuickFilter('missing')}
+                                className="text-[11px] text-primary-700 hover:underline"
+                              >
+                                只看缺信息
+                              </button>
+                            )}
+                            {abnormal && (
+                              <Link
+                                href="/dashboard/price-check"
+                                className="text-[11px] text-primary-700 hover:underline"
+                              >
+                                检查价格
+                              </Link>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
                   )
                 })}
               </tbody>
