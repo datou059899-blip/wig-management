@@ -647,6 +647,60 @@ export default function ScriptsPage() {
                 </div>
               )}
 
+              {/* 训练动作按钮 */}
+              <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                <button
+                  onClick={() =>
+                    setSections((prev) => ({
+                      ...prev,
+                      learningStatus: '已掌握',
+                    }))
+                  }
+                  disabled={!canEdit}
+                  className="px-3 py-1.5 rounded-lg border border-green-200 bg-green-50 text-green-800 hover:bg-green-100 disabled:opacity-50"
+                >
+                  标记已学习
+                </button>
+                <button
+                  onClick={() => {
+                    if (!canEdit) return
+                    const url = window.prompt('粘贴练习成片链接：', sections.practiceUrl || '')
+                    if (url != null) {
+                      setSections((prev) => ({ ...prev, practiceUrl: url }))
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100"
+                >
+                  提交练习成片
+                </button>
+                <button
+                  onClick={() => {
+                    const el = document.getElementById('lead-comment-card')
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-gray-200 bg-gray-50 text-gray-800 hover:bg-gray-100"
+                >
+                  查看负责人点评
+                </button>
+                <button
+                  onClick={() => {
+                    if (!canEdit) return
+                    const note = window.prompt('补充一条复盘记录：')
+                    if (note && note.trim()) {
+                      const prefix = sections.reviewNotes ? sections.reviewNotes + '\n' : ''
+                      const line = `${new Date().toLocaleDateString('zh-CN')}: ${note.trim()}`
+                      setSections((prev) => ({
+                        ...prev,
+                        reviewNotes: prefix + line,
+                      }))
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-yellow-200 bg-yellow-50 text-yellow-800 hover:bg-yellow-100"
+                >
+                  加入复盘记录
+                </button>
+              </div>
+
               <div className="space-y-3 overflow-y-auto">
                 {[
                   {
@@ -811,7 +865,7 @@ export default function ScriptsPage() {
 
       {/* 右侧：实时更新与反馈区 */}
       <div className="lg:col-span-3 space-y-4">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4" id="lead-comment-card">
           <div className="text-xs font-semibold text-gray-800 mb-2">
             今日训练重点（同步给剪辑师）
           </div>
