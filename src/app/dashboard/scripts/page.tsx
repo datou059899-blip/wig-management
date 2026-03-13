@@ -1,4 +1,4 @@
-'use client'
+ 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
@@ -24,7 +24,128 @@ type ScriptDetail = Omit<ScriptListItem, 'breakdowns'> & {
   }[]
 }
 
-const canEditRole = (role?: string) => role === 'admin' || role === 'operator' || role === 'editor'
+const canEditRole = (role?: string) =>
+  role === 'admin' || role === 'operator' || role === 'editor'
+
+type BreakdownSections = {
+  positioning: string
+  hook3s: string
+  rhythm: string
+  shots: string
+  subtitles: string
+  audio: string
+  learnings: string
+  pitfalls: string
+  todayFocus: string
+  leadComment: string
+  frequentMistakes: string
+  goodPatterns: string
+  learningStatus: string
+  practiceUrl: string
+  reviewNotes: string
+}
+
+const emptySections: BreakdownSections = {
+  positioning: '',
+  hook3s: '',
+  rhythm: '',
+  shots: '',
+  subtitles: '',
+  audio: '',
+  learnings: '',
+  pitfalls: '',
+  todayFocus: '',
+  leadComment: '',
+  frequentMistakes: '',
+  goodPatterns: '',
+  learningStatus: '',
+  practiceUrl: '',
+  reviewNotes: '',
+}
+
+const sectionOrder: { key: keyof BreakdownSections; title: string }[] = [
+  { key: 'positioning', title: '视频定位' },
+  { key: 'hook3s', title: '前3秒拆解' },
+  { key: 'rhythm', title: '节奏拆解' },
+  { key: 'shots', title: '镜头拆解' },
+  { key: 'subtitles', title: '字幕/文案拆解' },
+  { key: 'audio', title: '音效 / BGM / 转场建议' },
+  { key: 'learnings', title: '核心学习点' },
+  { key: 'pitfalls', title: '常见错误提醒' },
+  { key: 'todayFocus', title: '今日新增要求' },
+  { key: 'leadComment', title: '负责人点评' },
+  { key: 'frequentMistakes', title: '最近高频错误' },
+  { key: 'goodPatterns', title: '最近表现好的方法' },
+  { key: 'learningStatus', title: '学习状态' },
+  { key: 'practiceUrl', title: '练习成片链接' },
+  { key: 'reviewNotes', title: '复盘记录' },
+]
+
+function parseContentToSections(content: string): BreakdownSections {
+  if (!content.trim()) return { ...emptySections }
+
+  const sections: BreakdownSections = { ...emptySections }
+  const regex = /^##\s+(.+?)\s*$/gm
+  const indices: { title: string; index: number }[] = []
+
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(content)) !== null) {
+    indices.push({ title: match[1].trim(), index: match.index })
+  }
+
+  if (indices.length === 0) {
+    sections.rhythm = content.trim()
+    return sections
+  }
+
+  indices.forEach((item, idx) => {
+    const start = content.indexOf('\n', item.index)
+    const end = idx + 1 < indices.length ? indices[idx + 1].index : content.length
+    const body = content.slice(start + 1, end).trim()
+
+    const target = sectionOrder.find((s) => item.title.startsWith(s.title))
+    if (target) {
+      ;(sections as any)[target.key] = body
+    }
+  })
+
+  return sections
+}
+
+function buildContentFromSections(sections: BreakdownSections): string {
+  const blocks: string[] = []
+
+  sectionOrder.forEach(({ key, title }) => {
+    const value = (sections as any)[key] as string
+    if (!value && key !== 'learningStatus' && key !== 'practiceUrl' && key !== 'reviewNotes') {
+      return
+    }
+
+    if (key === 'learningStatus') {
+      blocks.push(`## 学习状态\n${value || ''}`.trim())
+    } else if (key === 'practiceUrl') {
+      if (value.trim()) {
+        blocks.push(`## 练习成片链接\n${value.trim()}`)
+      }
+    } else if (key === 'reviewNotes') {
+      if (value.trim()) {
+        blocks.push(`## 复盘记录\n${value.trim()}`)
+      }
+    } else {
+      blocks.push(`## ${title}\n${value || ''}`.trim())
+    }
+  })
+
+  return blocks.join('\n\n')
+}
+
+function inferLearningStatus(sections: BreakdownSections): string {
+  const s = sections.learningStatus || ''
+  if (s.includes('已掌握')) return '已掌握'
+  if (s.includes('学习中')) return '学习中'
+  if (s.includes('需复盘')) return '需复盘'
+  return '待学习'
+}
 
 export default function ScriptsPage() {
   const { data: session } = useSession()
@@ -35,10 +156,14 @@ export default function ScriptsPage() {
   const [scripts, setScripts] = useState<ScriptListItem[]>([])
   const [selectedId, setSelectedId] = useState<string>('')
   const [detail, setDetail] = useState<ScriptDetail | null>(null)
+  const [sections, setSections] = useState<BreakdownSections>(emptySections)
   const [loadingList, setLoadingList] = useState(true)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<{ type: 'success' | 'error' | ''; text: string }>({ type: '', text: '' })
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | ''; text: string }>({
+    type: '',
+    text: '',
+  })
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createTitle, setCreateTitle] = useState('')
@@ -87,15 +212,17 @@ export default function ScriptsPage() {
         setDetail(s)
         const latest = s.breakdowns?.[0]
         if (latest) {
-          // 避免覆盖用户正在编辑的内容：仅当内容没被改动时才自动刷新
           const hasLocalChange = content !== lastSavedRef.current
           if (!hasLocalChange) {
-            setContent(latest.content || '')
-            lastSavedRef.current = latest.content || ''
+            const raw = latest.content || ''
+            setContent(raw)
+            lastSavedRef.current = raw
+            setSections(parseContentToSections(raw))
           }
         } else {
           setContent('')
           lastSavedRef.current = ''
+          setSections({ ...emptySections })
         }
       }
     } finally {
@@ -120,18 +247,23 @@ export default function ScriptsPage() {
 
   const handleSave = async (createNewVersion: boolean) => {
     if (!detail) return
+    const nextContent = buildContentFromSections(sections)
     setSaving(true)
     setMessage({ type: '', text: '' })
     try {
       const res = await fetch(`/api/scripts/${detail.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, createNewVersion }),
+        body: JSON.stringify({ content: nextContent, createNewVersion }),
       })
       const data = await res.json()
       if (res.ok) {
-        lastSavedRef.current = content
-        setMessage({ type: 'success', text: createNewVersion ? '已保存为新版本' : '已保存' })
+        setContent(nextContent)
+        lastSavedRef.current = nextContent
+        setMessage({
+          type: 'success',
+          text: createNewVersion ? '已保存为新版本' : '已保存',
+        })
         await fetchDetail(detail.id, true)
         await fetchList()
       } else {
@@ -185,210 +317,375 @@ export default function ScriptsPage() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      {/* 左侧列表 */}
-      <div className="lg:col-span-4">
-        <div className="mb-4 flex items-center justify-between">
+      {/* 左侧：脚本列表 */}
+      <div className="lg:col-span-3 space-y-4">
+        <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">爆款脚本拆解</h1>
-            <p className="text-gray-600 text-sm">剪辑师可实时更新拆解内容</p>
+            <h1 className="text-2xl font-bold text-gray-900">爆款脚本拆解训练台</h1>
+            <p className="mt-1 text-sm text-gray-600">
+              运营更新拆解，剪辑师按区块学习、执行与复盘。
+            </p>
           </div>
           {canEdit && (
             <button
               onClick={() => setCreateOpen((v) => !v)}
-              className="px-3 py-2 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700"
+              className="px-3 py-2 text-xs bg-primary-600 text-white rounded-lg hover:bg-primary-700"
             >
-              新建
+              新建脚本
             </button>
           )}
         </div>
 
         {message.text && (
-          <div className={`mb-4 p-3 rounded-lg ${message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+          <div
+            className={`p-3 rounded-lg text-xs ${
+              message.type === 'error'
+                ? 'bg-red-50 text-red-700'
+                : 'bg-green-50 text-green-700'
+            }`}
+          >
             {message.text}
           </div>
         )}
 
         {createOpen && canEdit && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4">
-            <div className="space-y-3">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 space-y-3">
+            <input
+              value={createTitle}
+              onChange={(e) => setCreateTitle(e.target.value)}
+              placeholder="脚本标题（必填）"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            />
+            <div className="grid grid-cols-2 gap-3">
               <input
-                value={createTitle}
-                onChange={(e) => setCreateTitle(e.target.value)}
-                placeholder="脚本标题（必填）"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                value={createPlatform}
+                onChange={(e) => setCreatePlatform(e.target.value)}
+                placeholder="平台（如 TikTok）"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               />
-              <div className="grid grid-cols-2 gap-3">
-                <input
-                  value={createPlatform}
-                  onChange={(e) => setCreatePlatform(e.target.value)}
-                  placeholder="平台（例如 TikTok）"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-                <input
-                  value={createSku}
-                  onChange={(e) => setCreateSku(e.target.value)}
-                  placeholder="关联 SKU（可选）"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                />
-              </div>
               <input
-                value={createSourceUrl}
-                onChange={(e) => setCreateSourceUrl(e.target.value)}
-                placeholder="来源链接（可选）"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                value={createSku}
+                onChange={(e) => setCreateSku(e.target.value)}
+                placeholder="关联 SKU（可选）"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               />
-              <div className="flex gap-2">
-                <button
-                  onClick={handleCreate}
-                  disabled={saving || !createTitle.trim()}
-                  className="px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-                >
-                  {saving ? '创建中...' : '创建'}
-                </button>
-                <button
-                  onClick={() => setCreateOpen(false)}
-                  className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
-                >
-                  取消
-                </button>
-              </div>
+            </div>
+            <input
+              value={createSourceUrl}
+              onChange={(e) => setCreateSourceUrl(e.target.value)}
+              placeholder="来源链接（可选）"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={handleCreate}
+                disabled={saving || !createTitle.trim()}
+                className="px-3 py-2 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                {saving ? '创建中...' : '创建'}
+              </button>
+              <button
+                onClick={() => setCreateOpen(false)}
+                className="px-3 py-2 text-xs bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+              >
+                取消
+              </button>
             </div>
           </div>
         )}
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="搜索标题 / SKU / 平台..."
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           />
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           {loadingList ? (
-            <div className="text-center py-10 text-gray-500">加载中...</div>
+            <div className="text-center py-10 text-gray-500 text-sm">加载中...</div>
           ) : scripts.length === 0 ? (
-            <div className="text-center py-10 text-gray-500">暂无脚本</div>
+            <div className="text-center py-10 text-gray-500 text-sm">暂无脚本</div>
           ) : (
             <div className="divide-y divide-gray-100">
-              {scripts.map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => setSelectedId(s.id)}
-                  className={`w-full text-left px-4 py-3 hover:bg-gray-50 ${selectedId === s.id ? 'bg-primary-50' : ''}`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="font-medium text-gray-900 truncate">{s.title}</div>
-                    <div className="text-xs text-gray-500 shrink-0">
-                      {new Date(s.updatedAt).toLocaleString('zh-CN')}
+              {scripts.map((s) => {
+                const latest = s.breakdowns?.[0]
+                const sec =
+                  detail && detail.id === s.id
+                    ? sections
+                    : emptySections
+                const learningStatus = inferLearningStatus(sec)
+
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setSelectedId(s.id)}
+                    className={`w-full text-left px-4 py-3 hover:bg-gray-50 ${
+                      selectedId === s.id ? 'bg-primary-50' : ''
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-medium text-gray-900 truncate">{s.title}</div>
+                      <span className="text-[11px] text-gray-400 shrink-0">
+                        {latest
+                          ? new Date(latest.updatedAt).toLocaleString('zh-CN')
+                          : new Date(s.updatedAt).toLocaleString('zh-CN')}
+                      </span>
                     </div>
-                  </div>
-                  <div className="mt-1 text-xs text-gray-500 flex gap-2">
-                    <span>{s.platform || '-'}</span>
-                    {s.productSku ? <span>SKU: {s.productSku}</span> : <span>SKU: -</span>}
-                    <span>v{(s.breakdowns?.[0]?.version || 1) as any}</span>
-                  </div>
-                </button>
-              ))}
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+                      <span>{s.platform || '-'}</span>
+                      <span>SKU: {s.productSku || '-'}</span>
+                      <span>v{(latest?.version || 1) as any}</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full border text-[11px] ${
+                          learningStatus === '已掌握'
+                            ? 'bg-green-50 text-green-700 border-green-200'
+                            : learningStatus === '学习中'
+                            ? 'bg-blue-50 text-blue-700 border-blue-200'
+                            : learningStatus === '需复盘'
+                            ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                            : 'bg-gray-50 text-gray-600 border-gray-200'
+                        }`}
+                      >
+                        {learningStatus || '待学习'}
+                      </span>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           )}
         </div>
       </div>
 
-      {/* 右侧编辑器 */}
-      <div className="lg:col-span-8">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+      {/* 中间：拆解详情主区域 */}
+      <div className="lg:col-span-6">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 h-full flex flex-col">
           {!selectedId ? (
-            <div className="text-center py-12 text-gray-500">请选择左侧脚本</div>
+            <div className="text-center py-12 text-gray-500 text-sm">
+              请从左侧选择一个脚本
+            </div>
           ) : loadingDetail ? (
-            <div className="text-center py-12 text-gray-500">加载中...</div>
+            <div className="text-center py-12 text-gray-500 text-sm">加载中...</div>
           ) : !detail ? (
-            <div className="text-center py-12 text-gray-500">脚本不存在或无权限</div>
+            <div className="text-center py-12 text-gray-500 text-sm">
+              脚本不存在或你无权访问
+            </div>
           ) : (
             <>
-              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+              <div className="flex items-start justify-between gap-4 mb-4">
                 <div>
-                  <h2 className="text-xl font-semibold text-gray-900">{detail.title}</h2>
-                  <div className="mt-1 text-sm text-gray-600 flex flex-wrap gap-3">
+                  <h2 className="text-lg font-semibold text-gray-900">{detail.title}</h2>
+                  <div className="mt-1 flex flex-wrap gap-3 text-xs text-gray-600">
                     <span>平台：{detail.platform || '-'}</span>
                     <span>SKU：{detail.productSku || '-'}</span>
                     {detail.sourceUrl ? (
-                      <a className="text-primary-600 hover:underline" href={detail.sourceUrl} target="_blank" rel="noreferrer">
+                      <a
+                        className="text-primary-600 hover:underline"
+                        href={detail.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
                         来源链接
                       </a>
                     ) : (
                       <span>来源链接：-</span>
                     )}
-                  </div>
-                  <div className="mt-1 text-xs text-gray-500">
-                    最新版本：v{latestMeta?.version || 1} · 更新时间：{latestMeta ? new Date(latestMeta.updatedAt).toLocaleString('zh-CN') : '-'}
+                    <span>
+                      最新版本：v{latestMeta?.version || 1} · 更新时间：
+                      {latestMeta
+                        ? new Date(latestMeta.updatedAt).toLocaleString('zh-CN')
+                        : '-'}
+                    </span>
                   </div>
                 </div>
-
                 <div className="flex gap-2">
                   <button
                     onClick={() => fetchDetail(detail.id)}
-                    className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                    className="px-3 py-2 text-xs bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
                   >
                     刷新
                   </button>
                   <button
                     onClick={() => handleSave(false)}
                     disabled={!canEdit || saving}
-                    className="px-3 py-2 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-3 py-2 text-xs bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
                   >
-                    {saving ? '保存中...' : '保存'}
+                    {saving ? '保存中...' : '保存当前版本'}
                   </button>
                   <button
                     onClick={() => handleSave(true)}
                     disabled={!canEdit || saving}
-                    className="px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="生成新版本，保留历史"
+                    className="px-3 py-2 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                    title="生成新版本，保留历史拆解"
                   >
-                    新版本
+                    保存为新版本
                   </button>
                 </div>
               </div>
 
               {!canEdit && (
-                <div className="mb-3 p-3 rounded-lg bg-yellow-50 text-yellow-700 text-sm">
-                  你当前是只读权限（需要 admin/operator/editor 才能编辑）。
+                <div className="mb-3 p-3 rounded-lg bg-yellow-50 text-yellow-700 text-xs">
+                  当前账号为只读权限（admin / operator / editor 才能编辑拆解）。
                 </div>
               )}
               {hasLocalChange && (
-                <div className="mb-3 p-3 rounded-lg bg-blue-50 text-blue-700 text-sm">
-                  你有未保存的改动。系统不会自动覆盖你的编辑内容。
+                <div className="mb-3 p-3 rounded-lg bg-blue-50 text-blue-700 text-xs">
+                  你有未保存的改动。保存前系统不会用轮询结果覆盖你的编辑。
                 </div>
               )}
 
-              <textarea
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                disabled={!canEdit}
-                placeholder="在这里写爆款脚本拆解（支持 Markdown）：\n\n- 1s 钩子：...\n- 人设/场景：...\n- 痛点：...\n- 解决方案：...\n- 卖点：...\n- 口播/字幕：...\n- 镜头拆分：...\n- Call to Action：..."
-                className="w-full min-h-[420px] px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent font-mono text-sm"
-              />
+              <div className="space-y-3 overflow-y-auto">
+                {[
+                  {
+                    label: '视频定位',
+                    key: 'positioning',
+                    placeholder: '目标人群、使用场景、主打卖点…',
+                  },
+                  {
+                    label: '前 3 秒拆解',
+                    key: 'hook3s',
+                    placeholder: '开头 3 秒画面+文案+动作，钩子逻辑…',
+                  },
+                  {
+                    label: '节奏拆解',
+                    key: 'rhythm',
+                    placeholder: '整体节奏：段落划分、剪辑节奏、情绪起伏…',
+                  },
+                  {
+                    label: '镜头拆解',
+                    key: 'shots',
+                    placeholder: '镜头 1 / 2 / 3… 每个镜头的构图、运动方式…',
+                  },
+                  {
+                    label: '字幕 / 文案拆解',
+                    key: 'subtitles',
+                    placeholder: '口播、字幕、重点词强调、排版方式…',
+                  },
+                  {
+                    label: '音效 / BGM / 转场建议',
+                    key: 'audio',
+                    placeholder: 'BGM 类型、节奏点、转场方式、音效使用…',
+                  },
+                  {
+                    label: '这条内容的核心学习点',
+                    key: 'learnings',
+                    placeholder: '1. …\n2. …\n3. …',
+                  },
+                  {
+                    label: '常见错误提醒',
+                    key: 'pitfalls',
+                    placeholder: '剪辑师在仿拍时最容易犯的 3–5 个错误…',
+                  },
+                ].map((block) => (
+                  <div
+                    key={block.key}
+                    className="border border-gray-100 rounded-lg p-3 bg-gray-50/70"
+                  >
+                    <div className="text-xs font-medium text-gray-700 mb-1.5">
+                      {block.label}
+                    </div>
+                    <textarea
+                      value={(sections as any)[block.key] as string}
+                      onChange={(e) =>
+                        setSections((prev) => ({
+                          ...prev,
+                          [block.key]: e.target.value,
+                        }))
+                      }
+                      disabled={!canEdit}
+                      placeholder={block.placeholder}
+                      className="w-full min-h-[72px] px-2 py-1.5 border border-gray-200 rounded text-xs font-mono focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+                    />
+                  </div>
+                ))}
 
-              <div className="mt-4">
-                <h3 className="text-sm font-medium text-gray-900 mb-2">历史版本（最近 20 条）</h3>
+                <div className="border border-blue-100 rounded-lg p-3 bg-blue-50/50">
+                  <div className="text-xs font-semibold text-blue-800 mb-2">
+                    训练闭环（学习状态 / 练习成片 / 复盘）
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                    <div className="space-y-1">
+                      <div className="text-[11px] text-gray-600">学习状态</div>
+                      <select
+                        value={sections.learningStatus}
+                        onChange={(e) =>
+                          setSections((prev) => ({
+                            ...prev,
+                            learningStatus: e.target.value,
+                          }))
+                        }
+                        disabled={!canEdit}
+                        className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+                      >
+                        <option value="">未标记</option>
+                        <option value="待学习">待学习</option>
+                        <option value="学习中">学习中</option>
+                        <option value="已掌握">已掌握</option>
+                        <option value="需复盘">需复盘</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-[11px] text-gray-600">练习成片链接</div>
+                      <input
+                        value={sections.practiceUrl}
+                        onChange={(e) =>
+                          setSections((prev) => ({
+                            ...prev,
+                            practiceUrl: e.target.value,
+                          }))
+                        }
+                        disabled={!canEdit}
+                        placeholder="贴上剪辑练习的视频链接"
+                        className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1 md:col-span-1">
+                      <div className="text-[11px] text-gray-600">复盘记录</div>
+                      <textarea
+                        value={sections.reviewNotes}
+                        onChange={(e) =>
+                          setSections((prev) => ({
+                            ...prev,
+                            reviewNotes: e.target.value,
+                          }))
+                        }
+                        disabled={!canEdit}
+                        placeholder="本条脚本的整体复盘：哪里做好 / 哪里需改进…"
+                        className="w-full min-h-[60px] px-2 py-1 border border-gray-300 rounded text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 <div className="border rounded-lg overflow-hidden">
+                  <div className="px-3 py-2 border-b bg-gray-50 text-xs font-medium text-gray-700">
+                    历史版本（最近 {detail.breakdowns.length} 条）
+                  </div>
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">版本</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">更新时间</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">编辑者</th>
+                        <th className="px-3 py-2 text-left text-[11px] text-gray-500">
+                          版本
+                        </th>
+                        <th className="px-3 py-2 text-left text-[11px] text-gray-500">
+                          更新时间
+                        </th>
+                        <th className="px-3 py-2 text-left text-[11px] text-gray-500">
+                          编辑者
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
                       {detail.breakdowns.map((b) => (
                         <tr key={b.id}>
-                          <td className="px-4 py-2 text-sm">v{b.version}</td>
-                          <td className="px-4 py-2 text-sm text-gray-600">
+                          <td className="px-3 py-1.5 text-xs">v{b.version}</td>
+                          <td className="px-3 py-1.5 text-xs text-gray-600">
                             {new Date(b.updatedAt).toLocaleString('zh-CN')}
                           </td>
-                          <td className="px-4 py-2 text-sm text-gray-600">
+                          <td className="px-3 py-1.5 text-xs text-gray-600">
                             {b.editedBy?.name || b.editedBy?.email || '-'}
                           </td>
                         </tr>
@@ -399,6 +696,77 @@ export default function ScriptsPage() {
               </div>
             </>
           )}
+        </div>
+      </div>
+
+      {/* 右侧：实时更新与反馈区 */}
+      <div className="lg:col-span-3 space-y-4">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+          <div className="text-xs font-semibold text-gray-800 mb-2">
+            今日训练重点（同步给剪辑师）
+          </div>
+          <div className="space-y-2 text-xs">
+            <div>
+              <div className="text-[11px] text-gray-500 mb-1">今日新增要求</div>
+              <textarea
+                value={sections.todayFocus}
+                onChange={(e) =>
+                  setSections((prev) => ({ ...prev, todayFocus: e.target.value }))
+                }
+                disabled={!canEdit}
+                placeholder="例如：本周主练“前 3 秒钩子”和“卖点表达”，请优先看这条脚本的对应区块…"
+                className="w-full min-h-[60px] px-2 py-1 border border-gray-200 rounded text-xs"
+              />
+            </div>
+            <div>
+              <div className="text-[11px] text-gray-500 mb-1">负责人点评</div>
+              <textarea
+                value={sections.leadComment}
+                onChange={(e) =>
+                  setSections((prev) => ({ ...prev, leadComment: e.target.value }))
+                }
+                disabled={!canEdit}
+                placeholder="对最近剪辑产出的整体点评，与这条拆解的关系（示例：谁已经用好这个节奏、谁还需要注意…）"
+                className="w-full min-h-[60px] px-2 py-1 border border-gray-200 rounded text-xs"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 space-y-3">
+          <div className="text-xs font-semibold text-gray-800">
+            团队最近表现一览
+          </div>
+          <div>
+            <div className="text-[11px] text-gray-500 mb-1">最近高频错误</div>
+            <textarea
+              value={sections.frequentMistakes}
+              onChange={(e) =>
+                setSections((prev) => ({
+                  ...prev,
+                  frequentMistakes: e.target.value,
+                }))
+              }
+              disabled={!canEdit}
+              placeholder="例如：钩子没有对准痛点；字幕节奏跟不上；镜头变化太少…"
+              className="w-full min-h-[60px] px-2 py-1 border border-gray-200 rounded text-xs"
+            />
+          </div>
+          <div>
+            <div className="text-[11px] text-gray-500 mb-1">最近表现好的方法</div>
+            <textarea
+              value={sections.goodPatterns}
+              onChange={(e) =>
+                setSections((prev) => ({
+                  ...prev,
+                  goodPatterns: e.target.value,
+                }))
+              }
+              disabled={!canEdit}
+              placeholder="把团队最近做得好的做法沉淀出来，比如：哪条视频的节奏特别好、哪种转场方式效果好…"
+              className="w-full min-h-[60px] px-2 py-1 border border-gray-200 rounded text-xs"
+            />
+          </div>
         </div>
       </div>
     </div>
