@@ -464,8 +464,102 @@ export default function ScriptsPage() {
       <div className="lg:col-span-6">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 h-full flex flex-col">
           {!selectedId ? (
-            <div className="text-center py-12 text-gray-500 text-sm">
-              请从左侧选择一个脚本
+            <div className="flex-1 flex flex-col gap-4">
+              <div className="border-b pb-3">
+                <h2 className="text-lg font-semibold text-gray-900">
+                  剪辑训练首页 · 今日安排
+                </h2>
+                <p className="mt-1 text-xs text-gray-600">
+                  左侧选择具体脚本后可进入详细拆解，这里先给出今日学习建议和复盘方向。
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="border border-blue-100 rounded-lg p-3 bg-blue-50/60">
+                  <div className="text-xs font-semibold text-blue-900 mb-1.5">
+                    今日推荐学习
+                  </div>
+                  <ul className="list-disc list-inside text-[11px] text-blue-900 space-y-1">
+                    <li>优先看「前 3 秒拆解」和「节奏拆解」区块，明确钩子和整体节奏。</li>
+                    <li>对照本周主要爆款，找出 1–2 条节奏最顺的脚本进行复盘。</li>
+                    <li>尝试在自己的剪辑中复用至少一个新的镜头节奏或转场方式。</li>
+                  </ul>
+                </div>
+
+                <div className="border border-purple-100 rounded-lg p-3 bg-purple-50/60">
+                  <div className="text-xs font-semibold text-purple-900 mb-1.5">
+                    最近更新的拆解方法
+                  </div>
+                  <p className="text-[11px] text-purple-900 leading-relaxed">
+                    近期新增了对「字幕行距与节奏对齐」「卖点表达三步走」等方法的拆解。建议剪辑师在新项目前先快速浏览相关区块。
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="border border-red-100 rounded-lg p-3 bg-red-50/70">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-red-900">
+                      常见错误 TOP 3
+                    </span>
+                    <span className="text-[11px] text-red-500">先规避，再优化</span>
+                  </div>
+                  <ol className="list-decimal list-inside text-[11px] text-red-900 space-y-1">
+                    <li>开头 3 秒信息量不足，痛点不够明确。</li>
+                    <li>字幕节奏与画面、口播不同步，阅读负担过重。</li>
+                    <li>镜头变化少，导致中段节奏拖沓、完播率低。</li>
+                  </ol>
+                </div>
+
+                <div className="border border-green-100 rounded-lg p-3 bg-green-50/70">
+                  <div className="text-xs font-semibold text-green-900 mb-1.5">
+                    本周优秀案例（示意）
+                  </div>
+                  <p className="text-[11px] text-green-900">
+                    从最近数据中筛选出的高表现视频，会在左侧列表中被提前置顶。建议剪辑师优先拆解这些案例，重点看：
+                    开头钩子、镜头节奏、卖点表达和收尾 Call to Action。
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-2 border-t pt-3 flex flex-wrap gap-2">
+                <button
+                  onClick={() => {
+                    const first = scripts[0]
+                    if (first) setSelectedId(first.id)
+                  }}
+                  className="px-3 py-2 text-xs bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
+                  disabled={scripts.length === 0}
+                >
+                  去学习首个推荐脚本
+                </button>
+                <button
+                  onClick={() => {
+                    if (scripts.length > 0) {
+                      const latest = [...scripts].sort(
+                        (a, b) =>
+                          new Date(b.updatedAt).getTime() -
+                          new Date(a.updatedAt).getTime(),
+                      )[0]
+                      setSelectedId(latest.id)
+                    }
+                  }}
+                  className="px-3 py-2 text-xs bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                  disabled={scripts.length === 0}
+                >
+                  查看最新更新
+                </button>
+                <button
+                  onClick={() => {
+                    const needReview = scripts[0]
+                    if (needReview) setSelectedId(needReview.id)
+                  }}
+                  className="px-3 py-2 text-xs bg-blue-50 text-blue-700 rounded-lg border border-blue-200 hover:bg-blue-100 disabled:opacity-50"
+                  disabled={scripts.length === 0}
+                >
+                  开始本周复盘
+                </button>
+              </div>
             </div>
           ) : loadingDetail ? (
             <div className="text-center py-12 text-gray-500 text-sm">加载中...</div>
