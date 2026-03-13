@@ -423,34 +423,50 @@ export default function ScriptsPage() {
                     key={s.id}
                     onClick={() => setSelectedId(s.id)}
                     className={`w-full text-left px-4 py-3 hover:bg-gray-50 ${
-                      selectedId === s.id ? 'bg-primary-50' : ''
+                      selectedId === s.id ? 'bg-primary-50 border-l-2 border-primary-500' : ''
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="font-medium text-gray-900 truncate">{s.title}</div>
-                      <span className="text-[11px] text-gray-400 shrink-0">
-                        {latest
-                          ? new Date(latest.updatedAt).toLocaleString('zh-CN')
-                          : new Date(s.updatedAt).toLocaleString('zh-CN')}
-                      </span>
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
-                      <span>{s.platform || '-'}</span>
-                      <span>SKU: {s.productSku || '-'}</span>
-                      <span>v{(latest?.version || 1) as any}</span>
-                      <span
-                        className={`px-2 py-0.5 rounded-full border text-[11px] ${
-                          learningStatus === '已掌握'
-                            ? 'bg-green-50 text-green-700 border-green-200'
-                            : learningStatus === '学习中'
-                            ? 'bg-blue-50 text-blue-700 border-blue-200'
-                            : learningStatus === '需复盘'
-                            ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
-                            : 'bg-gray-50 text-gray-600 border-gray-200'
-                        }`}
-                      >
-                        {learningStatus || '待学习'}
-                      </span>
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-medium text-gray-900 truncate text-sm">
+                          {s.title}
+                        </div>
+                        <span className="text-[11px] text-gray-400 shrink-0">
+                          {latest
+                            ? new Date(latest.updatedAt).toLocaleString('zh-CN')
+                            : new Date(s.updatedAt).toLocaleString('zh-CN')}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+                        <span>{s.platform || '-'}</span>
+                        <span>SKU: {s.productSku || '-'}</span>
+                        <span>v{(latest?.version || 1) as any}</span>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap gap-1">
+                          {['开头', '节奏', '转场', '字幕', '卖点表达'].map((tag) => (
+                            <span
+                              key={tag}
+                              className="px-2 py-0.5 rounded-full bg-gray-50 text-[11px] text-gray-600 border border-gray-200"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                        <span
+                          className={`px-2 py-0.5 rounded-full border text-[11px] whitespace-nowrap ${
+                            learningStatus === '已掌握'
+                              ? 'bg-green-50 text-green-700 border-green-200'
+                              : learningStatus === '学习中'
+                              ? 'bg-blue-50 text-blue-700 border-blue-200'
+                              : learningStatus === '需复盘'
+                              ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                              : 'bg-gray-50 text-gray-600 border-gray-200'
+                          }`}
+                        >
+                          {learningStatus || '待学习'}
+                        </span>
+                      </div>
                     </div>
                   </button>
                 )
