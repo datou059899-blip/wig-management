@@ -59,8 +59,8 @@ vercel deploy --prod
 | `config.py` | 配置文件,修改API密钥和TikTok账号 |
 | `sync.py` | 同步主程序 |
 | `requirements.txt` | Python依赖 |
-| `启动同步.bat` | 一键启动同步(带界面) |
-| `设置定时任务.bat` | 设置Windows定时任务 |
+| `run_sync.bat` | 一键启动同步(带界面) |
+| `setup_task.bat` | 设置Windows定时任务 |
 | `logs/sync.log` | 同步日志文件 |
 
 ---
