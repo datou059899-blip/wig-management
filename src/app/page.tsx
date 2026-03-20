@@ -8,7 +8,7 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold text-gray-900">
-              假发产品管理系统
+              Sunnymay Hair
             </h1>
             <nav className="flex gap-4">
               <Link 
@@ -32,7 +32,7 @@ export default function Home() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="text-center mb-12">
           <h2 className="text-4xl font-bold text-gray-900 mb-4">
-            欢迎使用假发产品管理系统
+            欢迎使用 Sunnymay Hair 运营后台
           </h2>
           <p className="text-xl text-gray-600">
             多用户产品管理 + TikTok 同步 + 毛利计算 + 智能预警
@@ -135,7 +135,7 @@ export default function Home() {
       <footer className="bg-white border-t border-gray-200 mt-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <p className="text-center text-gray-500 text-sm">
-            © 2024 假发产品管理系统. All rights reserved.
+            © {new Date().getFullYear()} Sunnymay Hair. All rights reserved.
           </p>
         </div>
       </footer>

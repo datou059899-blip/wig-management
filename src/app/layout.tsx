@@ -6,8 +6,8 @@ import Providers from '@/components/Providers'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: '假发产品管理系统',
-  description: '假发产品管理 + TikTok 同步 + 毛利计算',
+  title: 'Sunnymay Hair',
+  description: 'Sunnymay Hair 运营后台 · 产品管理 + TikTok 同步 + 经营数据',
 }
 
 export default function RootLayout({

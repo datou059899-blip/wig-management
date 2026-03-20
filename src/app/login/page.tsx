@@ -4,6 +4,11 @@ import { signIn } from 'next-auth/react'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+const AUTH_ERROR_MESSAGES: Record<string, string> = {
+  ACCOUNT_DISABLED: '你的账号已被禁用，请联系管理员启用后再登录。',
+  INVALID_CREDENTIALS: '邮箱或密码错误',
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const [email, setEmail] = useState('')
@@ -24,7 +29,7 @@ export default function LoginPage() {
       })
 
       if (result?.error) {
-        setError('邮箱或密码错误')
+        setError(AUTH_ERROR_MESSAGES[result.error] || '登录失败，请重试')
       } else {
         router.push('/dashboard')
       }
@@ -43,7 +48,7 @@ export default function LoginPage() {
           <div className="hidden md:flex md:flex-col justify-between w-1/2 bg-gray-50 border-r border-gray-100 p-8">
             <div>
               <div className="text-sm font-medium tracking-wide text-primary-700 mb-2">
-                假发 · TikTok 电商经营台
+                Sunnymay Hair
               </div>
               <h1 className="text-2xl font-bold text-gray-900">
                 登录你的经营驾驶舱

@@ -28,6 +28,7 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
     const data: any = {}
     if (body.name !== undefined) data.name = body.name ? String(body.name) : null
     if (body.role !== undefined) data.role = String(body.role)
+    if (body.status !== undefined) data.status = body.status === 'disabled' ? 'disabled' : 'enabled'
     if (body.password) {
       data.password = await bcrypt.hash(String(body.password), 10)
     }
@@ -44,6 +45,7 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
         email: true,
         name: true,
         role: true,
+        status: true,
         createdAt: true,
       },
     })

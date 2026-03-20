@@ -38,7 +38,12 @@ export async function GET(request: NextRequest) {
         breakdowns: {
           orderBy: { version: 'desc' },
           take: 1,
-          select: { id: true, version: true, updatedAt: true, editedById: true },
+          select: {
+            id: true,
+            version: true,
+            updatedAt: true,
+            editedBy: { select: { id: true, name: true, email: true, role: true } },
+          },
         },
       },
     })

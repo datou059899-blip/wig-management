@@ -3,6 +3,11 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
 
+const AUTH_ERRORS = {
+  ACCOUNT_DISABLED: 'ACCOUNT_DISABLED',
+  INVALID_CREDENTIALS: 'INVALID_CREDENTIALS',
+} as const
+
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
@@ -20,8 +25,9 @@ export const authOptions: NextAuthOptions = {
           where: { email: credentials.email }
         })
 
-        if (!user) {
-          return null
+        if (!user) return null
+        if ((user as any).status === 'disabled') {
+          throw new Error(AUTH_ERRORS.ACCOUNT_DISABLED)
         }
 
         const isPasswordValid = await bcrypt.compare(
@@ -30,7 +36,7 @@ export const authOptions: NextAuthOptions = {
         )
 
         if (!isPasswordValid) {
-          return null
+          throw new Error(AUTH_ERRORS.INVALID_CREDENTIALS)
         }
 
         return {

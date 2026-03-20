@@ -1,19 +1,23 @@
+import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getDefaultRedirectForRole } from '@/lib/permissions'
 import Link from 'next/link'
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions)
-  
+  const userRole = (session?.user as any)?.role
+  if (userRole && userRole !== 'admin') {
+    redirect(getDefaultRedirectForRole(userRole))
+  }
+
   // 获取预警配置
   const configs = await prisma.config.findMany()
   const configMap = Object.fromEntries(configs.map(c => [c.key, c.value]))
   const exchangeRate = parseFloat(configMap.exchange_rate || '7.2')
   const stockWarningThreshold = parseInt(configMap.stock_warning_threshold || '10')
   const profitThreshold = parseFloat(configMap.profit_margin_warning_threshold || '20')
-
-  const userRole = (session?.user as any)?.role
 
   const [totalProducts, totalSynced, products] = await Promise.all([
     prisma.product.count(),
@@ -83,8 +87,9 @@ export default async function DashboardPage() {
   const roleLabel =
     userRole === 'admin' ? '管理员' :
     userRole === 'operator' ? '运营' :
-    userRole === 'advertiser' ? '投手' :
-    userRole === 'editor' ? '剪辑师' : '用户'
+    userRole === 'optimizer' ? '投手' :
+    userRole === 'editor' ? '剪辑师' :
+    userRole === 'viewer' ? '只读' : '用户'
 
   const todayTotalIssues =
     missingInfo.length +
@@ -103,7 +108,7 @@ export default async function DashboardPage() {
                 {roleLabel} · {session?.user?.name || session?.user?.email}
               </div>
               <h1 className="mt-2 text-2xl md:text-3xl font-bold text-gray-900">
-                假发 · TikTok 经营驾驶舱
+                Sunnymay Hair · 经营驾驶舱
               </h1>
               <p className="mt-2 text-gray-600 max-w-2xl">
                 围绕一线运营和投手的日常，聚焦今日异常商品、待处理事项和重点投放商品：发现缺信息、定位价格异常、识别低毛利与断货风险，并辅助你判断哪些假发 SKU 值得继续推量。

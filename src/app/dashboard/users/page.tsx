@@ -2,41 +2,51 @@
 
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
+import { useRouter } from 'next/navigation'
+import { ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, canAccessUsers } from '@/lib/permissions'
+import { PageHeader } from '@/components/layout/PageHeader'
 
 type User = {
   id: string
   email: string
   name?: string | null
   role: string
+  status?: string
   createdAt: string
 }
 
-const ROLE_OPTIONS = [
-  'admin',
-  'operator',
-  'advertiser',
-  'editor',
-]
-
 export default function UsersPage() {
+  const router = useRouter()
   const { data: session } = useSession()
   const role = (session?.user as any)?.role
-  const isAdmin = role === 'admin'
+  const isAdmin = canAccessUsers(role)
+
+  useEffect(() => {
+    if (session !== undefined && !isAdmin) {
+      router.replace('/dashboard')
+    }
+  }, [session, isAdmin, router])
 
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<{ type: 'success' | 'error' | ''; text: string }>({ type: '', text: '' })
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   const [newEmail, setNewEmail] = useState('')
   const [newName, setNewName] = useState('')
   const [newPassword, setNewPassword] = useState('')
-  const [newRole, setNewRole] = useState('editor')
+  const [newRole, setNewRole] = useState<string>('operator')
 
   useEffect(() => {
     if (!isAdmin) return
     fetchUsers()
   }, [isAdmin])
+
+  useEffect(() => {
+    if (!message) return
+    const t = setTimeout(() => setMessage(null), 3000)
+    return () => clearTimeout(t)
+  }, [message])
 
   const fetchUsers = async () => {
     setLoading(true)
@@ -47,6 +57,7 @@ export default function UsersPage() {
         const list: User[] = (data.users || []).map((u: any) => ({
           ...u,
           createdAt: String(u.createdAt),
+          status: u.status || 'enabled',
         }))
         setUsers(list)
       } else {
@@ -62,7 +73,7 @@ export default function UsersPage() {
   const handleCreate = async () => {
     if (!newEmail.trim() || !newPassword.trim()) return
     setSaving(true)
-    setMessage({ type: '', text: '' })
+    setMessage(null)
     try {
       const res = await fetch('/api/users', {
         method: 'POST',
@@ -91,19 +102,19 @@ export default function UsersPage() {
     }
   }
 
-  const handleUpdateRole = async (id: string, role: string) => {
+  const handleUpdateRole = async (id: string, newRole: string) => {
     setSaving(true)
-    setMessage({ type: '', text: '' })
+    setMessage(null)
     try {
       const res = await fetch(`/api/users/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role }),
+        body: JSON.stringify({ role: newRole }),
       })
       const data = await res.json()
       if (res.ok) {
         setMessage({ type: 'success', text: '已更新角色' })
-        setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, role } : u)))
+        setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, role: newRole } : u)))
       } else {
         setMessage({ type: 'error', text: data.error || '更新失败' })
       }
@@ -114,11 +125,39 @@ export default function UsersPage() {
     }
   }
 
+  const handleToggleStatus = async (u: User) => {
+    const nextStatus = u.status === 'disabled' ? 'enabled' : 'disabled'
+    const action = nextStatus === 'disabled' ? '禁用' : '启用'
+    if (!window.confirm(`确定要${action}用户 ${u.email} 吗？`)) return
+    setSaving(true)
+    setMessage(null)
+    try {
+      const res = await fetch(`/api/users/${u.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setMessage({ type: 'success', text: `已${action}用户` })
+        setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, status: nextStatus } : x)))
+      } else {
+        setMessage({ type: 'error', text: data.error || `${action}失败` })
+      }
+    } catch {
+      setMessage({ type: 'error', text: `${action}失败` })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleResetPassword = async (id: string) => {
+    const confirm = window.confirm('确定要重置该用户的密码吗？重置后需要把新密码单独告知对方。')
+    if (!confirm) return
     const pwd = window.prompt('请输入新的密码：')
     if (!pwd) return
     setSaving(true)
-    setMessage({ type: '', text: '' })
+    setMessage(null)
     try {
       const res = await fetch(`/api/users/${id}`, {
         method: 'PATCH',
@@ -138,23 +177,33 @@ export default function UsersPage() {
     }
   }
 
-  if (!isAdmin) {
+  if (session === undefined || !isAdmin) {
     return (
-      <div className="text-center py-12">
-        <p className="text-gray-500">只有管理员可以访问用户管理</p>
+      <div className="flex items-center justify-center py-20 text-gray-500">
+        {session === undefined ? '加载中...' : '无权限访问用户管理，正在跳转...'}
       </div>
     )
   }
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">用户管理</h1>
-        <p className="text-gray-600">创建账号、分配角色、为剪辑师开通访问权限</p>
-      </div>
+      <PageHeader
+        title="用户管理"
+        description="创建账号、分配角色、启用/禁用用户，控制不同角色的访问权限"
+        actions={
+          <span className="text-xs text-gray-500">
+            当前共 {users.length} 个用户
+          </span>
+        }
+      />
 
-      {message.text && (
-        <div className={`mb-4 p-3 rounded-lg ${message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+      {message && (
+        <div
+          className={`mb-4 p-3 rounded-lg ${
+            message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'
+          }`}
+          role="alert"
+        >
           {message.text}
         </div>
       )}
@@ -182,17 +231,20 @@ export default function UsersPage() {
             placeholder="初始密码"
             className="px-3 py-2 border border-gray-300 rounded-lg"
           />
-          <select
-            value={newRole}
-            onChange={(e) => setNewRole(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg"
-          >
-            {ROLE_OPTIONS.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
+          <div>
+            <select
+              value={newRole}
+              onChange={(e) => setNewRole(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            >
+              {ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABELS[r] || r}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-500">{ROLE_DESCRIPTIONS[newRole] || ''}</p>
+          </div>
         </div>
         <div className="mt-4">
           <button
@@ -211,7 +263,7 @@ export default function UsersPage() {
         {loading ? (
           <div className="text-center py-10 text-gray-500">加载中...</div>
         ) : users.length === 0 ? (
-          <div className="text-center py-10 text-gray-500">暂无用户</div>
+          <div className="text-center py-10 text-gray-500">暂无用户。你可以在上方创建第一个管理员或运营账号。</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
@@ -220,6 +272,8 @@ export default function UsersPage() {
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">邮箱</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">姓名</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">角色</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">状态</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">可访问模块</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">创建时间</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">操作</th>
                 </tr>
@@ -235,22 +289,47 @@ export default function UsersPage() {
                         onChange={(e) => handleUpdateRole(u.id, e.target.value)}
                         className="px-2 py-1 border border-gray-300 rounded-lg text-sm"
                       >
-                        {ROLE_OPTIONS.map((r) => (
+                        {ROLES.map((r) => (
                           <option key={r} value={r}>
-                            {r}
+                            {ROLE_LABELS[r] || r}
                           </option>
                         ))}
                       </select>
+                      <p className="text-xs text-gray-500 mt-0.5">{ROLE_DESCRIPTIONS[u.role] || ''}</p>
+                    </td>
+                    <td className="px-4 py-2 text-sm">
+                      <span
+                        className={
+                          (u.status || 'enabled') === 'disabled'
+                            ? 'text-amber-600 font-medium'
+                            : 'text-green-600'
+                        }
+                      >
+                        {(u.status || 'enabled') === 'disabled' ? '已禁用' : '启用'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-xs text-gray-600 max-w-[260px]">
+                      {ROLE_DESCRIPTIONS[u.role] || '-'}
                     </td>
                     <td className="px-4 py-2 text-sm text-gray-500">
                       {new Date(u.createdAt).toLocaleString('zh-CN')}
                     </td>
-                    <td className="px-4 py-2 text-sm">
+                    <td className="px-4 py-2 text-sm space-x-2">
                       <button
                         onClick={() => handleResetPassword(u.id)}
                         className="px-3 py-1 text-xs text-blue-600 border border-blue-200 rounded hover:bg-blue-50"
                       >
                         重置密码
+                      </button>
+                      <button
+                        onClick={() => handleToggleStatus(u)}
+                        className={`px-3 py-1 text-xs rounded border ${
+                          (u.status || 'enabled') === 'disabled'
+                            ? 'text-green-600 border-green-200 hover:bg-green-50'
+                            : 'text-amber-600 border-amber-200 hover:bg-amber-50'
+                        }`}
+                      >
+                        {(u.status || 'enabled') === 'disabled' ? '启用' : '禁用'}
                       </button>
                     </td>
                   </tr>
@@ -263,4 +342,3 @@ export default function UsersPage() {
     </div>
   )
 }
-

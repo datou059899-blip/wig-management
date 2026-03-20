@@ -5,7 +5,7 @@ const prisma = new PrismaClient()
 
 async function main() {
   const adminEmail = (process.env.ADMIN_EMAIL || 'admin@test.com').trim()
-  const adminPassword = (process.env.ADMIN_PASSWORD || 'password').trim()
+  const adminPassword = (process.env.ADMIN_PASSWORD || (process.env as any).ADMIN_PASSWORDyuhan || 'password').trim()
   const adminName = (process.env.ADMIN_NAME || '管理员').trim()
 
   // 创建管理员账号（建议在生产环境通过环境变量设置 ADMIN_EMAIL/ADMIN_PASSWORD）

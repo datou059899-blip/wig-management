@@ -30,6 +30,7 @@ export async function GET() {
         email: true,
         name: true,
         role: true,
+        status: true,
         createdAt: true,
       },
     })
@@ -52,6 +53,7 @@ export async function POST(request: NextRequest) {
     const password = String(body.password || '').trim()
     const name = body.name ? String(body.name) : null
     const role = (body.role || 'operator') as string
+    const status = (body.status as string) === 'disabled' ? 'disabled' : 'enabled'
 
     if (!email || !password) {
       return NextResponse.json({ error: '邮箱和密码必填' }, { status: 400 })
@@ -65,12 +67,14 @@ export async function POST(request: NextRequest) {
         name,
         password: hashed,
         role,
+        status,
       },
       select: {
         id: true,
         email: true,
         name: true,
         role: true,
+        status: true,
         createdAt: true,
       },
     })
