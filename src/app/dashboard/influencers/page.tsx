@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { canAccessInfluencers, canManageInfluencers } from '@/lib/permissions'
@@ -81,7 +81,8 @@ const coopLabel: Record<CooperationLevel, string> = {
 const coopTone: Record<CooperationLevel, string> = {
   normal: 'bg-gray-50 text-gray-700 border-gray-200',
   key: 'bg-amber-50 text-amber-800 border-amber-200',
-  deep: 'bg-purple-50 text-purple-700 border-purple-200',
+  deep:
+    'bg-purple-50 text-purple-800 border-purple-300 ring-1 ring-purple-300/70 shadow-sm font-semibold',
 }
 
 function CoopBadge({ level }: { level?: CooperationLevel }) {
@@ -144,18 +145,62 @@ function daysDiffFromNow(iso?: string) {
   return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24))
 }
 
-function computeReminder(x: Influencer): { level: 'info' | 'warn'; text: string } | null {
-  const last = x.lastFollowUpAt || x.sample?.sentAt || x.deliverables?.postedAt
-  const d = daysDiffFromNow(last)
-  if (x.status === 'sent' && (d == null || d >= 3)) return { level: 'warn', text: '已发送 3 天未回复：建议二次跟进' }
-  if (x.status === 'cooperating' && (d == null || d >= 2)) return { level: 'warn', text: '合作中 2 天无进展：建议推进寄样/排期' }
+type OperatingReminder = {
+  level: 'info' | 'warn'
+  /** 当前问题（运营可读的一句话） */
+  issue: string
+  /** 建议下一步动作 */
+  nextStep: string
+  /** 用于排序：天数越大越靠前展示 */
+  sortDays: number
+}
+
+function computeReminder(x: Influencer): OperatingReminder | null {
+  if (x.status === 'sent') {
+    const anchor = x.lastFollowUpAt || x.firstContactAt
+    const d = daysDiffFromNow(anchor)
+    if (anchor != null && d != null && d >= 3) {
+      return {
+        level: 'warn',
+        issue: '已发送超过 3 天未回复',
+        nextStep: '换话术二次触达或换渠道联系，并更新跟进记录与回复状态',
+        sortDays: d,
+      }
+    }
+    return null
+  }
   if (x.status === 'sample_sent') {
     const sd = daysDiffFromNow(x.sample?.sentAt)
-    if (sd != null && sd >= 7 && !x.deliverables?.videoUrl) return { level: 'warn', text: '已寄样 7 天未出片：建议催出片' }
+    if (sd != null && sd >= 5) {
+      return {
+        level: 'warn',
+        issue: '已寄样超过 5 天未确认',
+        nextStep: '确认签收与意向，约定出片时间并记录一条寄样跟进',
+        sortDays: sd,
+      }
+    }
+    return null
   }
-  if (x.status === 'posted') {
-    const pd = daysDiffFromNow(x.deliverables?.postedAt)
-    if (pd != null && pd >= 3) return { level: 'info', text: '已出片 3 天：建议复盘合作' }
+  if (x.status === 'cooperating') {
+    const anchor = x.lastFollowUpAt
+    const d = daysDiffFromNow(anchor)
+    if (!anchor || d == null) {
+      return {
+        level: 'warn',
+        issue: '合作中暂无最近跟进记录',
+        nextStep: '补记当前推进节点（脚本/寄样/排期）并设置下次跟进时间',
+        sortDays: 999,
+      }
+    }
+    if (d >= 2) {
+      return {
+        level: 'warn',
+        issue: '合作中超过 2 天无推进',
+        nextStep: '推动脚本确认、寄样或发布排期落地，并更新下一步动作',
+        sortDays: d,
+      }
+    }
+    return null
   }
   return null
 }
@@ -487,14 +532,24 @@ function Drawer({
   influencer,
   onAddFollowUp,
   onUpdateStatus,
+  scrollTarget,
+  onScrollTargetConsumed,
+  canManageProfile,
+  onEditProfile,
 }: {
   open: boolean
   onClose: () => void
   influencer: Influencer | null
   onAddFollowUp: (id: string, note: string, nextAction?: string) => void
   onUpdateStatus: (id: string, status: InfluencerStatus) => void
+  /** 打开后滚动到「历史跟进」区域 */
+  scrollTarget?: 'timeline' | null
+  onScrollTargetConsumed?: () => void
+  canManageProfile?: boolean
+  onEditProfile?: () => void
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null)
+  const timelineSectionRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -504,6 +559,15 @@ function Drawer({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
+
+  useEffect(() => {
+    if (!open || scrollTarget !== 'timeline' || !influencer) return
+    const id = requestAnimationFrame(() => {
+      timelineSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      onScrollTargetConsumed?.()
+    })
+    return () => cancelAnimationFrame(id)
+  }, [open, scrollTarget, influencer?.id, onScrollTargetConsumed])
 
   if (!open || !influencer) return null
 
@@ -523,6 +587,7 @@ function Drawer({
       >
         <div className="px-4 py-3 border-b flex items-start justify-between gap-3">
           <div>
+            <div className="text-[11px] text-gray-500">达人资料</div>
             <div className="text-sm font-semibold text-gray-900">{influencer.nickname}</div>
             <div className="mt-0.5 flex flex-wrap gap-2 text-[11px] text-gray-500">
               <span>{influencer.platform}</span>
@@ -532,12 +597,24 @@ function Drawer({
               <span>{formatFollowers(influencer.followers)} 粉丝</span>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
-          >
-            关闭
-          </button>
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
+            {canManageProfile && onEditProfile && (
+              <button
+                type="button"
+                onClick={onEditProfile}
+                className="px-2.5 py-1.5 text-xs rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+              >
+                编辑资料
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+            >
+              关闭
+            </button>
+          </div>
         </div>
 
         <div className="px-4 py-3 border-b bg-gray-50 flex flex-wrap items-center gap-2">
@@ -578,12 +655,12 @@ function Drawer({
 
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
           {(influencer.cooperationLevel || 'normal') === 'deep' && (
-            <div className="border border-purple-100 rounded-xl p-3 bg-purple-50">
+            <div className="border border-purple-200 rounded-xl p-3 bg-purple-50/90 ring-1 ring-purple-200/80">
               <div className="text-xs font-semibold text-purple-900 mb-2">深度合作要点</div>
               <div className="space-y-1">
-                {infoRow('固定合作频率', influencer.deepFrequency)}
-                {infoRow('重点合作产品', (influencer.deepKeyProducts || []).join(' / '))}
                 {infoRow('定制合作要求', influencer.deepRequirements)}
+                {infoRow('重点合作产品', (influencer.deepKeyProducts || []).join(' / '))}
+                {infoRow('固定合作频率', influencer.deepFrequency)}
                 {infoRow('特别注意事项', influencer.deepNotes)}
               </div>
             </div>
@@ -603,7 +680,31 @@ function Drawer({
             <div className="text-xs font-semibold text-gray-900 mb-2">联系方式</div>
             <div className="divide-y">
               {infoRow('邮箱', influencer.email)}
+              {infoRow('电话', influencer.phone)}
               {infoRow('WhatsApp', influencer.whatsapp)}
+              {infoRow('Instagram', influencer.instagram)}
+              {infoRow('其他', influencer.otherContact)}
+            </div>
+          </div>
+
+          <div className="border border-gray-100 rounded-xl p-3">
+            <div className="text-xs font-semibold text-gray-900 mb-2">当前进度摘要</div>
+            <div className="divide-y">
+              {infoRow('当前状态', statusLabel[influencer.status])}
+              {infoRow('合作层级', coopLabel[(influencer.cooperationLevel || 'normal') as CooperationLevel])}
+              {infoRow('下一步动作', influencer.nextAction)}
+              {infoRow(
+                '最新跟进时间',
+                influencer.lastFollowUpAt ? new Date(influencer.lastFollowUpAt).toLocaleString('zh-CN') : undefined,
+              )}
+              {infoRow('最新跟进摘要', influencer.lastFollowUpNote)}
+            </div>
+          </div>
+
+          <div className="border border-gray-100 rounded-xl p-3">
+            <div className="text-xs font-semibold text-gray-900 mb-2">备注</div>
+            <div className="text-[11px] text-gray-700 leading-relaxed whitespace-pre-wrap">
+              {influencer.lastFollowUpNote?.trim() ? influencer.lastFollowUpNote : '暂无单独备注，可在编辑资料中补充或查看最新跟进。'}
             </div>
           </div>
 
@@ -633,8 +734,12 @@ function Drawer({
             </div>
           </div>
 
-          <div className="border border-gray-100 rounded-xl p-3">
-            <div className="text-xs font-semibold text-gray-900 mb-2">跟进时间线</div>
+          <div
+            ref={timelineSectionRef}
+            id="influencer-history-followups"
+            className="border border-gray-100 rounded-xl p-3 scroll-mt-4"
+          >
+            <div className="text-xs font-semibold text-gray-900 mb-2">历史跟进记录</div>
             <div className="space-y-2">
               {influencer.timeline
                 .slice()
@@ -709,9 +814,13 @@ export default function InfluencersPage() {
   const [followersBand, setFollowersBand] = useState<string>('all')
   const [followUpRecency, setFollowUpRecency] = useState<string>('all')
   const [debugOpen, setDebugOpen] = useState(false)
+  const [devToolsOpen, setDevToolsOpen] = useState(false)
+  const [resetDangerOpen, setResetDangerOpen] = useState(false)
+  const [resetPhrase, setResetPhrase] = useState('')
 
   const [selected, setSelected] = useState<Influencer | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [drawerScrollTarget, setDrawerScrollTarget] = useState<'timeline' | null>(null)
   const [rowMenuOpenId, setRowMenuOpenId] = useState<string>('')
 
   const [actionOpen, setActionOpen] = useState(false)
@@ -1008,9 +1117,30 @@ export default function InfluencersPage() {
     return list
   }, [baseItems, search, platform, region, status, owner, coopLevel, productLine, followersBand, followUpRecency, statFilter, effectiveStatus])
 
-  const openDetail = (x: Influencer) => {
+  const consumeDrawerScroll = useCallback(() => setDrawerScrollTarget(null), [])
+
+  const openDetail = (x: Influencer, scrollTo?: 'timeline') => {
     setSelected(x)
+    setDrawerScrollTarget(scrollTo === 'timeline' ? 'timeline' : null)
     setDrawerOpen(true)
+  }
+
+  const isAdmin = role === 'admin'
+
+  const backupInfluencersToLocal = (): string | null => {
+    try {
+      const data = itemsRef.current
+      if (!data || data.length === 0) return null
+      const key = `wm_influencers_backup_${Date.now()}`
+      localStorage.setItem(key, JSON.stringify(data))
+      const keys = Object.keys(localStorage)
+        .filter((k) => k.startsWith('wm_influencers_backup_'))
+        .sort()
+      keys.slice(0, Math.max(0, keys.length - 5)).forEach((k) => localStorage.removeItem(k))
+      return key
+    } catch {
+      return null
+    }
   }
 
   const appendFollowUp = async (id: string, entry: FollowUp, patch?: Partial<Influencer>) => {
@@ -1336,8 +1466,34 @@ export default function InfluencersPage() {
           >
             新建跟进记录
           </button>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setDevToolsOpen((v) => !v)}
+              className="px-3 py-2 text-xs bg-amber-50 border border-amber-200 text-amber-900 rounded-lg hover:bg-amber-100"
+            >
+              开发工具
+              <span className="ml-1 opacity-70">{devToolsOpen ? '▲' : '▼'}</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {isAdmin && devToolsOpen && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 flex flex-wrap items-center gap-2 text-[11px] text-amber-950">
+          <span className="font-medium">仅管理员可见 · 危险操作区</span>
+          <button
+            type="button"
+            onClick={() => {
+              setResetPhrase('')
+              setResetDangerOpen(true)
+            }}
+            className="px-2.5 py-1.5 rounded-md bg-white border border-amber-300 text-amber-900 hover:bg-amber-100"
+          >
+            重置测试数据…
+          </button>
+        </div>
+      )}
 
       {isDev && debugOpen && (
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-700">
@@ -1374,8 +1530,8 @@ export default function InfluencersPage() {
         {items && (() => {
           const urgent = [...items]
             .map((x) => ({ x, r: computeReminder(x) }))
-            .filter((p) => Boolean(p.r))
-            .sort((a, b) => (daysDiffFromNow(a.x.lastFollowUpAt || a.x.sample?.sentAt || a.x.deliverables?.postedAt) ?? 999) - (daysDiffFromNow(b.x.lastFollowUpAt || b.x.sample?.sentAt || b.x.deliverables?.postedAt) ?? 999))
+            .filter((p): p is { x: Influencer; r: OperatingReminder } => Boolean(p.r))
+            .sort((a, b) => (b.r.sortDays ?? 0) - (a.r.sortDays ?? 0))
             .slice(0, 5)
 
           if (urgent.length === 0) {
@@ -1386,15 +1542,15 @@ export default function InfluencersPage() {
               {urgent.map(({ x, r }) => (
                 <button
                   key={x.id}
+                  type="button"
                   onClick={() => openDetail(x)}
                   className={`text-left rounded-lg border px-3 py-2 hover:bg-gray-50 ${
-                    (r as any).level === 'warn' ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-gray-50'
+                    r.level === 'warn' ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-gray-50'
                   }`}
                 >
-                  <div className="text-xs font-medium text-gray-900">{(r as any).text}</div>
-                  <div className="mt-1 text-[11px] text-gray-600">
-                    {x.nickname} · 下一步：{x.nextAction}
-                  </div>
+                  <div className="text-xs font-semibold text-gray-900">{x.nickname}</div>
+                  <div className="mt-1 text-[11px] text-gray-800 leading-snug">当前问题：{r.issue}</div>
+                  <div className="mt-1.5 text-[11px] text-primary-700 leading-snug">建议下一步：{r.nextStep}</div>
                 </button>
               ))}
             </div>
@@ -2186,40 +2342,16 @@ export default function InfluencersPage() {
           </div>
         </div>
 
-        <div className="mt-3 flex items-center justify-between">
+        <div className="mt-3 flex items-center justify-between gap-2">
           <div className="text-[11px] text-gray-500">
             当前 {filtered.length} 位达人（按“下一步动作优先”排序）
           </div>
           <button
+            type="button"
             onClick={resetFilters}
-            className="px-2.5 py-1.5 text-xs bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+            className="px-2.5 py-1.5 text-xs bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 shrink-0"
           >
             清空筛选
-          </button>
-          <button
-            onClick={() => {
-              if (!canManage) {
-                pushToast('error', '无权限重置数据')
-                return
-              }
-              void (async () => {
-                try {
-                  setLoading(true)
-                  await apiSeed()
-                  await loadInfluencers()
-                  pushToast('success', '已重置为默认测试数据（全员可见）')
-                  resetFilters()
-                } catch (e) {
-                  console.error(e)
-                  pushToast('error', '重置失败')
-                } finally {
-                  setLoading(false)
-                }
-              })()
-            }}
-            className="px-2.5 py-1.5 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100 border border-red-100"
-          >
-            重置测试数据
           </button>
         </div>
       </div>
@@ -2371,8 +2503,9 @@ export default function InfluencersPage() {
                           更多
                         </button>
                         {rowMenuOpenId === x.id && (
-                          <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg text-xs z-20">
+                          <div className="absolute right-0 mt-1 w-44 bg-white border border-gray-200 rounded-md shadow-lg text-xs z-20">
                             <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 setRowMenuOpenId('')
@@ -2383,6 +2516,7 @@ export default function InfluencersPage() {
                               查看详情
                             </button>
                             <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 setRowMenuOpenId('')
@@ -2394,6 +2528,7 @@ export default function InfluencersPage() {
                               编辑资料
                             </button>
                             <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 setRowMenuOpenId('')
@@ -2406,6 +2541,17 @@ export default function InfluencersPage() {
                               className="block w-full px-3 py-1.5 text-left hover:bg-gray-50 text-gray-700"
                             >
                               重新分配负责人
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setRowMenuOpenId('')
+                                openDetail(x, 'timeline')
+                              }}
+                              className="block w-full px-3 py-1.5 text-left hover:bg-gray-50 text-gray-700"
+                            >
+                              查看历史跟进
                             </button>
                             <button
                               onClick={(e) => {
@@ -2495,10 +2641,108 @@ export default function InfluencersPage() {
       <Drawer
         open={drawerOpen}
         influencer={selected}
-        onClose={() => setDrawerOpen(false)}
+        onClose={() => {
+          setDrawerOpen(false)
+          setDrawerScrollTarget(null)
+        }}
+        scrollTarget={drawerScrollTarget}
+        onScrollTargetConsumed={consumeDrawerScroll}
+        canManageProfile={canManage}
+        onEditProfile={
+          canManage
+            ? () => {
+                if (!selected) return
+                const cur = selected
+                setDrawerOpen(false)
+                setDrawerScrollTarget(null)
+                openUpsert(cur)
+              }
+            : undefined
+        }
         onAddFollowUp={addFollowUp}
         onUpdateStatus={updateStatus}
       />
+
+      <Modal
+        open={resetDangerOpen}
+        title="确认重置测试数据"
+        subtitle="此操作会重置当前测试数据，可能覆盖现有内容，且不可恢复。"
+        onClose={() => {
+          setResetDangerOpen(false)
+          setResetPhrase('')
+        }}
+        footer={
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setResetDangerOpen(false)
+                setResetPhrase('')
+              }}
+              className="px-3 py-2 text-xs bg-white border border-gray-200 text-gray-800 rounded-lg hover:bg-gray-50"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={resetPhrase.trim() !== 'RESET' || !canManage}
+              onClick={() => {
+                if (!isAdmin || !canManage) {
+                  pushToast('error', '无权限执行重置')
+                  return
+                }
+                if (resetPhrase.trim() !== 'RESET') return
+                void (async () => {
+                  try {
+                    setLoading(true)
+                    const key = backupInfluencersToLocal()
+                    await apiSeed()
+                    await loadInfluencers()
+                    setResetDangerOpen(false)
+                    setResetPhrase('')
+                    resetFilters()
+                    pushToast(
+                      'success',
+                      key
+                        ? `已重置为默认测试数据。已自动备份至浏览器本地（键：${key}）`
+                        : '已重置为默认测试数据',
+                    )
+                  } catch (e) {
+                    console.error(e)
+                    pushToast('error', '重置失败')
+                  } finally {
+                    setLoading(false)
+                  }
+                })()
+              }}
+              className="px-3 py-2 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-40"
+            >
+              我了解风险，确认重置
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3 text-xs text-gray-800">
+          <p className="leading-relaxed">
+            执行前会尽量将<strong className="text-gray-900">当前列表快照</strong>写入本机{' '}
+            <code className="text-[11px] bg-gray-100 px-1 rounded">localStorage</code>（最多保留最近 5
+            份），但<strong className="text-red-700">不能替代正式备份</strong>。
+          </p>
+          <p className="text-red-700 font-medium">
+            请在下方输入框中输入大写 <code className="bg-red-50 px-1 rounded">RESET</code> 以解锁确认按钮。
+          </p>
+          <div>
+            <div className="text-[11px] text-gray-600 mb-1">输入 RESET</div>
+            <input
+              value={resetPhrase}
+              onChange={(e) => setResetPhrase(e.target.value)}
+              className="w-full px-2.5 py-2 border border-gray-200 rounded-lg font-mono text-sm"
+              placeholder="RESET"
+              autoComplete="off"
+            />
+          </div>
+        </div>
+      </Modal>
 
       {/* 下一步动作弹窗（按状态推进流程） */}
       <Modal
