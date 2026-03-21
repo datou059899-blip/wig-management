@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     const { type, data } = body;
 
     // 记录同步日志
-    const syncLog = await prisma.tiktokSyncLog.create({
+    const syncLog = await prisma.tikTokSyncLog.create({
       data: {
         type,
         status: 'success',
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
     console.error('TikTok import error:', error);
     
     // 记录失败日志
-    await prisma.tiktokSyncLog.create({
+    await prisma.tikTokSyncLog.create({
       data: {
         type: 'unknown',
         status: 'failed',
@@ -114,7 +114,7 @@ async function handleOrdersImport(orders: any[], logId: string) {
   }
 
   // 更新日志
-  await prisma.tiktokSyncLog.update({
+  await prisma.tikTokSyncLog.update({
     where: { id: logId },
     data: { dataCount: imported, message: `Imported ${imported} orders, skipped ${skipped}` }
   });
@@ -176,7 +176,7 @@ async function handleProductsImport(products: any[], logId: string) {
   }
 
   // 更新日志
-  await prisma.tiktokSyncLog.update({
+  await prisma.tikTokSyncLog.update({
     where: { id: logId },
     data: { dataCount: imported, message: `Imported ${imported} products, skipped ${skipped}` }
   });
@@ -237,7 +237,7 @@ async function handleAdsImport(adsData: any[], logId: string) {
   }
 
   // 更新日志
-  await prisma.tiktokSyncLog.update({
+  await prisma.tikTokSyncLog.update({
     where: { id: logId },
     data: { dataCount: imported, message: `Imported ${imported} ad records, skipped ${skipped}` }
   });
@@ -260,7 +260,7 @@ export async function GET(request: NextRequest) {
   const limit = parseInt(searchParams.get('limit') || '50');
   const offset = parseInt(searchParams.get('offset') || '0');
 
-  const logs = await prisma.tiktokSyncLog.findMany({
+  const logs = await prisma.tikTokSyncLog.findMany({
     take: limit,
     skip: offset,
     orderBy: { createdAt: 'desc' }
