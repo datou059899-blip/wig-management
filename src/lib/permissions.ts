@@ -1,13 +1,15 @@
 /**
  * 基于角色的权限配置
- * 角色：admin | operator | editor | optimizer | viewer | influencer_operator
+ * 角色：admin | lead | product_operator | operator | editor | optimizer | viewer | influencer_operator
  */
 
-export const ROLES = ['admin', 'operator', 'editor', 'optimizer', 'viewer', 'influencer_operator'] as const
+export const ROLES = ['admin', 'lead', 'product_operator', 'operator', 'editor', 'optimizer', 'viewer', 'influencer_operator'] as const
 export type Role = (typeof ROLES)[number]
 
 export const ROLE_LABELS: Record<string, string> = {
   admin: '管理员',
+  lead: '总负责人',
+  product_operator: '产品运营',
   operator: '运营',
   editor: '剪辑',
   optimizer: '投手',
@@ -17,6 +19,8 @@ export const ROLE_LABELS: Record<string, string> = {
 
 export const ROLE_DESCRIPTIONS: Record<string, string> = {
   admin: '可访问全部模块，管理用户与系统设置',
+  lead: '业务推进负责人，创建和分配任务、设置优先级、管理排期、查看全员任务进度',
+  product_operator: '管理选品更新池、产品列表、达人建联、脚本拆解，负责产品推进全流程',
   operator: '产品列表、TikTok 同步、价格对账、脚本拆解、达人建联',
   editor: '脚本拆解、我的任务、我的复盘（仅查看与训练相关动作）',
   optimizer: '产品列表、价格对账、脚本拆解（以投放分析为主）',
@@ -24,20 +28,61 @@ export const ROLE_DESCRIPTIONS: Record<string, string> = {
   viewer: '概览、产品概况、价格概况、脚本概况、达人合作概况，仅只读',
 }
 
+/** 各角色的默认首页 */
+export const ROLE_DEFAULT_PAGES: Record<string, string> = {
+  admin: '/dashboard',
+  lead: '/dashboard/workbench',
+  product_operator: '/dashboard/opportunities',
+  operator: '/dashboard/opportunities',
+  influencer_operator: '/dashboard/influencers',
+  editor: '/dashboard/scripts',
+  optimizer: '/dashboard/workbench',
+  viewer: '/dashboard/workbench',
+}
+
+/** 各角色可访问的模块（用于展示） */
+export const ROLE_MODULES: Record<string, string[]> = {
+  admin: ['今日工作台', '选品更新池', '产品列表', '达人建联', '脚本拆解', '经营数据', 'TikTok 同步', '价格对账', '用户管理', '系统设置', '概览'],
+  lead: ['今日工作台', '选品更新池', '产品列表', '达人建联', '脚本拆解', '经营数据', '价格对账'],
+  product_operator: ['今日工作台', '选品更新池', '产品列表', '达人建联', '脚本拆解', '经营数据'],
+  operator: ['今日工作台', '选品更新池', '产品列表', '达人建联', '脚本拆解', '经营数据', 'TikTok 同步', '价格对账'],
+  editor: ['今日工作台', '脚本拆解'],
+  optimizer: ['今日工作台', '产品列表', '脚本拆解', '经营数据'],
+  influencer_operator: ['今日工作台', '达人建联', '产品列表', '脚本拆解'],
+  viewer: ['今日工作台', '产品列表', '脚本拆解', '经营数据', '达人建联', '概览'],
+}
+
+/** 部门选项 */
+export const DEPARTMENTS = [
+  { value: '', label: '未设置' },
+  { value: '运营部', label: '运营部' },
+  { value: '剪辑部', label: '剪辑部' },
+  { value: '投放部', label: '投放部' },
+  { value: '达人运营部', label: '达人运营部' },
+  { value: '供应链', label: '供应链' },
+  { value: '财务部', label: '财务部' },
+  { value: '管理层', label: '管理层' },
+] as const
+
 /** 导航项定义（默认名称） */
-const NAV_ITEMS: { name: string; href: string; icon: string; key: string }[] = [
+const NAV_ITEMS: { name: string; href: string; icon: string; key: string; isSystem?: boolean }[] = [
+  // 业务导航（按工作顺序）
+  { name: '今日工作台', href: '/dashboard/workbench', icon: '✅', key: 'workbench' },
+  { name: '选品更新池', href: '/dashboard/opportunities', icon: '🎯', key: 'opportunities' },
   { name: '产品列表', href: '/dashboard/products', icon: '📦', key: 'products' },
-  { name: 'TikTok 同步', href: '/dashboard/tiktok-sync', icon: '🔄', key: 'tiktok-sync' },
-  { name: '价格对账', href: '/dashboard/price-check', icon: '💰', key: 'price-check' },
-  { name: '经营数据', href: '/dashboard/performance', icon: '📈', key: 'performance' },
-  { name: '脚本拆解', href: '/dashboard/scripts', icon: '✂️', key: 'scripts' },
-  { name: '我的任务', href: '/dashboard/scripts', icon: '📋', key: 'my-tasks' },
-  { name: '我的复盘', href: '/dashboard/scripts', icon: '📝', key: 'my-review' },
   { name: '达人建联', href: '/dashboard/influencers', icon: '🤝', key: 'influencers' },
-  { name: '用户管理', href: '/dashboard/users', icon: '👥', key: 'users' },
-  { name: '系统设置', href: '/dashboard/settings', icon: '⚙️', key: 'settings' },
-  { name: '概览', href: '/dashboard/overview', icon: '📊', key: 'overview' },
+  { name: '脚本拆解', href: '/dashboard/scripts', icon: '✂️', key: 'scripts' },
+  { name: '经营数据', href: '/dashboard/performance', icon: '📈', key: 'performance' },
+  // 系统模块（放到更多菜单）
+  { name: 'TikTok 同步', href: '/dashboard/tiktok-sync', icon: '🔄', key: 'tiktok-sync', isSystem: true },
+  { name: '价格对账', href: '/dashboard/price-check', icon: '💰', key: 'price-check', isSystem: true },
+  { name: '用户管理', href: '/dashboard/users', icon: '👥', key: 'users', isSystem: true },
+  { name: '系统设置', href: '/dashboard/settings', icon: '⚙️', key: 'settings', isSystem: true },
+  { name: '概览', href: '/dashboard/overview', icon: '📊', key: 'overview', isSystem: true },
 ]
+
+// 导出更多菜单项（系统模块）
+export const MORE_MENU_ITEMS = NAV_ITEMS.filter(item => item.isSystem)
 
 /** viewer 角色下菜单显示名称 */
 const VIEWER_NAV_NAMES: Record<string, string> = {
@@ -52,20 +97,33 @@ const VIEWER_NAV_NAMES: Record<string, string> = {
 /** 各角色可见导航 key */
 const ROLE_NAV_KEYS: Record<string, string[]> = {
   admin: [
+    'workbench',
+    'opportunities',
     'products',
+    'influencers',
+    'scripts',
+    'performance',
     'tiktok-sync',
     'price-check',
-    'performance',
-    'scripts',
-    'influencers',
     'users',
     'settings',
+    'overview',
   ],
-  operator: ['products', 'tiktok-sync', 'price-check', 'performance', 'scripts', 'influencers'],
-  editor: ['scripts', 'my-tasks', 'my-review'],
-  optimizer: ['products', 'price-check', 'performance', 'scripts'],
-  viewer: ['overview', 'products', 'price-check', 'performance', 'scripts', 'influencers'],
-  influencer_operator: ['influencers', 'products', 'scripts'],
+  lead: [
+    'workbench',
+    'opportunities',
+    'products',
+    'influencers',
+    'scripts',
+    'performance',
+    'price-check',
+  ],
+  product_operator: ['workbench', 'opportunities', 'products', 'influencers', 'scripts', 'performance'],
+  operator: ['workbench', 'opportunities', 'products', 'influencers', 'scripts', 'performance', 'tiktok-sync', 'price-check'],
+  editor: ['workbench', 'scripts'],
+  optimizer: ['workbench', 'products', 'scripts', 'performance'],
+  viewer: ['workbench', 'products', 'scripts', 'performance', 'influencers', 'overview'],
+  influencer_operator: ['workbench', 'influencers', 'products', 'scripts'],
 }
 
 export function getNavItemsForRole(role?: string): { name: string; href: string; icon: string }[] {
@@ -86,27 +144,24 @@ export function getNavItemsForRole(role?: string): { name: string; href: string;
     })
   }
 
+  // 总负责人：优先展示今日工作台
+  if (role === 'lead') {
+    items = items.sort((a, b) => {
+      if (a.href === '/dashboard/workbench') return -1
+      if (b.href === '/dashboard/workbench') return 1
+      return 0
+    })
+  }
+
   return items
 }
 
 /** 登录后默认跳转 */
 export function getDefaultRedirectForRole(role?: string): string {
-  switch (role) {
-    case 'admin':
-      return '/dashboard'
-    case 'operator':
-      return '/dashboard/performance'
-    case 'influencer_operator':
-      return '/dashboard/influencers'
-    case 'editor':
-      return '/dashboard/scripts'
-    case 'optimizer':
-      return '/dashboard/performance'
-    case 'viewer':
-      return '/dashboard/performance'
-    default:
-      return '/dashboard'
+  if (role && ROLE_DEFAULT_PAGES[role]) {
+    return ROLE_DEFAULT_PAGES[role]
   }
+  return '/dashboard'
 }
 
 // ---------- 页面访问权限 ----------
@@ -121,10 +176,17 @@ export function canAccessSettings(role?: string): boolean {
   return role === 'admin'
 }
 
+/** 是否是总负责人（业务推进负责人） */
+export function isLead(role?: string): boolean {
+  return role === 'lead'
+}
+
 /** 是否可访问产品列表（editor 不可见） */
 export function canAccessProducts(role?: string): boolean {
   return (
     role === 'admin' ||
+    role === 'lead' ||
+    role === 'product_operator' ||
     role === 'operator' ||
     role === 'optimizer' ||
     role === 'viewer' ||
@@ -132,9 +194,14 @@ export function canAccessProducts(role?: string): boolean {
   )
 }
 
-/** 是否可编辑产品（admin/operator） */
+/** 是否可访问选品更新池（admin/lead/product_operator/operator） */
+export function canAccessProductOpportunities(role?: string): boolean {
+  return role === 'admin' || role === 'lead' || role === 'product_operator' || role === 'operator'
+}
+
+/** 是否可编辑产品（admin/lead/product_operator/operator） */
 export function canEditProducts(role?: string): boolean {
-  return role === 'admin' || role === 'operator'
+  return role === 'admin' || role === 'lead' || role === 'product_operator' || role === 'operator'
 }
 
 /** 是否可访问 TikTok 同步（仅 admin/operator） */
@@ -144,23 +211,25 @@ export function canAccessTiktokSync(role?: string): boolean {
 
 /** 是否可访问价格对账（editor 不可见） */
 export function canAccessPriceCheck(role?: string): boolean {
-  return role === 'admin' || role === 'operator' || role === 'optimizer' || role === 'viewer'
+  return role === 'admin' || role === 'lead' || role === 'operator' || role === 'optimizer' || role === 'viewer'
 }
 
 /** 是否可访问经营数据中心（editor 不可见，viewer 只读） */
 export function canAccessPerformance(role?: string): boolean {
-  return role === 'admin' || role === 'operator' || role === 'optimizer' || role === 'viewer'
+  return role === 'admin' || role === 'lead' || role === 'product_operator' || role === 'operator' || role === 'optimizer' || role === 'viewer'
 }
 
 /** 是否可访问脚本拆解（全部角色） */
 export function canAccessScripts(role?: string): boolean {
-  return !!role && ['admin', 'operator', 'editor', 'optimizer', 'viewer', 'influencer_operator'].includes(role)
+  return !!role && ['admin', 'lead', 'product_operator', 'operator', 'editor', 'optimizer', 'viewer', 'influencer_operator'].includes(role)
 }
 
 /** 是否可访问达人建联（editor 不可见） */
 export function canAccessInfluencers(role?: string): boolean {
   return (
     role === 'admin' ||
+    role === 'lead' ||
+    role === 'product_operator' ||
     role === 'operator' ||
     role === 'optimizer' ||
     role === 'viewer' ||
@@ -170,19 +239,19 @@ export function canAccessInfluencers(role?: string): boolean {
 
 /** 是否可管理达人建联（新建、编辑、删除、跟进等） */
 export function canManageInfluencers(role?: string): boolean {
-  return role === 'admin' || role === 'operator' || role === 'influencer_operator'
+  return role === 'admin' || role === 'lead' || role === 'product_operator' || role === 'operator' || role === 'influencer_operator'
 }
 
 // ---------- 脚本拆解页按钮权限 ----------
 
 /** 是否可编辑脚本（新建、编辑、保存版本、归档、删除、创建任务） */
 export function canEditScripts(role?: string): boolean {
-  return role === 'admin' || role === 'operator'
+  return role === 'admin' || role === 'lead' || role === 'product_operator' || role === 'operator'
 }
 
 /** 是否可删除脚本 */
 export function canDeleteScripts(role?: string): boolean {
-  return role === 'admin' || role === 'operator'
+  return role === 'admin' || role === 'lead' || role === 'product_operator' || role === 'operator'
 }
 
 /** 剪辑师：仅可标记已学习、开始练习、提交练习成片、查看点评、加入复盘记录 */
@@ -190,7 +259,7 @@ export function isEditorOnly(role?: string): boolean {
   return role === 'editor'
 }
 
-/** 脚本页只读（optimizer/viewer） */
+/** 脚本页只读（optimizer/viewer/influencer_operator） */
 export function isScriptsReadOnly(role?: string): boolean {
   return role === 'optimizer' || role === 'viewer' || role === 'influencer_operator'
 }
@@ -209,6 +278,7 @@ export function canAccessPath(pathname: string, role?: string): boolean {
   if (pathname === '/dashboard/settings') return canAccessSettings(role)
   if (pathname === '/dashboard/tiktok-sync') return canAccessTiktokSync(role)
   if (pathname === '/dashboard/products') return canAccessProducts(role)
+  if (pathname.startsWith('/dashboard/opportunities')) return canAccessProductOpportunities(role)
   if (pathname === '/dashboard/price-check') return canAccessPriceCheck(role)
   if (pathname === '/dashboard/performance') return canAccessPerformance(role)
   if (pathname === '/dashboard/scripts') return canAccessScripts(role)
@@ -216,4 +286,9 @@ export function canAccessPath(pathname: string, role?: string): boolean {
   if (pathname === '/dashboard/overview') return role === 'viewer' || role === 'admin'
   if (pathname === '/dashboard' || pathname === '/dashboard/account') return true
   return true
+}
+
+/** 获取角色可访问的模块列表（用于展示） */
+export function getRoleModules(role?: string): string[] {
+  return role ? ROLE_MODULES[role] || [] : []
 }

@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from 'react'
 import { useSession } from 'next-auth/react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { canAccessProducts, canEditProducts } from '@/lib/permissions'
 import { PageHeader } from '@/components/layout/PageHeader'
+
+type TabType = 'list' | 'opportunities'
 
 interface Product {
   id: string
@@ -15,6 +17,7 @@ interface Product {
   description: string
   material?: string | null
   style?: string | null
+  scene?: string | null
   costCny: number
   priceUsd: number
   discountPriceUsd?: number | null
@@ -32,6 +35,21 @@ interface Product {
   warningProfit: boolean
   warningMissing: boolean
   tiktokSync: any
+
+  // ---------- 产品推进看板字段 ----------
+  notes?: string | null
+  workflowStatus?: string
+  collectedAt?: string | null
+  pickedUpAt?: string | null
+  sampleSentAt?: string | null
+  mainConfirmedAt?: string | null
+  outreachLinkedAt?: string | null
+  scriptReadyAt?: string | null
+  storyboardReadyAt?: string | null
+  postedAt?: string | null
+  assignee?: string | null
+  nextAction?: string | null
+  updatedAt?: string
 }
 
 export default function ProductsPage() {
@@ -56,6 +74,24 @@ export default function ProductsPage() {
   const [view, setView] = useState<'operator' | 'advertiser'>('operator')
   const [viewMode, setViewMode] = useState<'compact' | 'detailed'>('compact')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  // ---------- 产品推进看板：筛选条件 ----------
+  const [workflowStatusFilter, setWorkflowStatusFilter] = useState<string>('all')
+  const [productLineFilter, setProductLineFilter] = useState<string>('all')
+  const [assigneeFilter, setAssigneeFilter] = useState<string>('all')
+  const [hasScriptFilter, setHasScriptFilter] = useState<'all' | 'yes'>('all')
+  const [hasOutreachFilter, setHasOutreachFilter] = useState<'all' | 'yes'>('all')
+  const [hasPostedFilter, setHasPostedFilter] = useState<'all' | 'yes'>('all')
+
+  const sp = useSearchParams()
+  const productIdFromQuery = sp.get('productId')
+
+  useEffect(() => {
+    if (!productIdFromQuery) return
+    setViewMode('detailed')
+    setExpandedId(productIdFromQuery)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productIdFromQuery])
 
   const handleFieldChange = (id: string, field: keyof Product, value: any) => {
     setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, [field]: value } : p)))
@@ -122,12 +158,43 @@ export default function ProductsPage() {
     return !isMissing(p) && !isLowProfit(p) && !isLowStock(p) && !!p.tiktokSync
   }
 
+  const hasCollected = (p: Product) => !!p.collectedAt
+  const hasPickedUp = (p: Product) => !!p.pickedUpAt
+  const hasSampleSent = (p: Product) => !!p.sampleSentAt
+  const hasMainConfirmed = (p: Product) => !!p.mainConfirmedAt
+  const hasOutreachLinked = (p: Product) => !!p.outreachLinkedAt
+  const hasScript = (p: Product) => !!p.scriptReadyAt
+  const hasStoryboard = (p: Product) => !!p.storyboardReadyAt
+  const hasPosted = (p: Product) => !!p.postedAt
+
+  const getWorkflowStage = (p: Product): string => {
+    // 暂停/淘汰：优先展示
+    const s = p.workflowStatus || '待收集'
+    if (s === '暂停' || s === '淘汰') return s
+
+    if (hasPosted(p)) return '已出片'
+    if (hasScript(p)) return '已有脚本'
+    if (hasOutreachLinked(p)) return '已建联达人'
+    if (hasMainConfirmed(p)) return '已确认主推'
+    if (hasSampleSent(p)) return '已打样'
+    if (hasPickedUp(p)) return '已拿货'
+    if (hasCollected(p)) return '已收集'
+    return '待收集'
+  }
+
   const filteredProducts = products.filter(p => {
     if (quickFilter === 'missing') return isMissing(p)
     if (quickFilter === 'price') return isPriceAbnormal(p)
     if (quickFilter === 'profit') return isLowProfit(p)
     if (quickFilter === 'stock') return isLowStock(p)
     if (quickFilter === 'scale') return isScalable(p)
+    const stage = getWorkflowStage(p)
+    if (workflowStatusFilter !== 'all' && stage !== workflowStatusFilter) return false
+    if (productLineFilter !== 'all' && (p.scene || '') !== productLineFilter) return false
+    if (assigneeFilter !== 'all' && (p.assignee || '') !== assigneeFilter) return false
+    if (hasScriptFilter === 'yes' && !hasScript(p)) return false
+    if (hasOutreachFilter === 'yes' && !hasOutreachLinked(p)) return false
+    if (hasPostedFilter === 'yes' && !hasPosted(p)) return false
     return true
   })
 
@@ -138,6 +205,21 @@ export default function ProductsPage() {
   const lowStockCount = products.filter(isLowStock).length
   const scalableCount = products.filter(isScalable).length
 
+  // 产品推进看板：顶部状态卡计数（按“时间戳推导的阶段”）
+  const wf待收集 = products.filter((p) => getWorkflowStage(p) === '待收集').length
+  const wf已收集 = products.filter((p) => getWorkflowStage(p) === '已收集').length
+  const wf已拿货 = products.filter((p) => getWorkflowStage(p) === '已拿货').length
+  const wf已打样 = products.filter((p) => getWorkflowStage(p) === '已打样').length
+  const wf已确认主推 = products.filter((p) => getWorkflowStage(p) === '已确认主推').length
+  const wf已出片 = products.filter((p) => getWorkflowStage(p) === '已出片').length
+
+  const productLineOptions = Array.from(
+    new Set(products.map((p) => (p.scene || '').trim()).filter(Boolean)),
+  )
+  const assigneeOptions = Array.from(
+    new Set(products.map((p) => (p.assignee || '').trim()).filter(Boolean)),
+  )
+
   const formatTime = (value: any) => {
     if (!value) return '-'
     const d = new Date(value)
@@ -145,13 +227,27 @@ export default function ProductsPage() {
     return d.toLocaleString()
   }
 
-  const Tag = ({ color, children }: { color: 'red' | 'orange' | 'yellow' | 'green' | 'gray'; children: any }) => {
+  const daysDiffFromNow = (iso?: string | null) => {
+    if (!iso) return null
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return null
+    return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24))
+  }
+
+  const Tag = ({
+    color,
+    children,
+  }: {
+    color: 'red' | 'orange' | 'yellow' | 'green' | 'gray' | 'purple'
+    children: any
+  }) => {
     const map: any = {
       red: 'bg-red-100 text-red-700',
       orange: 'bg-orange-100 text-orange-700',
       yellow: 'bg-yellow-100 text-yellow-700',
       green: 'bg-green-100 text-green-700',
       gray: 'bg-gray-100 text-gray-700',
+      purple: 'bg-purple-100 text-purple-700',
     }
     return <span className={`px-2 py-1 text-xs rounded ${map[color]}`}>{children}</span>
   }
@@ -288,6 +384,70 @@ export default function ProductsPage() {
         </button>
       </div>
 
+      {/* 产品推进看板：状态卡 */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+        <button
+          type="button"
+          onClick={() => setWorkflowStatusFilter('待收集')}
+          className={`text-left bg-white rounded-xl shadow-sm border p-3 transition ${
+            workflowStatusFilter === '待收集' ? 'border-primary-600 ring-1 ring-primary-100' : 'border-gray-100'
+          }`}
+        >
+          <div className="text-xs text-gray-500">待收集</div>
+          <div className="mt-1 text-2xl font-bold text-gray-900">{wf待收集}</div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setWorkflowStatusFilter('已收集')}
+          className={`text-left bg-white rounded-xl shadow-sm border p-3 transition ${
+            workflowStatusFilter === '已收集' ? 'border-primary-600 ring-1 ring-primary-100' : 'border-gray-100'
+          }`}
+        >
+          <div className="text-xs text-gray-500">已收集</div>
+          <div className="mt-1 text-2xl font-bold text-gray-900">{wf已收集}</div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setWorkflowStatusFilter('已拿货')}
+          className={`text-left bg-white rounded-xl shadow-sm border p-3 transition ${
+            workflowStatusFilter === '已拿货' ? 'border-primary-600 ring-1 ring-primary-100' : 'border-gray-100'
+          }`}
+        >
+          <div className="text-xs text-gray-500">已拿货</div>
+          <div className="mt-1 text-2xl font-bold text-gray-900">{wf已拿货}</div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setWorkflowStatusFilter('已打样')}
+          className={`text-left bg-white rounded-xl shadow-sm border p-3 transition ${
+            workflowStatusFilter === '已打样' ? 'border-primary-600 ring-1 ring-primary-100' : 'border-gray-100'
+          }`}
+        >
+          <div className="text-xs text-gray-500">已打样</div>
+          <div className="mt-1 text-2xl font-bold text-gray-900">{wf已打样}</div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setWorkflowStatusFilter('已确认主推')}
+          className={`text-left bg-white rounded-xl shadow-sm border p-3 transition ${
+            workflowStatusFilter === '已确认主推' ? 'border-primary-600 ring-1 ring-primary-100' : 'border-gray-100'
+          }`}
+        >
+          <div className="text-xs text-gray-500">已确认主推</div>
+          <div className="mt-1 text-2xl font-bold text-gray-900">{wf已确认主推}</div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setWorkflowStatusFilter('已出片')}
+          className={`text-left bg-white rounded-xl shadow-sm border p-3 transition ${
+            workflowStatusFilter === '已出片' ? 'border-primary-600 ring-1 ring-primary-100' : 'border-gray-100'
+          }`}
+        >
+          <div className="text-xs text-gray-500">已出片</div>
+          <div className="mt-1 text-2xl font-bold text-gray-900">{wf已出片}</div>
+        </button>
+      </div>
+
       {/* 筛选 */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-4">
         <div className="flex flex-col gap-3">
@@ -352,6 +512,109 @@ export default function ProductsPage() {
           </div>
         </div>
       </div>
+
+        {/* 工作流筛选 */}
+        <div className="flex flex-wrap items-end gap-3 pt-2 border-t border-gray-100">
+          <div className="min-w-[160px]">
+            <div className="text-[11px] text-gray-500 mb-1">状态</div>
+            <select
+              value={workflowStatusFilter}
+              onChange={(e) => setWorkflowStatusFilter(e.target.value)}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+            >
+              <option value="all">全部</option>
+              <option value="待收集">待收集</option>
+              <option value="已收集">已收集</option>
+              <option value="已拿货">已拿货</option>
+              <option value="已打样">已打样</option>
+              <option value="已确认主推">已确认主推</option>
+              <option value="已出片">已出片</option>
+            </select>
+          </div>
+
+          <div className="min-w-[160px]">
+            <div className="text-[11px] text-gray-500 mb-1">产品线/款式</div>
+            <select
+              value={productLineFilter}
+              onChange={(e) => setProductLineFilter(e.target.value)}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+            >
+              <option value="all">全部</option>
+              {productLineOptions.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="min-w-[160px]">
+            <div className="text-[11px] text-gray-500 mb-1">负责人</div>
+            <select
+              value={assigneeFilter}
+              onChange={(e) => setAssigneeFilter(e.target.value)}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+            >
+              <option value="all">全部</option>
+              {assigneeOptions.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="min-w-[140px]">
+            <div className="text-[11px] text-gray-500 mb-1">是否已有脚本</div>
+            <select
+              value={hasScriptFilter}
+              onChange={(e) => setHasScriptFilter(e.target.value as any)}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+            >
+              <option value="all">全部</option>
+              <option value="yes">是</option>
+            </select>
+          </div>
+
+          <div className="min-w-[140px]">
+            <div className="text-[11px] text-gray-500 mb-1">是否已建联达人</div>
+            <select
+              value={hasOutreachFilter}
+              onChange={(e) => setHasOutreachFilter(e.target.value as any)}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+            >
+              <option value="all">全部</option>
+              <option value="yes">是</option>
+            </select>
+          </div>
+
+          <div className="min-w-[140px]">
+            <div className="text-[11px] text-gray-500 mb-1">是否已出片</div>
+            <select
+              value={hasPostedFilter}
+              onChange={(e) => setHasPostedFilter(e.target.value as any)}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
+            >
+              <option value="all">全部</option>
+              <option value="yes">是</option>
+            </select>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setWorkflowStatusFilter('all')
+              setProductLineFilter('all')
+              setAssigneeFilter('all')
+              setHasScriptFilter('all')
+              setHasOutreachFilter('all')
+              setHasPostedFilter('all')
+            }}
+            className="px-2.5 py-1.5 text-xs bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+          >
+            重置工作流筛选
+          </button>
+        </div>
 
       {/* 产品列表 */}
       {loading ? (
@@ -462,6 +725,7 @@ export default function ProductsPage() {
                         </td>
                     <td className="px-3 py-1.5">
                       <div className="flex flex-wrap gap-1.5">
+                        <Tag color="purple">{getWorkflowStage(product)}</Tag>
                         {product.warningMissing && <Tag color="yellow">缺信息</Tag>}
                         {abnormal && <Tag color="red">价格异常</Tag>}
                         {product.warningProfit && <Tag color="orange">低毛利</Tag>}
@@ -477,7 +741,7 @@ export default function ProductsPage() {
                         </td>
                     <td className="px-3 py-1.5 align-middle w-32">
                       <span className="text-xs text-gray-800 truncate block">
-                        {action.label}
+                        {product.nextAction || action.label}
                       </span>
                         </td>
                     {viewMode === 'detailed' && (
@@ -665,6 +929,233 @@ export default function ProductsPage() {
                               </div>
                               <div className="text-[11px] text-gray-500">
                                 这些成本会直接影响产品页和价格体检中的毛利率计算。
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 产品推进看板（工作流） */}
+                          <div className="rounded-lg border border-purple-200 bg-purple-50 p-3">
+                            <div className="flex items-center justify-between gap-3 mb-2">
+                              <div>
+                                <div className="font-semibold text-gray-900">产品推进看板</div>
+                                <div className="text-[11px] text-gray-600 mt-0.5">
+                                  {getWorkflowStage(product)} · 产品线：{product.scene || '-'} · 款式：{product.style || '-'} · 更新时间：
+                                  {product.updatedAt ? new Date(product.updatedAt).toLocaleString() : '-'} · SKU：{product.sku || '-'}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-3">
+                              <div>
+                                <div className="text-[11px] text-gray-600 mb-1">负责人</div>
+                                {canEdit ? (
+                                  <input
+                                    value={product.assignee || ''}
+                                    onChange={(e) => handleFieldChange(product.id, 'assignee', e.target.value)}
+                                    onBlur={() => handleFieldBlur(product.id, { assignee: product.assignee || null })}
+                                    className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
+                                    placeholder="例如：Yuyuhan / Alice"
+                                  />
+                                ) : (
+                                  <div className="text-[11px] text-gray-800">{product.assignee || '-'}</div>
+                                )}
+                              </div>
+
+                              <div>
+                                <div className="text-[11px] text-gray-600 mb-1">状态</div>
+                                {canEdit ? (
+                                  <select
+                                    value={product.workflowStatus || '待收集'}
+                                    onChange={(e) => handleFieldChange(product.id, 'workflowStatus', e.target.value)}
+                                    onBlur={() => {
+                                      // 状态选择：同时尽量按进度补齐关键时间戳
+                                      const cur = products.find((p) => p.id === product.id)
+                                      const next = (cur?.workflowStatus || '待收集') as string
+                                      const now = new Date().toISOString()
+                                      const patch: any = { workflowStatus: next }
+                                      const clearAfter = (keys: string[]) => {
+                                        keys.forEach((k) => (patch[k] = null))
+                                      }
+                                      if (next === '待收集') {
+                                        clearAfter(['collectedAt', 'pickedUpAt', 'sampleSentAt', 'mainConfirmedAt', 'outreachLinkedAt', 'scriptReadyAt', 'storyboardReadyAt', 'postedAt'])
+                                        patch.collectedAt = null
+                                      } else if (next === '已收集') {
+                                        patch.collectedAt = product.collectedAt || now
+                                        clearAfter(['pickedUpAt', 'sampleSentAt', 'mainConfirmedAt', 'outreachLinkedAt', 'scriptReadyAt', 'storyboardReadyAt', 'postedAt'])
+                                      } else if (next === '已拿货') {
+                                        patch.collectedAt = product.collectedAt || now
+                                        patch.pickedUpAt = product.pickedUpAt || now
+                                        clearAfter(['sampleSentAt', 'mainConfirmedAt', 'outreachLinkedAt', 'scriptReadyAt', 'storyboardReadyAt', 'postedAt'])
+                                      } else if (next === '已打样') {
+                                        patch.collectedAt = product.collectedAt || now
+                                        patch.pickedUpAt = product.pickedUpAt || now
+                                        patch.sampleSentAt = product.sampleSentAt || now
+                                        clearAfter(['mainConfirmedAt', 'outreachLinkedAt', 'scriptReadyAt', 'storyboardReadyAt', 'postedAt'])
+                                      } else if (next === '已确认主推') {
+                                        patch.collectedAt = product.collectedAt || now
+                                        patch.pickedUpAt = product.pickedUpAt || now
+                                        patch.sampleSentAt = product.sampleSentAt || now
+                                        patch.mainConfirmedAt = product.mainConfirmedAt || now
+                                        clearAfter(['outreachLinkedAt', 'scriptReadyAt', 'storyboardReadyAt', 'postedAt'])
+                                      } else if (next === '已建联达人') {
+                                        patch.collectedAt = product.collectedAt || now
+                                        patch.pickedUpAt = product.pickedUpAt || now
+                                        patch.sampleSentAt = product.sampleSentAt || now
+                                        patch.mainConfirmedAt = product.mainConfirmedAt || now
+                                        patch.outreachLinkedAt = product.outreachLinkedAt || now
+                                        clearAfter(['scriptReadyAt', 'storyboardReadyAt', 'postedAt'])
+                                      } else if (next === '已有脚本') {
+                                        patch.collectedAt = product.collectedAt || now
+                                        patch.pickedUpAt = product.pickedUpAt || now
+                                        patch.sampleSentAt = product.sampleSentAt || now
+                                        patch.mainConfirmedAt = product.mainConfirmedAt || now
+                                        patch.outreachLinkedAt = product.outreachLinkedAt || now
+                                        patch.scriptReadyAt = product.scriptReadyAt || now
+                                        clearAfter(['storyboardReadyAt', 'postedAt'])
+                                      } else if (next === '已出片') {
+                                        patch.collectedAt = product.collectedAt || now
+                                        patch.pickedUpAt = product.pickedUpAt || now
+                                        patch.sampleSentAt = product.sampleSentAt || now
+                                        patch.mainConfirmedAt = product.mainConfirmedAt || now
+                                        patch.outreachLinkedAt = product.outreachLinkedAt || now
+                                        patch.scriptReadyAt = product.scriptReadyAt || now
+                                        patch.storyboardReadyAt = product.storyboardReadyAt || now
+                                        patch.postedAt = product.postedAt || now
+                                      }
+                                      // 暂停/淘汰：只写状态，不动关键时间戳
+                                      if (next === '暂停' || next === '淘汰') {
+                                        patch.collectedAt = product.collectedAt || null
+                                      }
+                                      void handleFieldBlur(product.id, patch)
+                                    }}
+                                    className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
+                                  >
+                                    <option value="待收集">待收集</option>
+                                    <option value="已收集">已收集</option>
+                                    <option value="已拿货">已拿货</option>
+                                    <option value="已打样">已打样</option>
+                                    <option value="已确认主推">已确认主推</option>
+                                    <option value="已建联达人">已建联达人</option>
+                                    <option value="已有脚本">已有脚本</option>
+                                    <option value="已出片">已出片</option>
+                                    <option value="暂停">暂停</option>
+                                    <option value="淘汰">淘汰</option>
+                                  </select>
+                                ) : (
+                                  <div className="text-[11px] text-gray-800">{product.workflowStatus || '待收集'}</div>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {[
+                                  { key: 'pickedUpAt', label: '已拿货', v: !!product.pickedUpAt },
+                                  { key: 'sampleSentAt', label: '已打样', v: !!product.sampleSentAt },
+                                  { key: 'mainConfirmedAt', label: '已确认主推', v: !!product.mainConfirmedAt },
+                                  { key: 'outreachLinkedAt', label: '已建联达人', v: !!product.outreachLinkedAt },
+                                  { key: 'scriptReadyAt', label: '已有脚本', v: !!product.scriptReadyAt },
+                                  { key: 'storyboardReadyAt', label: '已有分镜', v: !!product.storyboardReadyAt },
+                                  { key: 'postedAt', label: '已出片', v: !!product.postedAt },
+                                ].map((it) => (
+                                  <label key={it.key} className="flex items-center gap-2 text-[11px] text-gray-700">
+                                    <input
+                                      type="checkbox"
+                                      checked={it.v}
+                                      disabled={!canEdit}
+                                      onChange={(e) => {
+                                        const checked = e.target.checked
+                                        const now = new Date().toISOString()
+                                        const patch: any = { [it.key]: checked ? now : null }
+                                        // 关闭某个阶段：尽量清掉后续阶段，保持进度一致
+                                        if (!checked) {
+                                          if (it.key === 'pickedUpAt') {
+                                            patch.sampleSentAt = null
+                                            patch.mainConfirmedAt = null
+                                            patch.outreachLinkedAt = null
+                                            patch.scriptReadyAt = null
+                                            patch.storyboardReadyAt = null
+                                            patch.postedAt = null
+                                          }
+                                          if (it.key === 'sampleSentAt') {
+                                            patch.mainConfirmedAt = null
+                                            patch.outreachLinkedAt = null
+                                            patch.scriptReadyAt = null
+                                            patch.storyboardReadyAt = null
+                                            patch.postedAt = null
+                                          }
+                                          if (it.key === 'mainConfirmedAt') {
+                                            patch.outreachLinkedAt = null
+                                            patch.scriptReadyAt = null
+                                            patch.storyboardReadyAt = null
+                                            patch.postedAt = null
+                                          }
+                                          if (it.key === 'outreachLinkedAt') {
+                                            patch.scriptReadyAt = null
+                                            patch.storyboardReadyAt = null
+                                            patch.postedAt = null
+                                          }
+                                          if (it.key === 'scriptReadyAt') {
+                                            patch.storyboardReadyAt = null
+                                            patch.postedAt = null
+                                          }
+                                          if (it.key === 'storyboardReadyAt') {
+                                            patch.postedAt = null
+                                          }
+                                        }
+                                        handleFieldChange(product.id, it.key as any, patch[it.key])
+                                        void handleFieldBlur(product.id, patch)
+                                      }}
+                                    />
+                                    {it.label}
+                                  </label>
+                                ))}
+                              </div>
+
+                              <div className="rounded-lg border border-purple-100 bg-white p-2.5">
+                                <div className="text-[11px] font-semibold text-purple-900 mb-2">自动提醒（可用于今天优先级）</div>
+                                <div className="space-y-1 text-[11px] text-purple-900/80">
+                                  {product.pickedUpAt && !product.sampleSentAt && (daysDiffFromNow(product.pickedUpAt) ?? 0) >= 3 && (
+                                    <div>已拿货 {daysDiffFromNow(product.pickedUpAt)} 天未打样</div>
+                                  )}
+                                  {product.sampleSentAt && !product.mainConfirmedAt && (daysDiffFromNow(product.sampleSentAt) ?? 0) >= 2 && (
+                                    <div>已打样 {daysDiffFromNow(product.sampleSentAt)} 天未确认主推</div>
+                                  )}
+                                  {product.mainConfirmedAt && !product.outreachLinkedAt && <div>已确认主推但未建联达人</div>}
+                                  {product.outreachLinkedAt && !product.postedAt && <div>已建联达人但未出片</div>}
+                                  {product.scriptReadyAt && !product.storyboardReadyAt && <div>已有脚本但未补分镜</div>}
+                                  {!product.pickedUpAt && !product.sampleSentAt && !product.mainConfirmedAt && !product.outreachLinkedAt && !product.scriptReadyAt && !product.storyboardReadyAt && !product.postedAt && (
+                                    <div className="text-gray-500">暂无自动提醒</div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div>
+                                <div className="text-[11px] text-gray-600 mb-1">下一步动作</div>
+                                {canEdit ? (
+                                  <input
+                                    value={product.nextAction || ''}
+                                    onChange={(e) => handleFieldChange(product.id, 'nextAction', e.target.value)}
+                                    onBlur={() => handleFieldBlur(product.id, { nextAction: product.nextAction || null })}
+                                    className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm"
+                                    placeholder="例如：安排打样 / 确认主推 / 催出片"
+                                  />
+                                ) : (
+                                  <div className="text-[11px] text-gray-800">{product.nextAction || '-'}</div>
+                                )}
+                              </div>
+
+                              <div>
+                                <div className="text-[11px] text-gray-600 mb-1">备注</div>
+                                {canEdit ? (
+                                  <textarea
+                                    value={product.notes || ''}
+                                    onChange={(e) => handleFieldChange(product.id, 'notes', e.target.value)}
+                                    onBlur={() => handleFieldBlur(product.id, { notes: product.notes || null })}
+                                    className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm min-h-[72px]"
+                                    placeholder="运营备注 / 风险点 / 协同说明"
+                                  />
+                                ) : (
+                                  <div className="text-[11px] text-gray-800 whitespace-pre-wrap">{product.notes || '-'}</div>
+                                )}
                               </div>
                             </div>
                           </div>

@@ -6,10 +6,10 @@ import { prisma } from '@/lib/prisma'
 export const dynamic = 'force-dynamic'
 
 const canAccess = (role?: string) =>
-  role === 'admin' || role === 'operator' || role === 'influencer_operator'
+  role === 'admin' || role === 'lead' || role === 'operator' || role === 'influencer_operator'
 
 const canManage = (role?: string) =>
-  role === 'admin' || role === 'operator' || role === 'influencer_operator'
+  role === 'admin' || role === 'lead' || role === 'operator' || role === 'influencer_operator'
 
 const parseJsonArray = (value: unknown) => {
   if (Array.isArray(value)) return value.map((x) => String(x))

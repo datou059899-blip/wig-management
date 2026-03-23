@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
-import { ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, canAccessUsers } from '@/lib/permissions'
+import { ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_MODULES, ROLE_DEFAULT_PAGES, DEPARTMENTS, getRoleModules, canAccessUsers } from '@/lib/permissions'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { EmptyStatePresets } from '@/components/EmptyState'
 
 type User = {
   id: string
@@ -12,30 +13,68 @@ type User = {
   name?: string | null
   role: string
   status?: string
+  defaultPage?: string | null
+  department?: string | null
+  notes?: string | null
+  lastLoginAt?: string | null
   createdAt: string
 }
+
+// 默认首页选项
+const DEFAULT_PAGE_OPTIONS = [
+  { value: '', label: '跟随角色默认' },
+  { value: '/dashboard', label: '工作台首页' },
+  { value: '/dashboard/workbench', label: '今日工作台' },
+  { value: '/dashboard/opportunities', label: '选品更新池' },
+  { value: '/dashboard/products', label: '产品列表' },
+  { value: '/dashboard/influencers', label: '达人建联' },
+  { value: '/dashboard/scripts', label: '脚本拆解' },
+  { value: '/dashboard/performance', label: '经营数据' },
+]
 
 export default function UsersPage() {
   const router = useRouter()
   const { data: session } = useSession()
-  const role = (session?.user as any)?.role
-  const isAdmin = canAccessUsers(role)
-
-  useEffect(() => {
-    if (session !== undefined && !isAdmin) {
-      router.replace('/dashboard')
-    }
-  }, [session, isAdmin, router])
+  const currentUserRole = (session?.user as any)?.role
+  const isAdmin = canAccessUsers(currentUserRole)
 
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
+  // 创建用户表单
+  const [showCreateForm, setShowCreateForm] = useState(false)
   const [newEmail, setNewEmail] = useState('')
   const [newName, setNewName] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [newRole, setNewRole] = useState<string>('operator')
+  const [newDefaultPage, setNewDefaultPage] = useState('')
+  const [newDepartment, setNewDepartment] = useState('')
+  const [newNotes, setNewNotes] = useState('')
+
+  // 编辑用户
+  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [editForm, setEditForm] = useState({
+    name: '',
+    role: '',
+    defaultPage: '',
+    department: '',
+    notes: '',
+  })
+
+  // 权限说明弹窗
+  const [showPermissions, setShowPermissions] = useState(false)
+  const [permissionsRole, setPermissionsRole] = useState('')
+
+  // 删除确认
+  const [deletingUser, setDeletingUser] = useState<User | null>(null)
+
+  useEffect(() => {
+    if (session !== undefined && !isAdmin) {
+      router.replace('/dashboard')
+    }
+  }, [session, isAdmin, router])
 
   useEffect(() => {
     if (!isAdmin) return
@@ -58,6 +97,10 @@ export default function UsersPage() {
           ...u,
           createdAt: String(u.createdAt),
           status: u.status || 'enabled',
+          defaultPage: u.defaultPage || '',
+          department: u.department || '',
+          notes: u.notes || '',
+          lastLoginAt: u.lastLoginAt || null,
         }))
         setUsers(list)
       } else {
@@ -83,6 +126,9 @@ export default function UsersPage() {
           name: newName.trim() || undefined,
           password: newPassword,
           role: newRole,
+          defaultPage: newDefaultPage || null,
+          department: newDepartment || null,
+          notes: newNotes || null,
         }),
       })
       const data = await res.json()
@@ -91,6 +137,11 @@ export default function UsersPage() {
         setNewEmail('')
         setNewName('')
         setNewPassword('')
+        setNewRole('operator')
+        setNewDefaultPage('')
+        setNewDepartment('')
+        setNewNotes('')
+        setShowCreateForm(false)
         await fetchUsers()
       } else {
         setMessage({ type: 'error', text: data.error || '创建失败' })
@@ -102,19 +153,38 @@ export default function UsersPage() {
     }
   }
 
-  const handleUpdateRole = async (id: string, newRole: string) => {
+  const openEdit = (user: User) => {
+    setEditingUser(user)
+    setEditForm({
+      name: user.name || '',
+      role: user.role,
+      defaultPage: user.defaultPage || '',
+      department: user.department || '',
+      notes: user.notes || '',
+    })
+  }
+
+  const handleUpdate = async () => {
+    if (!editingUser) return
     setSaving(true)
     setMessage(null)
     try {
-      const res = await fetch(`/api/users/${id}`, {
+      const res = await fetch(`/api/users/${editingUser.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: newRole }),
+        body: JSON.stringify({
+          name: editForm.name || null,
+          role: editForm.role,
+          defaultPage: editForm.defaultPage || null,
+          department: editForm.department || null,
+          notes: editForm.notes || null,
+        }),
       })
       const data = await res.json()
       if (res.ok) {
-        setMessage({ type: 'success', text: '已更新角色' })
-        setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, role: newRole } : u)))
+        setMessage({ type: 'success', text: '更新成功' })
+        setEditingUser(null)
+        await fetchUsers()
       } else {
         setMessage({ type: 'error', text: data.error || '更新失败' })
       }
@@ -125,14 +195,14 @@ export default function UsersPage() {
     }
   }
 
-  const handleToggleStatus = async (u: User) => {
-    const nextStatus = u.status === 'disabled' ? 'enabled' : 'disabled'
+  const handleToggleStatus = async (user: User) => {
+    const nextStatus = user.status === 'disabled' ? 'enabled' : 'disabled'
     const action = nextStatus === 'disabled' ? '禁用' : '启用'
-    if (!window.confirm(`确定要${action}用户 ${u.email} 吗？`)) return
+    if (!window.confirm(`确定要${action}用户 ${user.email} 吗？`)) return
     setSaving(true)
     setMessage(null)
     try {
-      const res = await fetch(`/api/users/${u.id}`, {
+      const res = await fetch(`/api/users/${user.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: nextStatus }),
@@ -140,7 +210,7 @@ export default function UsersPage() {
       const data = await res.json()
       if (res.ok) {
         setMessage({ type: 'success', text: `已${action}用户` })
-        setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, status: nextStatus } : x)))
+        setUsers((prev) => prev.map((x) => (x.id === user.id ? { ...x, status: nextStatus } : x)))
       } else {
         setMessage({ type: 'error', text: data.error || `${action}失败` })
       }
@@ -177,6 +247,55 @@ export default function UsersPage() {
     }
   }
 
+  const handleDelete = async () => {
+    if (!deletingUser) return
+    
+    // 检查用户是否有业务数据
+    const hasBusinessData = users.some(u => u.id === deletingUser.id && (
+      u.email.includes('test') === false // 简化判断
+    ))
+    
+    if (hasBusinessData) {
+      const confirmDisable = window.confirm(
+        `该用户可能已有业务数据，直接删除可能导致数据丢失。\n\n建议：点击"取消"然后选择"禁用"用户，而不是删除。\n\n确定要继续删除吗？`
+      )
+      if (!confirmDisable) {
+        setDeletingUser(null)
+        return
+      }
+    }
+    
+    if (!window.confirm(`确定要删除用户 ${deletingUser.email} 吗？此操作不可恢复！`)) {
+      setDeletingUser(null)
+      return
+    }
+    
+    setSaving(true)
+    setMessage(null)
+    try {
+      const res = await fetch(`/api/users/${deletingUser.id}`, {
+        method: 'DELETE',
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setMessage({ type: 'success', text: '用户已删除' })
+        setUsers((prev) => prev.filter((u) => u.id !== deletingUser.id))
+      } else {
+        setMessage({ type: 'error', text: data.error || '删除失败' })
+      }
+    } catch {
+      setMessage({ type: 'error', text: '删除失败' })
+    } finally {
+      setSaving(false)
+      setDeletingUser(null)
+    }
+  }
+
+  const showRolePermissions = (role: string) => {
+    setPermissionsRole(role)
+    setShowPermissions(true)
+  }
+
   if (session === undefined || !isAdmin) {
     return (
       <div className="flex items-center justify-center py-20 text-gray-500">
@@ -186,151 +305,120 @@ export default function UsersPage() {
   }
 
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
         title="用户管理"
-        description="创建账号、分配角色、启用/禁用用户，控制不同角色的访问权限"
+        description="创建账号、分配角色、管理部门，控制不同角色的访问权限"
         actions={
-          <span className="text-xs text-gray-500">
-            当前共 {users.length} 个用户
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500">
+              当前共 {users.length} 个用户
+            </span>
+            <button
+              onClick={() => setShowCreateForm(true)}
+              className="btn-primary"
+            >
+              + 创建用户
+            </button>
+          </div>
         }
       />
 
       {message && (
-        <div
-          className={`mb-4 p-3 rounded-lg ${
-            message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'
-          }`}
-          role="alert"
-        >
+        <div className={`p-3 rounded-lg ${message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
           {message.text}
         </div>
       )}
 
-      {/* 创建用户 */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">创建新用户</h2>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <input
-            value={newEmail}
-            onChange={(e) => setNewEmail(e.target.value)}
-            placeholder="邮箱（登录账号）"
-            className="px-3 py-2 border border-gray-300 rounded-lg"
-          />
-          <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="姓名（可选）"
-            className="px-3 py-2 border border-gray-300 rounded-lg"
-          />
-          <input
-            type="password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            placeholder="初始密码"
-            className="px-3 py-2 border border-gray-300 rounded-lg"
-          />
-          <div>
-            <select
-              value={newRole}
-              onChange={(e) => setNewRole(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-            >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {ROLE_LABELS[r] || r}
-                </option>
-              ))}
-            </select>
-            <p className="mt-1 text-xs text-gray-500">{ROLE_DESCRIPTIONS[newRole] || ''}</p>
-          </div>
-        </div>
-        <div className="mt-4">
-          <button
-            onClick={handleCreate}
-            disabled={saving || !newEmail.trim() || !newPassword.trim()}
-            className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {saving ? '创建中...' : '创建用户'}
-          </button>
-        </div>
-      </div>
-
       {/* 用户列表 */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">用户列表</h2>
+      <div className="card p-6">
+        <h2 className="section-title">用户列表</h2>
+        
         {loading ? (
           <div className="text-center py-10 text-gray-500">加载中...</div>
         ) : users.length === 0 ? (
-          <div className="text-center py-10 text-gray-500">暂无用户。你可以在上方创建第一个管理员或运营账号。</div>
+          <div className="card p-8">
+            {EmptyStatePresets.noItems('用户', 
+              <button onClick={() => setShowCreateForm(true)} className="btn-primary mt-4">
+                创建第一个用户
+              </button>
+            )}
+          </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+          <div className="table-container">
+            <table className="table">
+              <thead>
                 <tr>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">邮箱</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">姓名</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">角色</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">状态</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">可访问模块</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">创建时间</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">操作</th>
+                  <th>用户</th>
+                  <th>角色</th>
+                  <th>部门</th>
+                  <th>默认首页</th>
+                  <th>状态</th>
+                  <th>最近登录</th>
+                  <th>创建时间</th>
+                  <th>操作</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody>
                 {users.map((u) => (
                   <tr key={u.id}>
-                    <td className="px-4 py-2 text-sm text-gray-900">{u.email}</td>
-                    <td className="px-4 py-2 text-sm text-gray-700">{u.name || '-'}</td>
-                    <td className="px-4 py-2 text-sm">
-                      <select
-                        value={u.role}
-                        onChange={(e) => handleUpdateRole(u.id, e.target.value)}
-                        className="px-2 py-1 border border-gray-300 rounded-lg text-sm"
-                      >
-                        {ROLES.map((r) => (
-                          <option key={r} value={r}>
-                            {ROLE_LABELS[r] || r}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="text-xs text-gray-500 mt-0.5">{ROLE_DESCRIPTIONS[u.role] || ''}</p>
+                    <td>
+                      <div className="font-medium text-gray-900">{u.name || '-'}</div>
+                      <div className="text-xs text-gray-500">{u.email}</div>
                     </td>
-                    <td className="px-4 py-2 text-sm">
-                      <span
-                        className={
-                          (u.status || 'enabled') === 'disabled'
-                            ? 'text-amber-600 font-medium'
-                            : 'text-green-600'
-                        }
-                      >
-                        {(u.status || 'enabled') === 'disabled' ? '已禁用' : '启用'}
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <span className="badge badge-primary">{ROLE_LABELS[u.role] || u.role}</span>
+                        <button
+                          onClick={() => showRolePermissions(u.role)}
+                          className="text-xs text-blue-600 hover:text-blue-800"
+                        >
+                          查看权限
+                        </button>
+                      </div>
+                    </td>
+                    <td className="text-sm text-gray-600">{u.department || '-'}</td>
+                    <td className="text-sm text-gray-600">
+                      {u.defaultPage ? DEFAULT_PAGE_OPTIONS.find(p => p.value === u.defaultPage)?.label || u.defaultPage : '-'}
+                    </td>
+                    <td>
+                      <span className={`badge ${u.status === 'disabled' ? 'badge-warning' : 'badge-success'}`}>
+                        {u.status === 'disabled' ? '已禁用' : '启用'}
                       </span>
                     </td>
-                    <td className="px-4 py-2 text-xs text-gray-600 max-w-[260px]">
-                      {ROLE_DESCRIPTIONS[u.role] || '-'}
+                    <td className="text-sm text-gray-500">
+                      {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('zh-CN').slice(0, 16) : '-'}
                     </td>
-                    <td className="px-4 py-2 text-sm text-gray-500">
-                      {new Date(u.createdAt).toLocaleString('zh-CN')}
+                    <td className="text-sm text-gray-500">
+                      {new Date(u.createdAt).toLocaleString('zh-CN').slice(0, 16)}
                     </td>
-                    <td className="px-4 py-2 text-sm space-x-2">
-                      <button
-                        onClick={() => handleResetPassword(u.id)}
-                        className="px-3 py-1 text-xs text-blue-600 border border-blue-200 rounded hover:bg-blue-50"
-                      >
-                        重置密码
-                      </button>
-                      <button
-                        onClick={() => handleToggleStatus(u)}
-                        className={`px-3 py-1 text-xs rounded border ${
-                          (u.status || 'enabled') === 'disabled'
-                            ? 'text-green-600 border-green-200 hover:bg-green-50'
-                            : 'text-amber-600 border-amber-200 hover:bg-amber-50'
-                        }`}
-                      >
-                        {(u.status || 'enabled') === 'disabled' ? '启用' : '禁用'}
-                      </button>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => openEdit(u)}
+                          className="btn-ghost text-xs py-1 px-2"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          onClick={() => handleResetPassword(u.id)}
+                          className="btn-ghost text-xs py-1 px-2"
+                        >
+                          重置密码
+                        </button>
+                        <button
+                          onClick={() => handleToggleStatus(u)}
+                          className={`btn-ghost text-xs py-1 px-2 ${u.status === 'disabled' ? 'text-green-600' : 'text-amber-600'}`}
+                        >
+                          {u.status === 'disabled' ? '启用' : '禁用'}
+                        </button>
+                        <button
+                          onClick={() => setDeletingUser(u)}
+                          className="btn-ghost text-xs py-1 px-2 text-red-600"
+                        >
+                          删除
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -339,6 +427,251 @@ export default function UsersPage() {
           </div>
         )}
       </div>
+
+      {/* 创建用户弹窗 */}
+      {showCreateForm && (
+        <div className="modal">
+          <div className="modal-backdrop" onClick={() => setShowCreateForm(false)} />
+          <div className="modal-content">
+            <div className="modal-header">
+              <div className="text-base font-semibold">创建新用户</div>
+            </div>
+            <div className="modal-body space-y-4">
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">邮箱（登录账号） *</label>
+                <input
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  className="input"
+                  placeholder="example@company.com"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">姓名</label>
+                <input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  className="input"
+                  placeholder="可选"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">初始密码 *</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="input"
+                  placeholder="至少6位"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">角色 *</label>
+                <select
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value)}
+                  className="input"
+                >
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {ROLE_LABELS[r] || r}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">{ROLE_DESCRIPTIONS[newRole]}</p>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">默认首页</label>
+                <select
+                  value={newDefaultPage}
+                  onChange={(e) => setNewDefaultPage(e.target.value)}
+                  className="input"
+                >
+                  {DEFAULT_PAGE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">所属部门</label>
+                <select
+                  value={newDepartment}
+                  onChange={(e) => setNewDepartment(e.target.value)}
+                  className="input"
+                >
+                  {DEPARTMENTS.map((d) => (
+                    <option key={d.value} value={d.value}>
+                      {d.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">备注</label>
+                <textarea
+                  value={newNotes}
+                  onChange={(e) => setNewNotes(e.target.value)}
+                  className="input"
+                  placeholder="可选备注信息"
+                  rows={2}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setShowCreateForm(false)} className="btn-secondary">取消</button>
+              <button
+                onClick={handleCreate}
+                disabled={saving || !newEmail.trim() || !newPassword.trim()}
+                className="btn-primary"
+              >
+                {saving ? '创建中...' : '创建用户'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 编辑用户弹窗 */}
+      {editingUser && (
+        <div className="modal">
+          <div className="modal-backdrop" onClick={() => setEditingUser(null)} />
+          <div className="modal-content">
+            <div className="modal-header">
+              <div className="text-base font-semibold">编辑用户</div>
+              <div className="text-xs text-gray-500 mt-1">{editingUser.email}</div>
+            </div>
+            <div className="modal-body space-y-4">
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">姓名</label>
+                <input
+                  value={editForm.name}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">角色 *</label>
+                <select
+                  value={editForm.role}
+                  onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
+                  className="input"
+                >
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {ROLE_LABELS[r] || r}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">默认首页</label>
+                <select
+                  value={editForm.defaultPage}
+                  onChange={(e) => setEditForm({ ...editForm, defaultPage: e.target.value })}
+                  className="input"
+                >
+                  {DEFAULT_PAGE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">所属部门</label>
+                <select
+                  value={editForm.department}
+                  onChange={(e) => setEditForm({ ...editForm, department: e.target.value })}
+                  className="input"
+                >
+                  {DEPARTMENTS.map((d) => (
+                    <option key={d.value} value={d.value}>
+                      {d.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">备注</label>
+                <textarea
+                  value={editForm.notes}
+                  onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                  className="input"
+                  rows={2}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setEditingUser(null)} className="btn-secondary">取消</button>
+              <button onClick={handleUpdate} disabled={saving} className="btn-primary">
+                {saving ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 权限说明弹窗 */}
+      {showPermissions && (
+        <div className="modal">
+          <div className="modal-backdrop" onClick={() => setShowPermissions(false)} />
+          <div className="modal-content max-w-md">
+            <div className="modal-header">
+              <div className="text-base font-semibold">{ROLE_LABELS[permissionsRole]} - 权限说明</div>
+            </div>
+            <div className="modal-body">
+              <p className="text-sm text-gray-600 mb-4">{ROLE_DESCRIPTIONS[permissionsRole]}</p>
+              <div className="text-sm">
+                <div className="font-medium text-gray-700 mb-2">可访问模块：</div>
+                <div className="flex flex-wrap gap-2">
+                  {getRoleModules(permissionsRole).map((module) => (
+                    <span key={module} className="badge badge-primary">{module}</span>
+                  ))}
+                </div>
+              </div>
+              {ROLE_DEFAULT_PAGES[permissionsRole] && (
+                <div className="mt-4 text-sm">
+                  <div className="font-medium text-gray-700 mb-1">默认首页：</div>
+                  <div className="text-gray-600">
+                    {DEFAULT_PAGE_OPTIONS.find(p => p.value === ROLE_DEFAULT_PAGES[permissionsRole])?.label || ROLE_DEFAULT_PAGES[permissionsRole]}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setShowPermissions(false)} className="btn-primary">关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 删除确认弹窗 */}
+      {deletingUser && (
+        <div className="modal">
+          <div className="modal-backdrop" onClick={() => setDeletingUser(null)} />
+          <div className="modal-content max-w-sm">
+            <div className="modal-header">
+              <div className="text-base font-semibold text-red-600">删除用户</div>
+            </div>
+            <div className="modal-body">
+              <p className="text-sm text-gray-600">
+                确定要删除用户 <strong>{deletingUser.email}</strong> 吗？
+              </p>
+              <p className="text-xs text-red-500 mt-2">
+                ⚠️ 此操作不可恢复。建议优先使用"禁用"功能代替删除。
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setDeletingUser(null)} className="btn-secondary">取消</button>
+              <button onClick={handleDelete} disabled={saving} className="btn-danger">
+                {saving ? '删除中...' : '确认删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

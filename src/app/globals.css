@@ -4,22 +4,347 @@
 
 :root {
   --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 214, 219, 220;
+  --background-start-rgb: 248, 250, 252;
   --background-end-rgb: 255, 255, 255;
 }
 
 body {
   color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
+/* 页面容器 */
+.page-container {
+  @apply min-h-screen;
+}
+
+/* 页面内容区 */
+.page-content {
+  @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6;
+}
+
+/* 统一的卡片阴影 */
+@layer components {
+  /* 主卡片 */
+  .card {
+    @apply bg-white rounded-xl border border-gray-100 shadow-sm;
+  }
+  
+  /* 可悬浮卡片 */
+  .card-hover {
+    @apply bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md hover:border-gray-200 transition-all duration-200;
+  }
+  
+  /* 次要卡片 */
+  .card-secondary {
+    @apply bg-gray-50/50 rounded-xl border border-gray-100;
+  }
+  
+  /* 页面标题区 */
+  .page-header {
+    @apply flex items-center justify-between mb-6;
+  }
+  
+  .page-title {
+    @apply text-xl font-semibold text-gray-900;
+  }
+  
+  .page-description {
+    @apply text-sm text-gray-500 mt-1;
+  }
+  
+  /* 状态 Badge */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  
+  .badge-primary {
+    @apply bg-blue-100 text-blue-700;
+  }
+  
+  .badge-success {
+    @apply bg-green-100 text-green-700;
+  }
+  
+  .badge-warning {
+    @apply bg-amber-100 text-amber-700;
+  }
+  
+  .badge-danger {
+    @apply bg-red-100 text-red-700;
+  }
+  
+  .badge-gray {
+    @apply bg-gray-100 text-gray-700;
+  }
+  
+  .badge-purple {
+    @apply bg-purple-100 text-purple-700;
+  }
+  
+  .badge-pink {
+    @apply bg-pink-100 text-pink-700;
+  }
+  
+  /* 表格样式 */
+  .table-container {
+    @apply overflow-hidden rounded-xl border border-gray-200 bg-white;
+  }
+  
+  .table {
+    @apply min-w-full divide-y divide-gray-100;
+  }
+  
+  .table th {
+    @apply px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50/80;
+  }
+  
+  .table td {
+    @apply px-4 py-3.5 text-sm text-gray-700;
+  }
+  
+  .table tbody tr {
+    @apply hover:bg-blue-50/30 transition-colors border-b border-gray-50 last:border-b-0;
+  }
+  
+  /* 表单输入框 */
+  .input {
+    @apply block w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all;
+  }
+  
+  .input:focus {
+    @apply shadow-sm;
+  }
+  
+  /* 按钮 */
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-offset-2;
+  }
+  
+  .btn-primary {
+    @apply btn bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 shadow-sm;
+  }
+  
+  .btn-secondary {
+    @apply btn bg-white border-gray-200 text-gray-700 hover:bg-gray-50 focus:ring-blue-500;
+  }
+  
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 shadow-sm;
+  }
+  
+  .btn-ghost {
+    @apply btn bg-transparent text-gray-600 hover:bg-gray-100;
+  }
+  
+  /* 筛选工具条 */
+  .filter-bar {
+    @apply flex flex-wrap items-center gap-3 p-4 bg-white rounded-xl border border-gray-200 shadow-sm;
+  }
+  
+  /* 空状态 */
+  .empty-state {
+    @apply flex flex-col items-center justify-center py-16 px-4 text-center;
+  }
+  
+  .empty-state-icon {
+    @apply w-20 h-20 mb-4 text-gray-300;
+  }
+  
+  .empty-state-title {
+    @apply text-lg font-medium text-gray-700 mb-2;
+  }
+  
+  .empty-state-description {
+    @apply text-sm text-gray-500 max-w-sm mb-4;
+  }
+  
+  /* 弹窗 */
+  .modal {
+    @apply fixed inset-0 z-50 overflow-y-auto;
+  }
+  
+  .modal-backdrop {
+    @apply fixed inset-0 bg-gray-900/40 backdrop-blur-sm;
+  }
+  
+  .modal-content {
+    @apply relative bg-white rounded-2xl shadow-2xl max-w-2xl mx-auto my-8 p-0;
+  }
+  
+  .modal-header {
+    @apply px-6 py-4 border-b border-gray-100;
+  }
+  
+  .modal-body {
+    @apply px-6 py-4;
+  }
+  
+  .modal-footer {
+    @apply px-6 py-4 border-t border-gray-100 bg-gray-50 rounded-b-2xl flex justify-end gap-3;
+  }
+  
+  /* 统计卡片 */
+  .stat-card {
+    @apply p-4 rounded-xl border transition-all duration-200;
+  }
+  
+  .stat-card-default {
+    @apply bg-white border-gray-100 shadow-sm;
+  }
+  
+  .stat-card-highlight {
+    @apply bg-white border-l-4 border-l-blue-500;
+  }
+  
+  .stat-card-urgent {
+    @apply bg-white border-l-4 border-l-red-500;
+  }
+  
+  .stat-value {
+    @apply text-2xl font-bold text-gray-900;
+  }
+  
+  .stat-label {
+    @apply text-xs font-medium text-gray-500;
+  }
+  
+  .stat-description {
+    @apply text-xs text-gray-400 mt-1;
+  }
+  
+  /* 模块标题 */
+  .section-title {
+    @apply text-base font-semibold text-gray-900 mb-4;
+  }
+  
+  /* 提示卡片 */
+  .tip-card {
+    @apply p-4 rounded-xl border;
+  }
+  
+  .tip-card-info {
+    @apply bg-blue-50 border-blue-100 text-blue-800;
+  }
+  
+  .tip-card-success {
+    @apply bg-green-50 border-green-100 text-green-800;
+  }
+  
+  .tip-card-warning {
+    @apply bg-amber-50 border-amber-100 text-amber-800;
+  }
+  
+  /* 列表项 */
+  .list-item {
+    @apply flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors;
+  }
+  
+  /* 导航高亮 */
+  .nav-active {
+    @apply bg-blue-50 text-blue-700 font-medium;
+  }
+  
+  /* 标签页 */
+  .tab {
+    @apply px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 border-b-2 border-transparent transition-colors;
+  }
+  
+  .tab-active {
+    @apply text-blue-600 border-blue-600;
+  }
+}
+
+/* 滚动条美化 */
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+  
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}
+
+/* 页面切换动画 */
+.page-enter {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.page-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 200ms ease-out, transform 200ms ease-out;
+}
+
+/* 主题色系 */
+@layer utilities {
+  /* 绿色系 - 今日工作台 */
+  .theme-workbench {
+    --theme-color: 34, 197, 94;
+    --theme-bg: 240, 253, 244;
+    --theme-border: 220, 252, 231;
+    --theme-text: 21, 128, 61;
+  }
+  
+  /* 橙红系 - 选品更新池 */
+  .theme-opportunities {
+    --theme-color: 249, 115, 22;
+    --theme-bg: 255, 247, 237;
+    --theme-border: 254, 215, 170;
+    --theme-text: 194, 65, 12;
+  }
+  
+  /* 蓝色系 - 产品列表 */
+  .theme-products {
+    --theme-color: 59, 130, 246;
+    --theme-bg: 239, 246, 255;
+    --theme-border: 219, 234, 254;
+    --theme-text: 29, 78, 216;
+  }
+  
+  /* 琥珀色系 - 达人建联 */
+  .theme-influencers {
+    --theme-color: 245, 158, 11;
+    --theme-bg: fffbeb;
+    --theme-border: 254, 243, 199;
+    --theme-text: 180, 83, 9;
+  }
+  
+  /* 紫蓝系 - 脚本拆解 */
+  .theme-scripts {
+    --theme-color: 139, 92, 246;
+    --theme-bg: 245, 243, 255;
+    --theme-border: 237, 233, 254;
+    --theme-text: 109, 40, 217;
+  }
+  
+  /* 青蓝系 - 经营数据 */
+  .theme-performance {
+    --theme-color: 6, 182, 212;
+    --theme-bg: 236, 254, 255;
+    --theme-border: 203, 250, 255;
+    --theme-text: 8, 145, 178;
   }
 }

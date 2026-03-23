@@ -196,12 +196,31 @@ export async function PATCH(request: NextRequest) {
       'stock',
       'notes',
       'tags',
+      // ---------- 产品推进看板字段 ----------
+      'workflowStatus',
+      'collectedAt',
+      'pickedUpAt',
+      'sampleSentAt',
+      'mainConfirmedAt',
+      'outreachLinkedAt',
+      'scriptReadyAt',
+      'storyboardReadyAt',
+      'postedAt',
+      'assignee',
+      'nextAction',
     ] as const
 
     const updateData: any = {}
     for (const key of allowedFields) {
       if (key in fields) {
-        updateData[key] = fields[key as keyof typeof fields]
+        const v = fields[key as keyof typeof fields]
+        // DateTime 字段：接受 ISO 字符串或 null
+        if (typeof key === 'string' && key.endsWith('At')) {
+          if (v === null || v === undefined || v === '') updateData[key] = null
+          else updateData[key] = new Date(String(v))
+          continue
+        }
+        updateData[key] = v
       }
     }
 

@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { canAccessInfluencers, canManageInfluencers } from '@/lib/permissions'
+// import { TaskSummaryBar } from '@/components/TaskSummaryBar'
 // 跨用户同步：以数据库/API 为唯一真源（不再用 localStorage 作为真源）
 
 type InfluencerStatus =
@@ -823,6 +824,20 @@ export default function InfluencersPage() {
   const [drawerScrollTarget, setDrawerScrollTarget] = useState<'timeline' | null>(null)
   const [rowMenuOpenId, setRowMenuOpenId] = useState<string>('')
 
+  const sp = useSearchParams()
+  const influencerIdFromQuery = sp.get('influencerId')
+
+  useEffect(() => {
+    if (!influencerIdFromQuery) return
+    if (!items) return
+    const found = items.find((x) => x.id === influencerIdFromQuery)
+    if (!found) return
+    setSelected(found)
+    setDrawerScrollTarget('timeline')
+    setDrawerOpen(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [influencerIdFromQuery, items])
+
   const [actionOpen, setActionOpen] = useState(false)
   const [actionTargetId, setActionTargetId] = useState('')
   const [actionForm, setActionForm] = useState({
@@ -1557,6 +1572,9 @@ export default function InfluencersPage() {
           )
         })()}
       </div>
+
+      {/* 今日任务摘要条 - 达人建联相关 */}
+      {/* <TaskSummaryBar filterModule="达人建联" limit={5} showCompletionFeed={true} /> */}
 
       {/* 新建达人弹窗 */}
       <Modal
