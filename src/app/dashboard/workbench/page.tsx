@@ -236,34 +236,113 @@ export default function WorkbenchPage() {
     router.push(`/dashboard/influencers?influencerId=${id}`)
   }
 
-  const updateTaskStatus = async (id: string, nextStatus: string) => {
-    console.log('[updateTaskStatus] 开始更新任务状态')
-    console.log('[updateTaskStatus] 任务 ID:', id)
-    console.log('[updateTaskStatus] 目标状态:', nextStatus)
+  // 检查任务是否有完成要求
+  const hasCompletionRequirements = (task: WorkTask) => {
+    return task.requireCompletionNote || task.requireCompletionLink || task.requireCompletionResult
+  }
+
+  // 提交完成任务
+  const submitCompleteTask = async () => {
+    if (!completingTask) return
+    
+    console.log('[submitCompleteTask] 提交完成任务')
+    
+    // 验证必填字段
+    if (completingTask.requireCompletionNote && !completeForm.completedNote.trim()) {
+      alert('请填写完成备注')
+      return
+    }
+    if (completingTask.requireCompletionLink && !completeForm.completedLink.trim()) {
+      alert('请填写完成链接')
+      return
+    }
+    if (completingTask.requireCompletionResult && !completeForm.completedResult.trim()) {
+      alert('请填写结果说明')
+      return
+    }
+    
+    try {
+      const res = await fetch(`/api/work-tasks/${completingTask.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: '已完成',
+          completedNote: completeForm.completedNote || null,
+          completedLink: completeForm.completedLink || null,
+          completedResult: completeForm.completedResult || null,
+        }),
+      })
+      
+      const data = await res.json()
+      
+      if (res.ok) {
+        // 获取执行人名称
+        const assigneeName = completingTask.assigneeName || '执行人'
+        alert(`✅ 任务已完成\n\n任务：${completingTask.title}\n已分配给：${assigneeName}`)
+        await fetchTasks()
+        setCompletingTask(null)
+        setCompleteForm({ completedNote: '', completedLink: '', completedResult: '' })
+      } else {
+        alert('完成失败：' + (data.error || '未知错误'))
+      }
+    } catch (e) {
+      console.error('[submitCompleteTask] 异常:', e)
+      alert('完成失败：' + (e as Error).message)
+    }
+  }
+
+  // 处理完成任务点击
+  const handleCompleteClick = (task: WorkTask) => {
+    // 检查是否有完成要求
+    if (hasCompletionRequirements(task)) {
+      // 打开完成弹窗
+      setCompletingTask(task)
+      setCompleteForm({ completedNote: '', completedLink: '', completedResult: '' })
+    } else {
+      // 没有完成要求，直接完成
+      updateTaskStatusDirect(task.id, '已完成')
+    }
+  }
+
+  // 直接更新任务状态（用于没有完成要求的情况）
+  const updateTaskStatusDirect = async (id: string, nextStatus: string) => {
     try {
       const res = await fetch(`/api/work-tasks/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          status: nextStatus,
-          // 完成任务时传递空值（让后端验证）
-          completedNote: nextStatus === '已完成' ? '' : undefined,
-          completedLink: nextStatus === '已完成' ? '' : undefined,
-          completedResult: nextStatus === '已完成' ? '' : undefined,
-        }),
+        body: JSON.stringify({ status: nextStatus }),
       })
-      console.log('[updateTaskStatus] 响应状态:', res.status)
       const data = await res.json()
-      console.log('[updateTaskStatus] 响应数据:', JSON.stringify(data, null, 2))
       if (res.ok) {
         await fetchTasks()
+        // 显示成功提示
+        if (nextStatus === '已完成') {
+          alert('✅ 任务已完成')
+        }
       } else {
-        alert(data.error || '更新失败')
+        alert('更新失败：' + (data.error || '未知错误'))
       }
     } catch (e) {
-      console.error('[updateTaskStatus] 异常:', e)
+      console.error('[updateTaskStatusDirect] 异常:', e)
       alert('更新失败：' + (e as Error).message)
     }
+  }
+
+  const updateTaskStatus = async (id: string, nextStatus: string) => {
+    // 非完成操作直接执行
+    if (nextStatus !== '已完成') {
+      await updateTaskStatusDirect(id, nextStatus)
+      return
+    }
+    
+    // 完成操作需要先检查任务要求
+    const task = tasks.find(t => t.id === id) || allTasks.find(t => t.id === id)
+    if (!task) {
+      console.error('[updateTaskStatus] 未找到任务:', id)
+      return
+    }
+    
+    handleCompleteClick(task)
   }
 
   const updateTask = async (id: string, updates: Partial<WorkTask>) => {
@@ -282,6 +361,14 @@ export default function WorkbenchPage() {
   // 新建任务弹窗
   const [createOpen, setCreateOpen] = useState(false)
   const [createForOther, setCreateForOther] = useState(false)
+  
+  // 完成任务弹窗状态
+  const [completingTask, setCompletingTask] = useState<WorkTask | null>(null)
+  const [completeForm, setCompleteForm] = useState({
+    completedNote: '',
+    completedLink: '',
+    completedResult: '',
+  })
   const [form, setForm] = useState({
     title: '',
     sourceModule: '产品',
@@ -824,6 +911,102 @@ export default function WorkbenchPage() {
             <div className="modal-footer">
               <button onClick={() => setCreateOpen(false)} className="btn-secondary">取消</button>
               <button onClick={() => void submitCreate()} disabled={!form.title.trim() || !form.assigneeUserId} className="btn-primary">创建</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 完成任务弹窗 */}
+      {completingTask && (
+        <div className="modal">
+          <div className="modal-backdrop" onClick={() => setCompletingTask(null)} />
+          <div className="modal-content max-w-lg">
+            <div className="modal-header">
+              <div className="text-base font-semibold">完成任务</div>
+              <div className="text-xs text-gray-500 mt-1">{completingTask.title}</div>
+            </div>
+            <div className="modal-body space-y-4">
+              {/* 任务信息 */}
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <div className="text-xs text-gray-500">任务信息</div>
+                <div className="text-sm text-gray-700 mt-1">
+                  <div>优先级：<span className="font-medium">{completingTask.priority}</span></div>
+                  <div>截止日期：<span className="font-medium">{new Date(completingTask.dueDate).toLocaleDateString('zh-CN')}</span></div>
+                  <div>执行人：<span className="font-medium">{completingTask.assigneeName || completingTask.assigneeUserId}</span></div>
+                </div>
+              </div>
+
+              {/* 完成要求提示 */}
+              {(completingTask.requireCompletionNote || completingTask.requireCompletionLink || completingTask.requireCompletionResult) && (
+                <div className="p-3 bg-amber-50 border border-amber-100 rounded-lg">
+                  <div className="text-xs font-medium text-amber-800 mb-2">完成要求</div>
+                  <div className="space-y-1 text-sm text-amber-700">
+                    {completingTask.requireCompletionNote && (
+                      <div className="flex items-center gap-2">
+                        <span>✓</span>
+                        <span>必须填写完成备注</span>
+                      </div>
+                    )}
+                    {completingTask.requireCompletionLink && (
+                      <div className="flex items-center gap-2">
+                        <span>✓</span>
+                        <span>必须填写完成链接</span>
+                      </div>
+                    )}
+                    {completingTask.requireCompletionResult && (
+                      <div className="flex items-center gap-2">
+                        <span>✓</span>
+                        <span>必须填写结果说明</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 完成备注 */}
+              {completingTask.requireCompletionNote && (
+                <div>
+                  <label className="text-xs text-gray-600 mb-1.5 block">完成备注 *</label>
+                  <textarea
+                    value={completeForm.completedNote}
+                    onChange={(e) => setCompleteForm({ ...completeForm, completedNote: e.target.value })}
+                    className="input"
+                    rows={3}
+                    placeholder="请描述任务完成情况..."
+                  />
+                </div>
+              )}
+
+              {/* 完成链接 */}
+              {completingTask.requireCompletionLink && (
+                <div>
+                  <label className="text-xs text-gray-600 mb-1.5 block">完成链接 *</label>
+                  <input
+                    value={completeForm.completedLink}
+                    onChange={(e) => setCompleteForm({ ...completeForm, completedLink: e.target.value })}
+                    className="input"
+                    placeholder="https://..."
+                  />
+                </div>
+              )}
+
+              {/* 结果说明 */}
+              {completingTask.requireCompletionResult && (
+                <div>
+                  <label className="text-xs text-gray-600 mb-1.5 block">结果说明 *</label>
+                  <textarea
+                    value={completeForm.completedResult}
+                    onChange={(e) => setCompleteForm({ ...completeForm, completedResult: e.target.value })}
+                    className="input"
+                    rows={3}
+                    placeholder="请描述任务完成的结果和产出..."
+                  />
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setCompletingTask(null)} className="btn-secondary">取消</button>
+              <button onClick={() => void submitCompleteTask()} className="btn-primary">确认完成</button>
             </div>
           </div>
         </div>
