@@ -284,16 +284,27 @@ export default function WorkbenchPage() {
   })
 
   const submitCreate = async () => {
+    console.log('[submitCreate] ===== 开始执行 =====')
+    console.log('[submitCreate] 当前 form:', JSON.stringify(form, null, 2))
+    console.log('[submitCreate] currentUserId:', currentUserId)
+    console.log('[submitCreate] form.title:', form.title)
+    console.log('[submitCreate] form.title.trim():', form.title.trim())
+    console.log('[submitCreate] form.assigneeUserId:', form.assigneeUserId)
+    
     try {
       // 验证必填字段
       if (!form.title.trim()) {
+        console.log('[submitCreate] 验证失败：标题为空')
         alert('请填写任务标题')
         return
       }
       if (!form.assigneeUserId) {
+        console.log('[submitCreate] 验证失败：执行人为空')
         alert('请选择执行人')
         return
       }
+
+      console.log('[submitCreate] 验证通过，准备发送请求')
 
       const due = form.dueDate ? new Date(`${form.dueDate}T18:00:00`) : new Date()
       due.setHours(18, 0, 0, 0)
@@ -317,7 +328,8 @@ export default function WorkbenchPage() {
         requireCompletionResult: form.requireCompletionResult,
       }
 
-      console.log('创建任务 payload:', payload)
+      console.log('[submitCreate] 请求 payload:', JSON.stringify(payload, null, 2))
+      console.log('[submitCreate] 开始 fetch POST /api/work-tasks')
       
       const res = await fetch('/api/work-tasks', {
         method: 'POST',
@@ -325,10 +337,13 @@ export default function WorkbenchPage() {
         body: JSON.stringify(payload),
       })
       
+      console.log('[submitCreate] fetch 返回，status:', res.status)
+      
       const data = await res.json()
-      console.log('创建任务响应:', data)
+      console.log('[submitCreate] 响应数据:', JSON.stringify(data, null, 2))
       
       if (res.ok) {
+        console.log('[submitCreate] 创建成功，关闭弹窗并刷新')
         // 先关闭弹窗和重置表单
         setCreateOpen(false)
         setForm({
@@ -349,11 +364,13 @@ export default function WorkbenchPage() {
         })
         // 立即刷新任务列表，确保页面立即显示新任务
         await fetchTasks()
+        console.log('[submitCreate] 刷新完成')
       } else {
+        console.log('[submitCreate] 创建失败:', data.error)
         alert(data.error || '创建失败')
       }
     } catch (e) {
-      console.error('创建任务异常:', e)
+      console.error('[submitCreate] 异常:', e)
       alert('创建失败：' + (e as Error).message)
     }
   }
