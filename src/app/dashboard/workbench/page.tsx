@@ -176,8 +176,19 @@ export default function WorkbenchPage() {
 
   const categorized = useMemo(() => {
     const active = currentTasks.filter((t) => t.status !== '已完成')
-    const delayed = active.filter((t) => t.status === '已延期' || new Date(t.dueDate).getTime() < now.getTime())
-    const today = active.filter((t) => isSameLocalDay(new Date(t.dueDate), now) && t.status !== '已延期')
+    
+    // 使用日期字符串比较，而不是时间戳比较
+    // 只有截止日期早于今天的任务才算是逾期，今天截止的不算逾期
+    const todayStr = toLocalDateKey(now)
+    const delayed = active.filter((t) => {
+      if (t.status === '已延期') return true
+      const dueDateStr = toLocalDateKey(new Date(t.dueDate))
+      return dueDateStr < todayStr
+    })
+    const today = active.filter((t) => {
+      const dueDateStr = toLocalDateKey(new Date(t.dueDate))
+      return dueDateStr === todayStr && t.status !== '已延期'
+    })
     
     // 今日首要任务（isTodayMustDo 或 高优先级 + 负责人分配）
     const primary = today.filter((t) => t.isTodayMustDo === true || (t.priority === '高' && t.taskType === 'assigned'))
@@ -318,6 +329,7 @@ export default function WorkbenchPage() {
       console.log('创建任务响应:', data)
       
       if (res.ok) {
+        // 先关闭弹窗和重置表单
         setCreateOpen(false)
         setForm({
           title: '',
@@ -335,6 +347,7 @@ export default function WorkbenchPage() {
           requireCompletionLink: false,
           requireCompletionResult: false,
         })
+        // 立即刷新任务列表，确保页面立即显示新任务
         await fetchTasks()
       } else {
         alert(data.error || '创建失败')
