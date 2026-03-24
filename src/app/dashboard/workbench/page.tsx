@@ -237,15 +237,32 @@ export default function WorkbenchPage() {
   }
 
   const updateTaskStatus = async (id: string, nextStatus: string) => {
+    console.log('[updateTaskStatus] 开始更新任务状态')
+    console.log('[updateTaskStatus] 任务 ID:', id)
+    console.log('[updateTaskStatus] 目标状态:', nextStatus)
     try {
       const res = await fetch(`/api/work-tasks/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: nextStatus }),
+        body: JSON.stringify({ 
+          status: nextStatus,
+          // 完成任务时传递空值（让后端验证）
+          completedNote: nextStatus === '已完成' ? '' : undefined,
+          completedLink: nextStatus === '已完成' ? '' : undefined,
+          completedResult: nextStatus === '已完成' ? '' : undefined,
+        }),
       })
-      if (res.ok) await fetchTasks()
-    } catch {
-      // ignore
+      console.log('[updateTaskStatus] 响应状态:', res.status)
+      const data = await res.json()
+      console.log('[updateTaskStatus] 响应数据:', JSON.stringify(data, null, 2))
+      if (res.ok) {
+        await fetchTasks()
+      } else {
+        alert(data.error || '更新失败')
+      }
+    } catch (e) {
+      console.error('[updateTaskStatus] 异常:', e)
+      alert('更新失败：' + (e as Error).message)
     }
   }
 

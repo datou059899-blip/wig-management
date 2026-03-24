@@ -111,14 +111,29 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
   // 完成时的处理：验证完成要求
   if (body.status === '已完成' && existing.status !== '已完成') {
-    // 检查完成要求
-    if ((existing as any).requireCompletionNote && !body.completedNote) {
+    console.log('[PATCH] 完成任务，检查完成要求')
+    console.log('[PATCH] existing.requireCompletionNote:', (existing as any).requireCompletionNote)
+    console.log('[PATCH] existing.requireCompletionLink:', (existing as any).requireCompletionLink)
+    console.log('[PATCH] existing.requireCompletionResult:', (existing as any).requireCompletionResult)
+    console.log('[PATCH] body.completedNote:', body.completedNote)
+    console.log('[PATCH] body.completedLink:', body.completedLink)
+    console.log('[PATCH] body.completedResult:', body.completedResult)
+    
+    // 检查完成要求 - 使用 Number() 转换数据库的 Int 类型
+    const reqNote = (existing as any).requireCompletionNote === 1 || (existing as any).requireCompletionNote === true
+    const reqLink = (existing as any).requireCompletionLink === 1 || (existing as any).requireCompletionLink === true
+    const reqResult = (existing as any).requireCompletionResult === 1 || (existing as any).requireCompletionResult === true
+    
+    if (reqNote && !body.completedNote) {
+      console.log('[PATCH] 验证失败：缺少 completedNote')
       return NextResponse.json({ error: '完成后必须填写备注' }, { status: 400 })
     }
-    if ((existing as any).requireCompletionLink && !body.completedLink) {
+    if (reqLink && !body.completedLink) {
+      console.log('[PATCH] 验证失败：缺少 completedLink')
       return NextResponse.json({ error: '完成后必须附链接' }, { status: 400 })
     }
-    if ((existing as any).requireCompletionResult && !body.completedResult) {
+    if (reqResult && !body.completedResult) {
+      console.log('[PATCH] 验证失败：缺少 completedResult')
       return NextResponse.json({ error: '完成后必须填写结果说明' }, { status: 400 })
     }
     // 保存完成时的填写内容
@@ -126,6 +141,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     patch.completedLink = body.completedLink || null
     patch.completedResult = body.completedResult || null
     patch.completedAt = new Date()
+    console.log('[PATCH] 验证通过，准备更新任务状态')
   }
 
   // 如果是执行人更新状态（非完成操作）
