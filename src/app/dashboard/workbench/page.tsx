@@ -199,6 +199,15 @@ export default function WorkbenchPage() {
     // 延续/逾期任务
     const delayedTasks = delayed.filter((t) => !today.includes(t))
     
+    // 待处理任务：状态为"待做"或"进行中"，且未出现在其他栏目的任务
+    const alreadyCategorized = new Set([
+      ...primary.map(t => t.id),
+      ...secondary.map(t => t.id),
+      ...mySelfTasks.map(t => t.id),
+      ...delayedTasks.map(t => t.id),
+    ])
+    const pending = active.filter((t) => !alreadyCategorized.has(t.id) && (t.status === '待做' || t.status === '进行中'))
+    
     // 已完成任务（最近 5 条）
     const completed = currentTasks
       .filter((t) => t.status === '已完成')
@@ -215,6 +224,7 @@ export default function WorkbenchPage() {
       secondary: sortList(secondary),
       mySelfTasks: sortList(mySelfTasks),
       delayed: sortList(delayedTasks),
+      pending: sortList(pending),
       completed,
     }
   }, [currentTasks, now, currentUserId, teamView])
@@ -528,7 +538,7 @@ export default function WorkbenchPage() {
     setEditingTask(null)
   }
 
-  const hasAnyTask = categorized.primary.length > 0 || categorized.secondary.length > 0 || categorized.mySelfTasks.length > 0 || categorized.delayed.length > 0
+  const hasAnyTask = categorized.primary.length > 0 || categorized.secondary.length > 0 || categorized.mySelfTasks.length > 0 || categorized.delayed.length > 0 || categorized.pending.length > 0
 
   return (
     <div className="space-y-6">
@@ -583,7 +593,7 @@ export default function WorkbenchPage() {
       {hasAnyTask && (
         <>
           {/* 任务概览统计 */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div className="card p-4 border-l-4 border-l-green-500">
               <div className="text-xs text-gray-500">今日首要</div>
               <div className="text-2xl font-bold text-gray-900 mt-1">{categorized.primary.length}</div>
@@ -599,6 +609,10 @@ export default function WorkbenchPage() {
             <div className="card p-4 border-l-4 border-l-red-500">
               <div className="text-xs text-gray-500">逾期/延期</div>
               <div className="text-2xl font-bold text-gray-900 mt-1">{categorized.delayed.length}</div>
+            </div>
+            <div className="card p-4 border-l-4 border-l-gray-400">
+              <div className="text-xs text-gray-500">待处理</div>
+              <div className="text-2xl font-bold text-gray-900 mt-1">{categorized.pending.length}</div>
             </div>
           </div>
 
@@ -632,8 +646,8 @@ export default function WorkbenchPage() {
             </div>
           )}
 
-          {/* 任务列表 4 列 */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4">
+          {/* 任务列表 5 列 */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-5 gap-4">
             {/* 首要任务 */}
             <section className="card p-4">
               <div className="flex items-center justify-between mb-3">
@@ -706,6 +720,25 @@ export default function WorkbenchPage() {
                   </div>
                 ) : (
                   categorized.delayed.map((t) => (
+                    <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManage} showAssignee={teamView} />
+                  ))
+                )}
+              </div>
+            </section>
+
+            {/* 待处理任务 */}
+            <section className="card p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-gray-400"></span> 待处理
+                </div>
+                <span className="text-xs text-gray-400">{categorized.pending.length} 项</span>
+              </div>
+              <div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin">
+                {categorized.pending.length === 0 ? (
+                  <div className="text-xs text-gray-400 py-4 text-center">暂无待处理任务</div>
+                ) : (
+                  categorized.pending.map((t) => (
                     <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManage} showAssignee={teamView} />
                   ))
                 )}
