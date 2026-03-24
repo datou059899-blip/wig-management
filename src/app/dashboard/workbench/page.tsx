@@ -180,33 +180,39 @@ export default function WorkbenchPage() {
     // 使用日期字符串比较，而不是时间戳比较
     // 只有截止日期早于今天的任务才算是逾期，今天截止的不算逾期
     const todayStr = toLocalDateKey(now)
+    
+    // 1. 逾期/延期任务：dueDate 早于今天 或 status === '延期'/'逾期'/'已延期'
     const delayed = active.filter((t) => {
-      if (t.status === '已延期') return true
+      if (t.status === '已延期' || t.status === '延期' || t.status === '逾期') return true
       const dueDateStr = toLocalDateKey(new Date(t.dueDate))
       return dueDateStr < todayStr
     })
-    const today = active.filter((t) => {
+    
+    // 2. 今日首要：isTodayMustDo === true 或 (priority === '高' 且 dueDate 是今天)
+    const primary = active.filter((t) => {
+      if (t.isTodayMustDo === true) return true
       const dueDateStr = toLocalDateKey(new Date(t.dueDate))
-      return dueDateStr === todayStr && t.status !== '已延期'
+      return dueDateStr === todayStr && t.priority === '高'
     })
     
-    // 今日首要任务（isTodayMustDo 或 高优先级 + 负责人分配）
-    const primary = today.filter((t) => t.isTodayMustDo === true || (t.priority === '高' && t.taskType === 'assigned'))
-    // 今日次要任务
-    const secondary = today.filter((t) => !primary.includes(t))
-    // 我的自建任务（或团队自建任务）
-    const mySelfTasks = active.filter((t) => t.taskType === 'self' && (teamView ? true : t.assigneeUserId === currentUserId))
-    // 延续/逾期任务
-    const delayedTasks = delayed.filter((t) => !today.includes(t))
+    // 3. 今日次要：isTodayMustDo !== true 且 dueDate 是今天 且 priority 为'中'或'低'
+    const secondary = active.filter((t) => {
+      if (t.isTodayMustDo === true) return false
+      const dueDateStr = toLocalDateKey(new Date(t.dueDate))
+      return dueDateStr === todayStr && (t.priority === '中' || t.priority === '低')
+    })
     
-    // 待处理任务：状态为"待做"或"进行中"，且未出现在其他栏目的任务
+    // 4. 我的自建任务：taskType === 'self'
+    const mySelfTasks = active.filter((t) => t.taskType === 'self' && (teamView ? true : t.assigneeUserId === currentUserId))
+    
+    // 5. 待处理任务：以上都不满足的任务
     const alreadyCategorized = new Set([
       ...primary.map(t => t.id),
       ...secondary.map(t => t.id),
       ...mySelfTasks.map(t => t.id),
-      ...delayedTasks.map(t => t.id),
+      ...delayed.map(t => t.id),
     ])
-    const pending = active.filter((t) => !alreadyCategorized.has(t.id) && (t.status === '待做' || t.status === '进行中'))
+    const pending = active.filter((t) => !alreadyCategorized.has(t.id))
     
     // 已完成任务（最近 5 条）
     const completed = currentTasks
@@ -223,7 +229,7 @@ export default function WorkbenchPage() {
       primary: sortList(primary),
       secondary: sortList(secondary),
       mySelfTasks: sortList(mySelfTasks),
-      delayed: sortList(delayedTasks),
+      delayed: sortList(delayed),
       pending: sortList(pending),
       completed,
     }
