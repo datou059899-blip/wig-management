@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
     const video = await prisma.ownVideoMetric.create({
       data: {
         ...data,
-        createdById: session.user.id,
+        createdById: (session.user as any).id,
       },
     });
 

@@ -437,7 +437,7 @@ export default function VideoMetricsPage() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis type="number" />
                 <YAxis dataKey="name" type="category" width={60} />
-                <Tooltip formatter={(value: number) => formatNumber(value)} />
+                <Tooltip formatter={(value) => formatNumber(Number(value))} />
                 <Bar dataKey="value" fill="#3B82F6" radius={[0, 4, 4, 0]}>
                   {funnelData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
@@ -455,7 +455,7 @@ export default function VideoMetricsPage() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" tick={{ fontSize: 12 }} interval={0} angle={-45} textAnchor="end" height={80} />
                 <YAxis tickFormatter={(v) => formatNumber(v)} />
-                <Tooltip formatter={(value: number) => formatNumber(value)} />
+                <Tooltip formatter={(value) => formatNumber(Number(value))} />
                 <Legend />
                 <Line type="monotone" dataKey="播放量" stroke="#3B82F6" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="点赞" stroke="#EC4899" strokeWidth={2} dot={false} />
@@ -474,7 +474,7 @@ export default function VideoMetricsPage() {
                   cx="50%"
                   cy="50%"
                   labelLine={false}
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  label={({ name, percent }) => `${name} ${((percent || 0) * 100).toFixed(0)}%`}
                   outerRadius={100}
                   fill="#8884d8"
                   dataKey="value"
@@ -503,7 +503,7 @@ export default function VideoMetricsPage() {
                   fill="#3B82F6"
                   fillOpacity={0.3}
                 />
-                <Tooltip formatter={(value: number) => value.toFixed(1) + "%"} />
+                <Tooltip formatter={(value) => Number(value).toFixed(1) + "%"} />
               </RadarChart>
             </ResponsiveContainer>
           </div>
@@ -529,11 +529,11 @@ export default function VideoMetricsPage() {
                 />
                 <Tooltip
                   cursor={{ strokeDasharray: "3 3" }}
-                  formatter={(value: number, name: string) => {
-                    if (name === "播放量") return formatNumber(value);
+                  formatter={(value, name) => {
+                    if (name === "播放量") return formatNumber(Number(value));
                     return value;
                   }}
-                  labelFormatter={(label: string, payload: any) => {
+                  labelFormatter={(label, payload: any) => {
                     return payload?.[0]?.payload?.name || label;
                   }}
                 />
