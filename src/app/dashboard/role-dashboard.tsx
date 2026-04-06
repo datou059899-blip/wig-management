@@ -16,13 +16,87 @@ const roleLabels: Record<Role, string> = {
   viewer: '只读/老板',
 }
 
-const roleDescriptions: Record<Role, string> = {
-  admin: '全面掌握业务进展，监控各项指标',
-  operator: '管理产品推进，协调达人合作',
-  influencer_operator: '负责达人建联和合作推进',
-  editor: '完成脚本拆解和视频剪辑任务',
-  optimizer: '分析投放效果，优化广告策略',
-  viewer: '查看业务数据，了解整体进展',
+// 统计卡片组件
+function StatCard({ 
+  title, 
+  value, 
+  subtitle, 
+  href, 
+  color = 'blue',
+  icon 
+}: { 
+  title: string
+  value: string | number
+  subtitle?: string
+  href: string
+  color?: 'blue' | 'green' | 'orange' | 'purple' | 'red'
+  icon?: React.ReactNode
+}) {
+  const colorClasses = {
+    blue: 'bg-blue-50 text-blue-600 border-blue-100 hover:border-blue-200',
+    green: 'bg-green-50 text-green-600 border-green-100 hover:border-green-200',
+    orange: 'bg-orange-50 text-orange-600 border-orange-100 hover:border-orange-200',
+    purple: 'bg-purple-50 text-purple-600 border-purple-100 hover:border-purple-200',
+    red: 'bg-red-50 text-red-600 border-red-100 hover:border-red-200',
+  }
+
+  return (
+    <Link 
+      href={href}
+      className="group block p-6 bg-white rounded-2xl border border-slate-200 hover:border-slate-300 hover:shadow-lg transition-all duration-200"
+    >
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-sm font-medium text-slate-500">{title}</p>
+          <p className="mt-2 text-3xl font-bold text-slate-900">{value}</p>
+          {subtitle && (
+            <p className="mt-1 text-sm text-slate-400">{subtitle}</p>
+          )}
+        </div>
+        {icon && (
+          <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${colorClasses[color]}`}>
+            {icon}
+          </div>
+        )}
+      </div>
+    </Link>
+  )
+}
+
+// 进度条组件
+function ProgressBar({ 
+  label, 
+  value, 
+  total, 
+  color = 'blue' 
+}: { 
+  label: string
+  value: number
+  total: number
+  color?: 'blue' | 'green' | 'orange' | 'purple'
+}) {
+  const percentage = total > 0 ? (value / total) * 100 : 0
+  const colorClasses = {
+    blue: 'bg-blue-500',
+    green: 'bg-green-500',
+    orange: 'bg-orange-500',
+    purple: 'bg-purple-500',
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-slate-600">{label}</span>
+        <span className="font-medium text-slate-900">{value}</span>
+      </div>
+      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+        <div 
+          className={`h-full ${colorClasses[color]} rounded-full transition-all duration-500`}
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+    </div>
+  )
 }
 
 // ============ 产品运营 Dashboard ============
@@ -42,7 +116,6 @@ function ProductOperatorDashboard() {
 
         const productList = products.products || []
         
-        // 产品推进状态统计
         const workflowStats = {
           待收集: 0,
           已收集: 0,
@@ -72,7 +145,6 @@ function ProductOperatorDashboard() {
           }
         })
 
-        // 待办统计
         const needsOutreach = productList.filter((p: any) => 
           p.mainConfirmedAt && !p.outreachLinkedAt
         ).length
@@ -104,121 +176,143 @@ function ProductOperatorDashboard() {
   }, [])
 
   if (loading) {
-    return <div className="text-center py-12 text-gray-500">加载中...</div>
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+      </div>
+    )
   }
 
   const s = stats!
 
   return (
-    <div className="space-y-6">
-      {/* Hero */}
-      <div className="bg-gradient-to-r from-primary-600 to-primary-700 rounded-2xl shadow-lg overflow-hidden">
-        <div className="p-6 md:p-8 text-white">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-            <div>
-              <div className="text-sm text-primary-100">
-                {roleLabels.operator} · 工作台
-              </div>
-              <h1 className="mt-2 text-2xl md:text-3xl font-bold">
-                产品运营中心
-              </h1>
-              <p className="mt-2 text-primary-100 max-w-2xl">
-                跟进产品推进状态，管理选品更新，把握主推款节奏
-              </p>
-              <div className="mt-4 flex flex-wrap gap-3">
-                <Link
-                  href="/dashboard/products"
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white text-primary-700 hover:bg-primary-50 transition"
-                >
-                  📦 产品列表
-                </Link>
-                <Link
-                  href="/dashboard/opportunities"
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-primary-500 text-white hover:bg-primary-400 transition"
-                >
-                  🎯 选品更新池
-                </Link>
-                <Link
-                  href="/dashboard/influencers"
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg border border-primary-300 text-white hover:bg-primary-400 transition"
-                >
-                  🤝 达人建联
-                </Link>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3 w-full md:w-[280px]">
-              <div className="rounded-xl bg-white/10 p-4">
-                <div className="text-xs text-primary-100">产品总数</div>
-                <div className="mt-1 text-2xl font-bold">{s.totalProducts}</div>
-              </div>
-              <div className="rounded-xl bg-white/10 p-4">
-                <div className="text-xs text-primary-100">选品机会</div>
-                <div className="mt-1 text-2xl font-bold">{s.totalOpportunities}</div>
-              </div>
-            </div>
-          </div>
-        </div>
+    <div className="space-y-8">
+      {/* 页面标题 */}
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">产品运营中心</h1>
+        <p className="mt-1 text-slate-500">跟进产品推进状态，管理选品更新，把握主推款节奏</p>
+      </div>
+
+      {/* 统计卡片 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatCard
+          title="产品总数"
+          value={s.totalProducts}
+          subtitle="全部产品"
+          href="/dashboard/products"
+          color="blue"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="选品机会"
+          value={s.totalOpportunities}
+          subtitle="待处理"
+          href="/dashboard/opportunities"
+          color="purple"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="待建联达人"
+          value={s.needsOutreach}
+          subtitle="主推款"
+          href="/dashboard/products?needsOutreach=1"
+          color="orange"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="建议马上补"
+          value={s.urgentOpportunities}
+          subtitle="紧急"
+          href="/dashboard/opportunities?status=建议马上补"
+          color="red"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          }
+        />
       </div>
 
       {/* 产品推进状态 */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">📊 产品推进状态</h2>
-          <Link href="/dashboard/products" className="text-sm text-primary-700 hover:underline">
-            查看详情 →
+      <div className="bg-white rounded-2xl border border-slate-200 p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-lg font-semibold text-slate-900">产品推进状态</h2>
+          <Link href="/dashboard/products" className="text-sm text-primary-600 hover:text-primary-700 font-medium">
+            查看全部 →
           </Link>
         </div>
-        <div className="mt-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {Object.entries(s.workflowStats).map(([stage, count]) => (
             <Link
               key={stage}
               href={`/dashboard/products?workflow=${stage}`}
-              className="rounded-xl border border-gray-100 p-3 hover:bg-gray-50 transition text-center"
+              className="p-4 rounded-xl bg-slate-50 hover:bg-slate-100 transition-colors"
             >
-              <div className="text-xs text-gray-500">{stage}</div>
-              <div className="mt-1 text-xl font-bold text-gray-900">{String(count)}</div>
+              <div className="text-sm text-slate-500">{stage}</div>
+              <div className="mt-1 text-2xl font-bold text-slate-900">{String(count)}</div>
             </Link>
           ))}
         </div>
       </div>
 
-      {/* 待办事项 */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-gray-900">⚡ 今日待办</h2>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Link href="/dashboard/products?needsOutreach=1" className="group rounded-xl border border-orange-100 p-4 hover:bg-orange-50 transition">
-            <div className="flex items-center gap-2">
-              <span className="text-xl">🎯</span>
-              <div className="font-medium text-gray-900">主推款待建联达人</div>
-            </div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-orange-600">{s.needsOutreach}</div>
-              <div className="text-sm text-orange-700 group-hover:underline">去建联</div>
-            </div>
-          </Link>
+      {/* 快捷操作 */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Link 
+          href="/dashboard/products"
+          className="flex items-center gap-4 p-6 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl text-white hover:shadow-lg hover:shadow-blue-500/25 transition-all"
+        >
+          <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+          </div>
+          <div>
+            <div className="font-semibold">产品列表</div>
+            <div className="text-sm text-blue-100">管理全部产品</div>
+          </div>
+        </Link>
 
-          <Link href="/dashboard/products?needsScript=1" className="group rounded-xl border border-purple-100 p-4 hover:bg-purple-50 transition">
-            <div className="flex items-center gap-2">
-              <span className="text-xl">✂️</span>
-              <div className="font-medium text-gray-900">达人已建联待脚本</div>
-            </div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-purple-600">{s.needsScript}</div>
-              <div className="text-sm text-purple-700 group-hover:underline">去安排</div>
-            </div>
-          </Link>
+        <Link 
+          href="/dashboard/opportunities"
+          className="flex items-center gap-4 p-6 bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl text-white hover:shadow-lg hover:shadow-purple-500/25 transition-all"
+        >
+          <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          </div>
+          <div>
+            <div className="font-semibold">选品更新池</div>
+            <div className="text-sm text-purple-100">发现新机会</div>
+          </div>
+        </Link>
 
-          <Link href="/dashboard/opportunities?status=建议马上补" className="group rounded-xl border border-red-100 p-4 hover:bg-red-50 transition">
-            <div className="flex items-center gap-2">
-              <span className="text-xl">🔥</span>
-              <div className="font-medium text-gray-900">建议马上补</div>
-            </div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-red-600">{s.urgentOpportunities}</div>
-              <div className="text-sm text-red-700 group-hover:underline">去处理</div>
-            </div>
-          </Link>
-        </div>
+        <Link 
+          href="/dashboard/influencers"
+          className="flex items-center gap-4 p-6 bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl text-white hover:shadow-lg hover:shadow-orange-500/25 transition-all"
+        >
+          <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          </div>
+          <div>
+            <div className="font-semibold">达人建联</div>
+            <div className="text-sm text-orange-100">管理合作关系</div>
+          </div>
+        </Link>
       </div>
     </div>
   )
@@ -252,33 +346,17 @@ function InfluencerOperatorDashboard() {
           deep: 0,
         }
 
-        // 待跟进：已发送未回复
         const pendingReply = influencers.filter((i: any) => 
           i.status === 'contacted' && !i.lastFollowUpAt
         ).length
 
-        // 已寄样待推进
         const samplePending = influencers.filter((i: any) => 
           i.status === 'sample_sent'
         ).length
 
-        // 合作中待确认
-        const cooperationPending = influencers.filter((i: any) => 
-          i.status === 'in_negotiation'
-        ).length
-
-        // 深度合作
         const deepCooperation = influencers.filter((i: any) => 
           i.cooperationLevel === 'deep'
         ).length
-
-        // 今日需跟进
-        const todayFollowUp = influencers.filter((i: any) => {
-          if (!i.nextFollowUpAt) return false
-          const nextDate = new Date(i.nextFollowUpAt)
-          const today = new Date()
-          return nextDate <= today
-        }).length
 
         influencers.forEach((i: any) => {
           if (statusStats[i.status as keyof typeof statusStats] !== undefined) {
@@ -293,9 +371,7 @@ function InfluencerOperatorDashboard() {
           total: influencers.length,
           pendingReply,
           samplePending,
-          cooperationPending,
           deepCooperation,
-          todayFollowUp,
           statusStats,
           levelStats,
         })
@@ -309,115 +385,92 @@ function InfluencerOperatorDashboard() {
   }, [])
 
   if (loading) {
-    return <div className="text-center py-12 text-gray-500">加载中...</div>
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+      </div>
+    )
   }
 
   const s = stats!
 
   return (
-    <div className="space-y-6">
-      {/* Hero */}
-      <div className="bg-gradient-to-r from-pink-500 to-rose-600 rounded-2xl shadow-lg overflow-hidden">
-        <div className="p-6 md:p-8 text-white">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-            <div>
-              <div className="text-sm text-pink-100">
-                {roleLabels.influencer_operator} · 工作台
-              </div>
-              <h1 className="mt-2 text-2xl md:text-3xl font-bold">
-                达人建联中心
-              </h1>
-              <p className="mt-2 text-pink-100 max-w-2xl">
-                管理达人合作进度，跟进寄样、谈判和深度合作
-              </p>
-              <div className="mt-4 flex flex-wrap gap-3">
-                <Link
-                  href="/dashboard/influencers"
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white text-pink-700 hover:bg-pink-50 transition"
-                >
-                  🤝 达人列表
-                </Link>
-                <Link
-                  href="/dashboard/products"
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-pink-500 text-white hover:bg-pink-400 transition"
-                >
-                  📦 产品列表
-                </Link>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3 w-full md:w-[280px]">
-              <div className="rounded-xl bg-white/10 p-4">
-                <div className="text-xs text-pink-100">达人总数</div>
-                <div className="mt-1 text-2xl font-bold">{s.total}</div>
-              </div>
-              <div className="rounded-xl bg-white/10 p-4">
-                <div className="text-xs text-pink-100">深度合作</div>
-                <div className="mt-1 text-2xl font-bold">{s.deepCooperation}</div>
-              </div>
-            </div>
-          </div>
-        </div>
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">达人建联中心</h1>
+        <p className="mt-1 text-slate-500">管理达人合作进度，跟进寄样、谈判和深度合作</p>
       </div>
 
-      {/* 待跟进事项 */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-gray-900">⚡ 今日待跟进</h2>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Link href="/dashboard/influencers?status=to_outreach" className="group rounded-xl border border-gray-100 p-4 hover:bg-gray-50 transition">
-            <div className="text-sm text-gray-600">待联系</div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-gray-900">{s.statusStats.to_outreach}</div>
-              <div className="text-sm text-primary-700 group-hover:underline">去联系</div>
-            </div>
-          </Link>
-
-          <Link href="/dashboard/influencers?pendingReply=1" className="group rounded-xl border border-orange-100 p-4 hover:bg-orange-50 transition">
-            <div className="text-sm text-gray-600">已发送未回复</div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-orange-600">{s.pendingReply}</div>
-              <div className="text-sm text-orange-700 group-hover:underline">去跟进</div>
-            </div>
-          </Link>
-
-          <Link href="/dashboard/influencers?status=sample_sent" className="group rounded-xl border border-purple-100 p-4 hover:bg-purple-50 transition">
-            <div className="text-sm text-gray-600">已寄样待推进</div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-purple-600">{s.samplePending}</div>
-              <div className="text-sm text-purple-700 group-hover:underline">去推进</div>
-            </div>
-          </Link>
-
-          <Link href="/dashboard/influencers?level=deep" className="group rounded-xl border border-red-100 p-4 hover:bg-red-50 transition">
-            <div className="text-sm text-gray-600">深度合作达人</div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-red-600">{s.deepCooperation}</div>
-              <div className="text-sm text-red-700 group-hover:underline">查看</div>
-            </div>
-          </Link>
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatCard
+          title="达人总数"
+          value={s.total}
+          href="/dashboard/influencers"
+          color="blue"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="待回复"
+          value={s.pendingReply}
+          href="/dashboard/influencers?pendingReply=1"
+          color="orange"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="已寄样待推进"
+          value={s.samplePending}
+          href="/dashboard/influencers?status=sample_sent"
+          color="purple"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="深度合作"
+          value={s.deepCooperation}
+          href="/dashboard/influencers?level=deep"
+          color="green"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          }
+        />
       </div>
 
-      {/* 合作状态概览 */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-gray-900">📊 合作状态分布</h2>
-        <div className="mt-4 grid grid-cols-2 md:grid-cols-6 gap-3">
-          {Object.entries(s.statusStats).map(([status, count]) => (
-            <Link
-              key={status}
-              href={`/dashboard/influencers?status=${status}`}
-              className="rounded-xl border border-gray-100 p-3 hover:bg-gray-50 transition text-center"
-            >
-              <div className="text-xs text-gray-500">
-                {status === 'to_outreach' && '待联系'}
-                {status === 'contacted' && '已联系'}
-                {status === 'sample_sent' && '已寄样'}
-                {status === 'in_negotiation' && '谈判中'}
-                {status === 'cooperation' && '合作中'}
-                {status === 'paused' && '已暂停'}
-              </div>
-              <div className="mt-1 text-xl font-bold text-gray-900">{String(count)}</div>
-            </Link>
-          ))}
+      <div className="bg-white rounded-2xl border border-slate-200 p-6">
+        <h2 className="text-lg font-semibold text-slate-900 mb-6">合作状态分布</h2>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          {Object.entries(s.statusStats).map(([status, count]) => {
+            const labels: Record<string, string> = {
+              to_outreach: '待联系',
+              contacted: '已联系',
+              sample_sent: '已寄样',
+              in_negotiation: '谈判中',
+              cooperation: '合作中',
+              paused: '已暂停',
+            }
+            return (
+              <Link
+                key={status}
+                href={`/dashboard/influencers?status=${status}`}
+                className="p-4 rounded-xl bg-slate-50 hover:bg-slate-100 transition-colors text-center"
+              >
+                <div className="text-sm text-slate-500">{labels[status]}</div>
+                <div className="mt-1 text-2xl font-bold text-slate-900">{String(count)}</div>
+              </Link>
+            )
+          })}
         </div>
       </div>
     </div>
@@ -442,23 +495,13 @@ function EditorDashboard() {
         const scripts = scriptsData.scripts || []
         const tasks = tasksData.tasks || []
 
-        // 我的任务统计
         const myTasks = tasks.filter((t: any) => t.status === 'todo' || t.status === 'in_progress')
-        
-        // 待提交
         const pendingSubmit = tasks.filter((t: any) => t.status === 'submitted').length
-        
-        // 已完成
         const completed = tasks.filter((t: any) => t.status === 'done').length
-
-        // 待复盘
         const needReview = tasks.filter((t: any) => t.status === 'review').length
 
-        // 脚本统计
-        const totalScripts = scripts.length
-
         setStats({
-          totalScripts,
+          totalScripts: scripts.length,
           myTasks: myTasks.length,
           pendingSubmit,
           completed,
@@ -475,110 +518,99 @@ function EditorDashboard() {
   }, [])
 
   if (loading) {
-    return <div className="text-center py-12 text-gray-500">加载中...</div>
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+      </div>
+    )
   }
 
   const s = stats!
 
   return (
-    <div className="space-y-6">
-      {/* Hero */}
-      <div className="bg-gradient-to-r from-violet-600 to-purple-600 rounded-2xl shadow-lg overflow-hidden">
-        <div className="p-6 md:p-8 text-white">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-            <div>
-              <div className="text-sm text-violet-100">
-                {roleLabels.editor} · 工作台
-              </div>
-              <h1 className="mt-2 text-2xl md:text-3xl font-bold">
-                剪辑工作台
-              </h1>
-              <p className="mt-2 text-violet-100 max-w-2xl">
-                完成脚本拆解、练习任务和视频剪辑，持续提升内容质量
-              </p>
-              <div className="mt-4 flex flex-wrap gap-3">
-                <Link
-                  href="/dashboard/scripts"
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white text-violet-700 hover:bg-violet-50 transition"
-                >
-                  ✂️ 脚本拆解
-                </Link>
-                <Link
-                  href="/dashboard/scripts?filter=my-tasks"
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-violet-500 text-white hover:bg-violet-400 transition"
-                >
-                  📋 我的任务
-                </Link>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3 w-full md:w-[280px]">
-              <div className="rounded-xl bg-white/10 p-4">
-                <div className="text-xs text-violet-100">待办任务</div>
-                <div className="mt-1 text-2xl font-bold">{s.myTasks}</div>
-              </div>
-              <div className="rounded-xl bg-white/10 p-4">
-                <div className="text-xs text-violet-100">已完成后复盘</div>
-                <div className="mt-1 text-2xl font-bold">{s.completed}</div>
-              </div>
-            </div>
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">剪辑工作台</h1>
+        <p className="mt-1 text-slate-500">完成脚本拆解、练习任务和视频剪辑，持续提升内容质量</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatCard
+          title="待办任务"
+          value={s.myTasks}
+          href="/dashboard/scripts?filter=my-tasks"
+          color="blue"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="待提交"
+          value={s.pendingSubmit}
+          href="/dashboard/scripts?filter=my-tasks&status=submitted"
+          color="orange"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="已完成"
+          value={s.completed}
+          href="/dashboard/scripts?filter=my-tasks&status=done"
+          color="green"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="脚本库"
+          value={s.totalScripts}
+          href="/dashboard/scripts"
+          color="purple"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          }
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Link 
+          href="/dashboard/scripts"
+          className="flex items-center gap-4 p-6 bg-gradient-to-br from-violet-500 to-violet-600 rounded-2xl text-white hover:shadow-lg hover:shadow-violet-500/25 transition-all"
+        >
+          <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
           </div>
-        </div>
-      </div>
+          <div>
+            <div className="font-semibold">脚本拆解</div>
+            <div className="text-sm text-violet-100">学习爆款脚本</div>
+          </div>
+        </Link>
 
-      {/* 今日任务 */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-gray-900">⚡ 今日任务</h2>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Link href="/dashboard/scripts?filter=my-tasks&status=todo" className="group rounded-xl border border-gray-100 p-4 hover:bg-gray-50 transition">
-            <div className="text-sm text-gray-600">待开始</div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-gray-900">
-                {s.tasks.filter((t: any) => t.status === 'todo').length}
-              </div>
-              <div className="text-sm text-primary-700 group-hover:underline">开始</div>
-            </div>
-          </Link>
-
-          <Link href="/dashboard/scripts?filter=my-tasks&status=in_progress" className="group rounded-xl border border-blue-100 p-4 hover:bg-blue-50 transition">
-            <div className="text-sm text-gray-600">进行中</div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-blue-600">
-                {s.tasks.filter((t: any) => t.status === 'in_progress').length}
-              </div>
-              <div className="text-sm text-blue-700 group-hover:underline">继续</div>
-            </div>
-          </Link>
-
-          <Link href="/dashboard/scripts?filter=my-tasks&status=submitted" className="group rounded-xl border border-orange-100 p-4 hover:bg-orange-50 transition">
-            <div className="text-sm text-gray-600">待提交</div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-orange-600">{s.pendingSubmit}</div>
-              <div className="text-sm text-orange-700 group-hover:underline">提交</div>
-            </div>
-          </Link>
-
-          <Link href="/dashboard/scripts?filter=my-review" className="group rounded-xl border border-purple-100 p-4 hover:bg-purple-50 transition">
-            <div className="text-sm text-gray-600">待复盘</div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-purple-600">{s.needReview}</div>
-              <div className="text-sm text-purple-700 group-hover:underline">查看</div>
-            </div>
-          </Link>
-        </div>
-      </div>
-
-      {/* 脚本学习 */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-gray-900">📚 脚本拆解</h2>
-        <div className="mt-4">
-          <Link href="/dashboard/scripts" className="group flex items-center justify-between p-4 rounded-xl border border-gray-100 hover:bg-gray-50 transition">
-            <div>
-              <div className="font-medium text-gray-900">热门爆款脚本</div>
-              <div className="text-sm text-gray-500">共 {s.totalScripts} 个脚本可供学习</div>
-            </div>
-            <div className="text-sm text-primary-700 group-hover:underline">进入学习 →</div>
-          </Link>
-        </div>
+        <Link 
+          href="/dashboard/scripts?filter=my-tasks"
+          className="flex items-center gap-4 p-6 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl text-white hover:shadow-lg hover:shadow-blue-500/25 transition-all"
+        >
+          <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+          </div>
+          <div>
+            <div className="font-semibold">我的任务</div>
+            <div className="text-sm text-blue-100">查看待办事项</div>
+          </div>
+        </Link>
       </div>
     </div>
   )
@@ -601,7 +633,6 @@ function OptimizerDashboard() {
 
         const productList = products.products || []
         
-        // 可投放产品
         const exchangeRate = 7.2
         const goodToScale = productList.filter((p: any) => {
           const effectivePrice = p.discountPriceUsd ?? p.priceUsd ?? 0
@@ -611,7 +642,6 @@ function OptimizerDashboard() {
           return margin >= 20 && (p.stock || 0) >= 10
         })
 
-        // 低毛利产品
         const lowProfit = productList.filter((p: any) => {
           const effectivePrice = p.discountPriceUsd ?? p.priceUsd ?? 0
           const costUsd = (p.costCny || 0) * exchangeRate
@@ -620,7 +650,6 @@ function OptimizerDashboard() {
           return margin < 20
         })
 
-        // 库存预警
         const lowStock = productList.filter((p: any) => (p.stock || 0) < 10)
 
         setStats({
@@ -640,93 +669,101 @@ function OptimizerDashboard() {
   }, [])
 
   if (loading) {
-    return <div className="text-center py-12 text-gray-500">加载中...</div>
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+      </div>
+    )
   }
 
   const s = stats!
 
   return (
-    <div className="space-y-6">
-      {/* Hero */}
-      <div className="bg-gradient-to-r from-emerald-500 to-teal-600 rounded-2xl shadow-lg overflow-hidden">
-        <div className="p-6 md:p-8 text-white">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-            <div>
-              <div className="text-sm text-emerald-100">
-                {roleLabels.optimizer} · 工作台
-              </div>
-              <h1 className="mt-2 text-2xl md:text-3xl font-bold">
-                投放分析中心
-              </h1>
-              <p className="mt-2 text-emerald-100 max-w-2xl">
-                分析投放效果，优化广告策略，提升 ROI
-              </p>
-              <div className="mt-4 flex flex-wrap gap-3">
-                <Link
-                  href="/dashboard/performance"
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white text-emerald-700 hover:bg-emerald-50 transition"
-                >
-                  📈 经营数据
-                </Link>
-                <Link
-                  href="/dashboard/products"
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-emerald-500 text-white hover:bg-emerald-400 transition"
-                >
-                  📦 产品列表
-                </Link>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3 w-full md:w-[280px]">
-              <div className="rounded-xl bg-white/10 p-4">
-                <div className="text-xs text-emerald-100">可投放产品</div>
-                <div className="mt-1 text-2xl font-bold">{s.goodToScale}</div>
-              </div>
-              <div className="rounded-xl bg-white/10 p-4">
-                <div className="text-xs text-emerald-100">低毛利预警</div>
-                <div className="mt-1 text-2xl font-bold">{s.lowProfit}</div>
-              </div>
-            </div>
-          </div>
-        </div>
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">投放分析中心</h1>
+        <p className="mt-1 text-slate-500">分析投放效果，优化广告策略，提升 ROI</p>
       </div>
 
-      {/* 投放建议 */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-gray-900">⚡ 投放建议</h2>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Link href="/dashboard/products?filter=scalable" className="group rounded-xl border border-green-100 p-4 hover:bg-green-50 transition">
-            <div className="flex items-center gap-2">
-              <span className="text-xl">✅</span>
-              <div className="font-medium text-gray-900">可继续投放</div>
-            </div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-green-600">{s.goodToScale}</div>
-              <div className="text-sm text-green-700 group-hover:underline">查看产品</div>
-            </div>
-          </Link>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatCard
+          title="可投放产品"
+          value={s.goodToScale}
+          subtitle="毛利≥20%"
+          href="/dashboard/products?filter=scalable"
+          color="green"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="低毛利预警"
+          value={s.lowProfit}
+          href="/dashboard/products?warning=profit"
+          color="orange"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="库存预警"
+          value={s.lowStock}
+          subtitle="库存<10"
+          href="/dashboard/products?warning=stock"
+          color="red"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="产品总数"
+          value={s.totalProducts}
+          href="/dashboard/products"
+          color="blue"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          }
+        />
+      </div>
 
-          <Link href="/dashboard/products?warning=profit" className="group rounded-xl border border-orange-100 p-4 hover:bg-orange-50 transition">
-            <div className="flex items-center gap-2">
-              <span className="text-xl">⚠️</span>
-              <div className="font-medium text-gray-900">低毛利需调整</div>
-            </div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-orange-600">{s.lowProfit}</div>
-              <div className="text-sm text-orange-700 group-hover:underline">优化成本</div>
-            </div>
-          </Link>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Link 
+          href="/dashboard/performance"
+          className="flex items-center gap-4 p-6 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl text-white hover:shadow-lg hover:shadow-emerald-500/25 transition-all"
+        >
+          <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          </div>
+          <div>
+            <div className="font-semibold">经营数据</div>
+            <div className="text-sm text-emerald-100">查看投放效果</div>
+          </div>
+        </Link>
 
-          <Link href="/dashboard/products?warning=stock" className="group rounded-xl border border-red-100 p-4 hover:bg-red-50 transition">
-            <div className="flex items-center gap-2">
-              <span className="text-xl">🚨</span>
-              <div className="font-medium text-gray-900">库存预警</div>
-            </div>
-            <div className="mt-2 flex items-end justify-between">
-              <div className="text-2xl font-bold text-red-600">{s.lowStock}</div>
-              <div className="text-sm text-red-700 group-hover:underline">及时补货</div>
-            </div>
-          </Link>
-        </div>
+        <Link 
+          href="/dashboard/products"
+          className="flex items-center gap-4 p-6 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl text-white hover:shadow-lg hover:shadow-blue-500/25 transition-all"
+        >
+          <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+          </div>
+          <div>
+            <div className="font-semibold">产品列表</div>
+            <div className="text-sm text-blue-100">管理投放商品</div>
+          </div>
+        </Link>
       </div>
     </div>
   )
@@ -734,11 +771,7 @@ function OptimizerDashboard() {
 
 // ============ 管理员/老板 Dashboard ============
 function AdminDashboard() {
-  return (
-    <div className="space-y-6">
-      <ProductOperatorDashboard />
-    </div>
-  )
+  return <ProductOperatorDashboard />
 }
 
 // ============ 只读/老板视图 Dashboard ============
@@ -773,66 +806,101 @@ function ViewerDashboard() {
   }, [])
 
   if (loading) {
-    return <div className="text-center py-12 text-gray-500">加载中...</div>
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+      </div>
+    )
   }
 
   return (
-    <div className="space-y-6">
-      {/* Hero */}
-      <div className="bg-gradient-to-r from-slate-700 to-slate-800 rounded-2xl shadow-lg overflow-hidden">
-        <div className="p-6 md:p-8 text-white">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-            <div>
-              <div className="text-sm text-slate-300">
-                {roleLabels.viewer} · 概览
-              </div>
-              <h1 className="mt-2 text-2xl md:text-3xl font-bold">
-                业务数据概览
-              </h1>
-              <p className="mt-2 text-slate-300 max-w-2xl">
-                快速了解整体业务进展和数据指标
-              </p>
-            </div>
-            <div className="grid grid-cols-3 gap-3 w-full md:w-[320px]">
-              <div className="rounded-xl bg-white/10 p-4">
-                <div className="text-xs text-slate-300">产品</div>
-                <div className="mt-1 text-2xl font-bold">{stats?.totalProducts || 0}</div>
-              </div>
-              <div className="rounded-xl bg-white/10 p-4">
-                <div className="text-xs text-slate-300">达人</div>
-                <div className="mt-1 text-2xl font-bold">{stats?.totalInfluencers || 0}</div>
-              </div>
-              <div className="rounded-xl bg-white/10 p-4">
-                <div className="text-xs text-slate-300">脚本</div>
-                <div className="mt-1 text-2xl font-bold">{stats?.totalScripts || 0}</div>
-              </div>
-            </div>
-          </div>
-        </div>
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">业务数据概览</h1>
+        <p className="mt-1 text-slate-500">快速了解整体业务进展和数据指标</p>
       </div>
 
-      {/* 快速入口 */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-gray-900">📊 数据详情</h2>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Link href="/dashboard/products" className="group rounded-xl border border-gray-100 p-4 hover:bg-gray-50 transition">
-            <div className="font-medium text-gray-900">产品概况</div>
-            <div className="text-sm text-gray-500 mt-1">查看产品列表和推进状态</div>
-            <div className="mt-2 text-primary-700 group-hover:underline">进入 →</div>
-          </Link>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <StatCard
+          title="产品总数"
+          value={stats?.totalProducts || 0}
+          href="/dashboard/products"
+          color="blue"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="达人总数"
+          value={stats?.totalInfluencers || 0}
+          href="/dashboard/influencers"
+          color="purple"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          }
+        />
+        <StatCard
+          title="脚本总数"
+          value={stats?.totalScripts || 0}
+          href="/dashboard/scripts"
+          color="green"
+          icon={
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          }
+        />
+      </div>
 
-          <Link href="/dashboard/influencers" className="group rounded-xl border border-gray-100 p-4 hover:bg-gray-50 transition">
-            <div className="font-medium text-gray-900">达人合作概况</div>
-            <div className="text-sm text-gray-500 mt-1">查看达人合作进展</div>
-            <div className="mt-2 text-primary-700 group-hover:underline">进入 →</div>
-          </Link>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Link 
+          href="/dashboard/products"
+          className="flex items-center gap-4 p-6 bg-white rounded-2xl border border-slate-200 hover:border-slate-300 hover:shadow-lg transition-all"
+        >
+          <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center">
+            <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+          </div>
+          <div>
+            <div className="font-semibold text-slate-900">产品概况</div>
+            <div className="text-sm text-slate-500">查看产品列表和推进状态</div>
+          </div>
+        </Link>
 
-          <Link href="/dashboard/performance" className="group rounded-xl border border-gray-100 p-4 hover:bg-gray-50 transition">
-            <div className="font-medium text-gray-900">经营数据</div>
-            <div className="text-sm text-gray-500 mt-1">查看销售和投放数据</div>
-            <div className="mt-2 text-primary-700 group-hover:underline">进入 →</div>
-          </Link>
-        </div>
+        <Link 
+          href="/dashboard/influencers"
+          className="flex items-center gap-4 p-6 bg-white rounded-2xl border border-slate-200 hover:border-slate-300 hover:shadow-lg transition-all"
+        >
+          <div className="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center">
+            <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          </div>
+          <div>
+            <div className="font-semibold text-slate-900">达人合作概况</div>
+            <div className="text-sm text-slate-500">查看达人合作进展</div>
+          </div>
+        </Link>
+
+        <Link 
+          href="/dashboard/performance"
+          className="flex items-center gap-4 p-6 bg-white rounded-2xl border border-slate-200 hover:border-slate-300 hover:shadow-lg transition-all"
+        >
+          <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center">
+            <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          </div>
+          <div>
+            <div className="font-semibold text-slate-900">经营数据</div>
+            <div className="text-sm text-slate-500">查看销售和投放数据</div>
+          </div>
+        </Link>
       </div>
     </div>
   )
@@ -861,4 +929,4 @@ export function RoleBasedDashboard() {
   }
 }
 
-export { roleLabels, roleDescriptions }
+export { roleLabels }
