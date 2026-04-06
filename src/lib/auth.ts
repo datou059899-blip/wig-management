@@ -69,5 +69,17 @@ export const authOptions: NextAuthOptions = {
   },
   pages: {
     signIn: '/login',
+  },
+  // 支持多域名 - 允许任何主机
+  cookies: {
+    sessionToken: {
+      name: `next-auth.session-token`,
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: process.env.NODE_ENV === 'production'
+      }
+    }
   }
 }
