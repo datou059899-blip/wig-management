@@ -29,21 +29,23 @@ function StatCard({
   value: string | number
   subtitle?: string
   href: string
-  color?: 'blue' | 'green' | 'orange' | 'purple' | 'red'
+  color?: 'blue' | 'green' | 'orange' | 'purple' | 'red' | 'pink' | 'cyan'
   icon?: React.ReactNode
 }) {
   const colorClasses = {
-    blue: 'bg-blue-50 text-blue-600 border-blue-100 hover:border-blue-200',
-    green: 'bg-green-50 text-green-600 border-green-100 hover:border-green-200',
-    orange: 'bg-orange-50 text-orange-600 border-orange-100 hover:border-orange-200',
-    purple: 'bg-purple-50 text-purple-600 border-purple-100 hover:border-purple-200',
-    red: 'bg-red-50 text-red-600 border-red-100 hover:border-red-200',
+    blue: 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-blue-500/25',
+    green: 'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-emerald-500/25',
+    orange: 'bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-orange-500/25',
+    purple: 'bg-gradient-to-br from-purple-500 to-purple-600 text-white shadow-purple-500/25',
+    red: 'bg-gradient-to-br from-rose-500 to-rose-600 text-white shadow-rose-500/25',
+    pink: 'bg-gradient-to-br from-pink-500 to-pink-600 text-white shadow-pink-500/25',
+    cyan: 'bg-gradient-to-br from-cyan-500 to-cyan-600 text-white shadow-cyan-500/25',
   }
 
   return (
     <Link 
       href={href}
-      className="group block p-6 bg-white rounded-2xl border border-slate-200 hover:border-slate-300 hover:shadow-lg transition-all duration-200"
+      className="group block p-6 bg-white rounded-2xl border border-slate-200 hover:border-slate-300 hover:shadow-xl transition-all duration-200"
     >
       <div className="flex items-start justify-between">
         <div>
@@ -54,7 +56,7 @@ function StatCard({
           )}
         </div>
         {icon && (
-          <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${colorClasses[color]}`}>
+          <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-lg ${colorClasses[color]}`}>
             {icon}
           </div>
         )}

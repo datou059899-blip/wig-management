@@ -82,39 +82,41 @@ export default function Sidebar() {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-64 bg-slate-900 text-slate-300 flex flex-col z-50">
+    <aside className="fixed left-0 top-0 h-screen w-[200px] bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-slate-300 flex flex-col z-50 shadow-xl">
       {/* Logo */}
-      <div className="p-6 border-b border-slate-800">
-        <Link href="/dashboard" className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg shadow-primary-500/20">
-            <span className="text-white font-bold text-lg">S</span>
-          </div>
+      <div className="p-4 border-b border-slate-700/50">
+        <Link href="/dashboard" className="flex items-center gap-2">
+          <img 
+            src="/logo.png" 
+            alt="Sunnymay"
+            className="w-8 h-8 object-contain"
+          />
           <div className="flex flex-col">
             <span className="text-white font-semibold text-sm">Sunnymay</span>
-            <span className="text-slate-500 text-xs">运营工作台</span>
+            <span className="text-slate-500 text-[10px]">运营工作台</span>
           </div>
         </Link>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-4 px-3">
-        <div className="space-y-1">
+      <nav className="flex-1 overflow-y-auto py-3 px-2">
+        <div className="space-y-0.5">
           {navItems.map((item) => {
             const active = isActive(pathname, item.href)
             return (
               <Link
                 key={item.name}
                 href={item.href}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
+                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
                   active
-                    ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/20'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    ? 'bg-gradient-to-r from-pink-500 to-pink-600 text-white shadow-lg shadow-pink-500/25'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
                 }`}
               >
                 <span className={active ? 'text-white' : 'text-slate-500'}>
                   {iconMap[item.name] || Icons.dashboard}
                 </span>
-                {item.name}
+                <span className="truncate">{item.name}</span>
               </Link>
             )
           })}
@@ -122,35 +124,35 @@ export default function Sidebar() {
       </nav>
 
       {/* User Section */}
-      <div className="p-4 border-t border-slate-800">
+      <div className="p-3 border-t border-slate-700/50">
         <div className="relative">
           <button
             onClick={() => setUserMenuOpen(!userMenuOpen)}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-800 transition-colors"
+            className="w-full flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-slate-800/50 transition-colors"
           >
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center">
-              <span className="text-white text-sm font-medium">
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-pink-400 to-blue-400 flex items-center justify-center flex-shrink-0">
+              <span className="text-white text-xs font-medium">
                 {(session?.user?.name || session?.user?.email || 'U')[0].toUpperCase()}
               </span>
             </div>
             <div className="flex-1 text-left min-w-0">
-              <div className="text-sm font-medium text-white truncate">
+              <div className="text-xs font-medium text-white truncate">
                 {session?.user?.name || session?.user?.email}
               </div>
-              <div className="text-xs text-slate-500">
+              <div className="text-[10px] text-slate-500">
                 {ROLE_LABELS[role || ''] || role}
               </div>
             </div>
-            <svg className={`w-4 h-4 text-slate-500 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className={`w-3 h-3 text-slate-500 transition-transform flex-shrink-0 ${userMenuOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
 
           {userMenuOpen && (
-            <div className="absolute bottom-full left-0 right-0 mb-2 bg-slate-800 rounded-lg border border-slate-700 shadow-xl overflow-hidden">
+            <div className="absolute bottom-full left-0 right-0 mb-1 bg-slate-800 rounded-lg border border-slate-700 shadow-xl overflow-hidden">
               <Link
                 href="/dashboard/account"
-                className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                className="flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
                 onClick={() => setUserMenuOpen(false)}
               >
                 {Icons.settings}
@@ -158,7 +160,7 @@ export default function Sidebar() {
               </Link>
               <button
                 onClick={() => signOut({ callbackUrl: '/' })}
-                className="flex items-center gap-2 w-full px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
               >
                 {Icons.logout}
                 退出登录
