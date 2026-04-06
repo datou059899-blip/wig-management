@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { signOut, useSession } from 'next-auth/react'
 import { getNavItemsForRole, ROLE_LABELS } from '@/lib/permissions'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 // 图标组件
 const Icons = {
@@ -65,6 +65,16 @@ const Icons = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
     </svg>
   ),
+  menu: (
+    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+  ),
+  close: (
+    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  ),
 }
 
 const iconMap: Record<string, React.ReactNode> = {
@@ -93,95 +103,206 @@ export default function Sidebar() {
   const role = (session?.user as any)?.role as string | undefined
   const navItems = getNavItemsForRole(role)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+
+  // 点击外部关闭移动端菜单
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement
+      if (mobileMenuOpen && !target.closest('.sidebar-container')) {
+        setMobileMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [mobileMenuOpen])
+
+  // 路由变化时关闭移动端菜单
+  useEffect(() => {
+    setMobileMenuOpen(false)
+  }, [pathname])
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-[200px] bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-slate-300 flex flex-col z-50 shadow-xl">
-      {/* Logo */}
-      <div className="p-4 border-b border-slate-700/50">
-        <Link href="/dashboard" className="flex items-center gap-2">
+    <>
+      {/* 移动端顶部导航栏 */}
+      <header className="lg:hidden fixed top-0 left-0 right-0 h-14 bg-gradient-to-r from-slate-900 to-slate-800 text-white z-50 flex items-center justify-between px-4 shadow-lg">
+        <div className="flex items-center gap-2">
           <img 
             src="/logo.png" 
             alt="Sunnymay"
-            className="w-8 h-8 object-contain"
+            className="w-7 h-7 object-contain"
           />
-          <div className="flex flex-col">
-            <span className="text-white font-semibold text-sm">Sunnymay</span>
-            <span className="text-slate-500 text-[10px]">运营工作台</span>
-          </div>
-        </Link>
-      </div>
-
-      {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-3 px-2">
-        <div className="space-y-0.5">
-          {navItems.map((item) => {
-            const active = isActive(pathname, item.href)
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  active
-                    ? 'bg-gradient-to-r from-pink-500 to-pink-600 text-white shadow-lg shadow-pink-500/25'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                <span className={active ? 'text-white' : 'text-slate-500'}>
-                  {iconMap[item.name] || Icons.dashboard}
-                </span>
-                <span className="truncate">{item.name}</span>
-              </Link>
-            )
-          })}
+          <span className="font-semibold text-sm">Sunnymay</span>
         </div>
-      </nav>
+        <button
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="p-2 hover:bg-slate-700/50 rounded-lg transition-colors"
+        >
+          {mobileMenuOpen ? Icons.close : Icons.menu}
+        </button>
+      </header>
 
-      {/* User Section */}
-      <div className="p-3 border-t border-slate-700/50">
-        <div className="relative">
-          <button
-            onClick={() => setUserMenuOpen(!userMenuOpen)}
-            className="w-full flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-slate-800/50 transition-colors"
-          >
-            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-pink-400 to-blue-400 flex items-center justify-center flex-shrink-0">
-              <span className="text-white text-xs font-medium">
-                {(session?.user?.name || session?.user?.email || 'U')[0].toUpperCase()}
-              </span>
+      {/* 桌面端侧边栏 */}
+      <aside className="hidden lg:flex fixed left-0 top-0 h-screen w-[200px] bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-slate-300 flex-col z-50 shadow-xl">
+        {/* Logo */}
+        <div className="p-4 border-b border-slate-700/50">
+          <Link href="/dashboard" className="flex items-center gap-2">
+            <img 
+              src="/logo.png" 
+              alt="Sunnymay"
+              className="w-8 h-8 object-contain"
+            />
+            <div className="flex flex-col">
+              <span className="text-white font-semibold text-sm">Sunnymay</span>
+              <span className="text-slate-500 text-[10px]">运营工作台</span>
             </div>
-            <div className="flex-1 text-left min-w-0">
-              <div className="text-xs font-medium text-white truncate">
-                {session?.user?.name || session?.user?.email}
-              </div>
-              <div className="text-[10px] text-slate-500">
-                {ROLE_LABELS[role || ''] || role}
-              </div>
-            </div>
-            <svg className={`w-3 h-3 text-slate-500 transition-transform flex-shrink-0 ${userMenuOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
+          </Link>
+        </div>
 
-          {userMenuOpen && (
-            <div className="absolute bottom-full left-0 right-0 mb-1 bg-slate-800 rounded-lg border border-slate-700 shadow-xl overflow-hidden">
+        {/* Navigation */}
+        <nav className="flex-1 overflow-y-auto py-3 px-2">
+          <div className="space-y-0.5">
+            {navItems.map((item) => {
+              const active = isActive(pathname, item.href)
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    active
+                      ? 'bg-gradient-to-r from-pink-500 to-pink-600 text-white shadow-lg shadow-pink-500/25'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  }`}
+                >
+                  <span className={active ? 'text-white' : 'text-slate-500'}>
+                    {iconMap[item.name] || Icons.dashboard}
+                  </span>
+                  <span className="truncate">{item.name}</span>
+                </Link>
+              )
+            })}
+          </div>
+        </nav>
+
+        {/* User Section */}
+        <div className="p-3 border-t border-slate-700/50">
+          <div className="relative">
+            <button
+              onClick={() => setUserMenuOpen(!userMenuOpen)}
+              className="w-full flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-slate-800/50 transition-colors"
+            >
+              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-pink-400 to-blue-400 flex items-center justify-center flex-shrink-0">
+                <span className="text-white text-xs font-medium">
+                  {(session?.user?.name || session?.user?.email || 'U')[0].toUpperCase()}
+                </span>
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <div className="text-xs font-medium text-white truncate">
+                  {session?.user?.name || session?.user?.email}
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {ROLE_LABELS[role || ''] || role}
+                </div>
+              </div>
+              <svg className={`w-3 h-3 text-slate-500 transition-transform flex-shrink-0 ${userMenuOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {userMenuOpen && (
+              <div className="absolute bottom-full left-0 right-0 mb-1 bg-slate-800 rounded-lg border border-slate-700 shadow-xl overflow-hidden">
+                <Link
+                  href="/dashboard/account"
+                  className="flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  onClick={() => setUserMenuOpen(false)}
+                >
+                  {Icons.settings}
+                  账号设置
+                </Link>
+                <button
+                  onClick={() => signOut({ callbackUrl: '/' })}
+                  className="flex items-center gap-2 w-full px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                >
+                  {Icons.logout}
+                  退出登录
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      {/* 移动端侧边栏抽屉 */}
+      <div className={`sidebar-container lg:hidden fixed inset-0 z-40 transition-opacity duration-300 ${mobileMenuOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+        {/* 遮罩层 */}
+        <div 
+          className="absolute inset-0 bg-black/50"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+        
+        {/* 侧边栏内容 */}
+        <aside className={`absolute left-0 top-14 bottom-0 w-[260px] bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-slate-300 flex flex-col shadow-2xl transform transition-transform duration-300 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+          {/* Navigation */}
+          <nav className="flex-1 overflow-y-auto py-3 px-3">
+            <div className="space-y-1">
+              {navItems.map((item) => {
+                const active = isActive(pathname, item.href)
+                return (
+                  <Link
+                    key={item.name}
+                    href={item.href}
+                    className={`flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-all duration-200 ${
+                      active
+                        ? 'bg-gradient-to-r from-pink-500 to-pink-600 text-white shadow-lg shadow-pink-500/25'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <span className={active ? 'text-white' : 'text-slate-500'}>
+                      {iconMap[item.name] || Icons.dashboard}
+                    </span>
+                    <span>{item.name}</span>
+                  </Link>
+                )
+              })}
+            </div>
+          </nav>
+
+          {/* User Section */}
+          <div className="p-3 border-t border-slate-700/50">
+            <div className="flex items-center gap-2 px-2 py-2">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-pink-400 to-blue-400 flex items-center justify-center flex-shrink-0">
+                <span className="text-white text-xs font-medium">
+                  {(session?.user?.name || session?.user?.email || 'U')[0].toUpperCase()}
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-white truncate">
+                  {session?.user?.name || session?.user?.email}
+                </div>
+                <div className="text-xs text-slate-500">
+                  {ROLE_LABELS[role || ''] || role}
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 space-y-1">
               <Link
                 href="/dashboard/account"
-                className="flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-                onClick={() => setUserMenuOpen(false)}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800/50 rounded-lg transition-colors"
               >
                 {Icons.settings}
                 账号设置
               </Link>
               <button
                 onClick={() => signOut({ callbackUrl: '/' })}
-                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                className="flex items-center gap-2 w-full px-3 py-2 text-sm text-slate-300 hover:bg-slate-800/50 rounded-lg transition-colors"
               >
                 {Icons.logout}
                 退出登录
               </button>
             </div>
-          )}
-        </div>
+          </div>
+        </aside>
       </div>
-    </aside>
+    </>
   )
 }
