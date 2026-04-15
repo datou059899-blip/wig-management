@@ -68,7 +68,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ videos, total, summary });
   } catch (error: any) {
     console.error("[API ERROR] 获取视频数据列表失败:", error);
-    // 返回详细错误信息便于调试
     return NextResponse.json({ 
       error: "获取失败", 
       details: error.message,
@@ -87,12 +86,10 @@ export async function POST(request: NextRequest) {
 
     const data = await request.json();
     
-    // 确保必填字段存在
     if (!data.title) {
       return NextResponse.json({ error: "视频标题不能为空" }, { status: 400 });
     }
     
-    // 构建创建数据对象
     const createData: any = {
       title: data.title,
       platform: data.platform || "TikTok",
@@ -112,6 +109,9 @@ export async function POST(request: NextRequest) {
       revenue: parseFloat(data.revenue) || 0,
       completionRate: parseFloat(data.completionRate) || 0,
       avgWatchTime: parseInt(data.avgWatchTime) || 0,
+      retention3s: parseFloat(data.retention3s) || 0,
+      retention5s: parseFloat(data.retention5s) || 0,
+      dropOffSecond: data.dropOffSecond ? parseInt(data.dropOffSecond) : null,
       adSpend: parseFloat(data.adSpend) || 0,
       cpm: parseFloat(data.cpm) || 0,
       cpc: parseFloat(data.cpc) || 0,
@@ -119,39 +119,28 @@ export async function POST(request: NextRequest) {
       notes: data.notes || "",
     };
     
-    // 只在有用户ID时设置 createdById
     const userId = (session.user as any).id;
     if (userId) {
       createData.createdById = userId;
     }
     
-    console.log("[API] Creating video metric with data:", JSON.stringify(createData, null, 2));
+    console.log("[API] Creating video metric:", JSON.stringify(createData, null, 2));
     
-    const video = await prisma.ownVideoMetric.create({
-      data: createData,
-    });
-
+    const video = await prisma.ownVideoMetric.create({ data: createData });
     return NextResponse.json(video);
   } catch (error: any) {
     console.error("[API ERROR] 创建视频数据失败:", error);
     
-    // 根据错误类型返回不同的错误信息
     let errorMessage = "创建失败";
     let errorDetails = error.message || "未知错误";
     
-    // Prisma 错误码处理
     if (error.code === "P2021") {
       errorMessage = "数据库表不存在";
       errorDetails = "OwnVideoMetric 表未创建，请执行数据库迁移";
     } else if (error.code === "P2003") {
       errorMessage = "外键约束失败";
-      errorDetails = "关联的用户不存在";
     } else if (error.code === "P2002") {
       errorMessage = "数据重复";
-      errorDetails = "违反了唯一约束";
-    } else if (error.code === "P2014") {
-      errorMessage = "关系冲突";
-      errorDetails = "数据关系验证失败";
     }
     
     return NextResponse.json({ 
