@@ -66,9 +66,14 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.json({ videos, total, summary });
-  } catch (error) {
-    console.error("获取视频数据列表失败:", error);
-    return NextResponse.json({ error: "获取失败" }, { status: 500 });
+  } catch (error: any) {
+    console.error("[API ERROR] 获取视频数据列表失败:", error);
+    // 返回详细错误信息便于调试
+    return NextResponse.json({ 
+      error: "获取失败", 
+      details: error.message,
+      code: error.code || "UNKNOWN"
+    }, { status: 500 });
   }
 }
 
@@ -120,16 +125,39 @@ export async function POST(request: NextRequest) {
       createData.createdById = userId;
     }
     
+    console.log("[API] Creating video metric with data:", JSON.stringify(createData, null, 2));
+    
     const video = await prisma.ownVideoMetric.create({
       data: createData,
     });
 
     return NextResponse.json(video);
   } catch (error: any) {
-    console.error("创建视频数据失败:", error);
+    console.error("[API ERROR] 创建视频数据失败:", error);
+    
+    // 根据错误类型返回不同的错误信息
+    let errorMessage = "创建失败";
+    let errorDetails = error.message || "未知错误";
+    
+    // Prisma 错误码处理
+    if (error.code === "P2021") {
+      errorMessage = "数据库表不存在";
+      errorDetails = "OwnVideoMetric 表未创建，请执行数据库迁移";
+    } else if (error.code === "P2003") {
+      errorMessage = "外键约束失败";
+      errorDetails = "关联的用户不存在";
+    } else if (error.code === "P2002") {
+      errorMessage = "数据重复";
+      errorDetails = "违反了唯一约束";
+    } else if (error.code === "P2014") {
+      errorMessage = "关系冲突";
+      errorDetails = "数据关系验证失败";
+    }
+    
     return NextResponse.json({ 
-      error: "创建失败", 
-      details: error.message || "未知错误" 
+      error: errorMessage, 
+      details: errorDetails,
+      code: error.code || "UNKNOWN"
     }, { status: 500 });
   }
 }
