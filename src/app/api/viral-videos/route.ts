@@ -57,27 +57,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "视频标题不能为空" }, { status: 400 });
     }
     
+    // 构建创建数据对象
+    const createData: any = {
+      title: data.title,
+      platform: data.platform || "TikTok",
+      sourceUrl: data.sourceUrl || null,
+      videoDuration: parseInt(data.videoDuration) || 0,
+      viewCount: parseInt(data.viewCount) || 0,
+      likeCount: parseInt(data.likeCount) || 0,
+      commentCount: parseInt(data.commentCount) || 0,
+      shareCount: parseInt(data.shareCount) || 0,
+      hookAnalysis: data.hookAnalysis || "",
+      sellingPointAnalysis: data.sellingPointAnalysis || "",
+      rhythmAnalysis: data.rhythmAnalysis || "",
+      visualAnalysis: data.visualAnalysis || "",
+      audioAnalysis: data.audioAnalysis || "",
+      reusableElements: data.reusableElements || "",
+      applicableScenes: data.applicableScenes || "",
+      productSku: data.productSku || null,
+      tags: data.tags || "",
+    };
+    
+    // 只在有用户ID时设置 createdById
+    const userId = (session.user as any).id;
+    if (userId) {
+      createData.createdById = userId;
+    }
+    
     const video = await prisma.viralVideoAnalysis.create({
-      data: {
-        title: data.title,
-        platform: data.platform || "TikTok",
-        sourceUrl: data.sourceUrl || null,
-        videoDuration: parseInt(data.videoDuration) || 0,
-        viewCount: parseInt(data.viewCount) || 0,
-        likeCount: parseInt(data.likeCount) || 0,
-        commentCount: parseInt(data.commentCount) || 0,
-        shareCount: parseInt(data.shareCount) || 0,
-        hookAnalysis: data.hookAnalysis || "",
-        sellingPointAnalysis: data.sellingPointAnalysis || "",
-        rhythmAnalysis: data.rhythmAnalysis || "",
-        visualAnalysis: data.visualAnalysis || "",
-        audioAnalysis: data.audioAnalysis || "",
-        reusableElements: data.reusableElements || "",
-        applicableScenes: data.applicableScenes || "",
-        productSku: data.productSku || null,
-        tags: data.tags || "",
-        createdById: (session.user as any).id,
-      },
+      data: createData,
     });
 
     return NextResponse.json(video);

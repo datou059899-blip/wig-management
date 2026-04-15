@@ -87,33 +87,41 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "视频标题不能为空" }, { status: 400 });
     }
     
+    // 构建创建数据对象
+    const createData: any = {
+      title: data.title,
+      platform: data.platform || "TikTok",
+      sourceUrl: data.sourceUrl || null,
+      videoDuration: parseInt(data.videoDuration) || 0,
+      contentType: data.contentType || "product_showcase",
+      productSku: data.productSku || null,
+      impressions: parseInt(data.impressions) || 0,
+      views: parseInt(data.views) || 0,
+      likes: parseInt(data.likes) || 0,
+      comments: parseInt(data.comments) || 0,
+      shares: parseInt(data.shares) || 0,
+      saves: parseInt(data.saves) || 0,
+      clicks: parseInt(data.clicks) || 0,
+      addToCarts: parseInt(data.addToCarts) || 0,
+      orders: parseInt(data.orders) || 0,
+      revenue: parseFloat(data.revenue) || 0,
+      completionRate: parseFloat(data.completionRate) || 0,
+      avgWatchTime: parseInt(data.avgWatchTime) || 0,
+      adSpend: parseFloat(data.adSpend) || 0,
+      cpm: parseFloat(data.cpm) || 0,
+      cpc: parseFloat(data.cpc) || 0,
+      publishedAt: data.publishedAt ? new Date(data.publishedAt) : new Date(),
+      notes: data.notes || "",
+    };
+    
+    // 只在有用户ID时设置 createdById
+    const userId = (session.user as any).id;
+    if (userId) {
+      createData.createdById = userId;
+    }
+    
     const video = await prisma.ownVideoMetric.create({
-      data: {
-        title: data.title,
-        platform: data.platform || "TikTok",
-        sourceUrl: data.sourceUrl || null,
-        videoDuration: parseInt(data.videoDuration) || 0,
-        contentType: data.contentType || "product_showcase",
-        productSku: data.productSku || null,
-        impressions: parseInt(data.impressions) || 0,
-        views: parseInt(data.views) || 0,
-        likes: parseInt(data.likes) || 0,
-        comments: parseInt(data.comments) || 0,
-        shares: parseInt(data.shares) || 0,
-        saves: parseInt(data.saves) || 0,
-        clicks: parseInt(data.clicks) || 0,
-        addToCarts: parseInt(data.addToCarts) || 0,
-        orders: parseInt(data.orders) || 0,
-        revenue: parseFloat(data.revenue) || 0,
-        completionRate: parseFloat(data.completionRate) || 0,
-        avgWatchTime: parseInt(data.avgWatchTime) || 0,
-        adSpend: parseFloat(data.adSpend) || 0,
-        cpm: parseFloat(data.cpm) || 0,
-        cpc: parseFloat(data.cpc) || 0,
-        publishedAt: data.publishedAt ? new Date(data.publishedAt) : new Date(),
-        notes: data.notes || "",
-        createdById: (session.user as any).id,
-      },
+      data: createData,
     });
 
     return NextResponse.json(video);
