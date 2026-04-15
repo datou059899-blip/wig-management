@@ -52,16 +52,40 @@ export async function POST(request: NextRequest) {
 
     const data = await request.json();
     
+    // 确保必填字段存在
+    if (!data.title) {
+      return NextResponse.json({ error: "视频标题不能为空" }, { status: 400 });
+    }
+    
     const video = await prisma.viralVideoAnalysis.create({
       data: {
-        ...data,
+        title: data.title,
+        platform: data.platform || "TikTok",
+        sourceUrl: data.sourceUrl || null,
+        videoDuration: parseInt(data.videoDuration) || 0,
+        viewCount: parseInt(data.viewCount) || 0,
+        likeCount: parseInt(data.likeCount) || 0,
+        commentCount: parseInt(data.commentCount) || 0,
+        shareCount: parseInt(data.shareCount) || 0,
+        hookAnalysis: data.hookAnalysis || "",
+        sellingPointAnalysis: data.sellingPointAnalysis || "",
+        rhythmAnalysis: data.rhythmAnalysis || "",
+        visualAnalysis: data.visualAnalysis || "",
+        audioAnalysis: data.audioAnalysis || "",
+        reusableElements: data.reusableElements || "",
+        applicableScenes: data.applicableScenes || "",
+        productSku: data.productSku || null,
+        tags: data.tags || "",
         createdById: (session.user as any).id,
       },
     });
 
     return NextResponse.json(video);
-  } catch (error) {
+  } catch (error: any) {
     console.error("创建热门视频分析失败:", error);
-    return NextResponse.json({ error: "创建失败" }, { status: 500 });
+    return NextResponse.json({ 
+      error: "创建失败", 
+      details: error.message || "未知错误" 
+    }, { status: 500 });
   }
 }

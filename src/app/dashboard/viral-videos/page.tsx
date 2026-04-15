@@ -35,6 +35,8 @@ export default function ViralVideosPage() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingVideo, setEditingVideo] = useState<ViralVideo | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
   const [formData, setFormData] = useState({
     title: "",
     platform: "TikTok",
@@ -73,6 +75,9 @@ export default function ViralVideosPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
+    setError("");
+    
     try {
       const url = editingVideo 
         ? `/api/viral-videos/${editingVideo.id}` 
@@ -85,14 +90,20 @@ export default function ViralVideosPage() {
         body: JSON.stringify(formData),
       });
 
+      const data = await res.json();
+
       if (res.ok) {
         setShowModal(false);
         setEditingVideo(null);
         resetForm();
         fetchVideos();
+      } else {
+        setError(data.error || data.details || "保存失败，请重试");
       }
-    } catch (error) {
-      console.error("保存失败:", error);
+    } catch (err: any) {
+      setError(err.message || "网络错误，请重试");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -130,6 +141,7 @@ export default function ViralVideosPage() {
       tags: video.tags,
     });
     setShowModal(true);
+    setError("");
   };
 
   const resetForm = () => {
@@ -152,18 +164,13 @@ export default function ViralVideosPage() {
       productSku: "",
       tags: "",
     });
+    setError("");
   };
 
   const formatNumber = (num: number) => {
     if (num >= 1000000) return (num / 1000000).toFixed(1) + "M";
     if (num >= 1000) return (num / 1000).toFixed(1) + "K";
     return num.toString();
-  };
-
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
   return (
@@ -318,10 +325,15 @@ export default function ViralVideosPage() {
               </h2>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              {error && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                  {error}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    视频标题
+                    视频标题 <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -539,13 +551,18 @@ export default function ViralVideosPage() {
                   type="button"
                   onClick={() => setShowModal(false)}
                   className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                  disabled={submitting}
                 >
                   取消
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  disabled={submitting}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
+                  {submitting && (
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  )}
                   {editingVideo ? "保存" : "创建"}
                 </button>
               </div>
