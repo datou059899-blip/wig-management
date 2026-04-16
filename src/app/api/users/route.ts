@@ -31,6 +31,11 @@ export async function GET() {
         name: true,
         role: true,
         status: true,
+        department: true,
+        defaultHomePage: true,
+        notes: true,
+        permissionMode: true,
+        allowedPages: true,
         createdAt: true,
       },
     })
@@ -54,6 +59,11 @@ export async function POST(request: NextRequest) {
     const name = body.name ? String(body.name) : null
     const role = (body.role || 'operator') as string
     const status = (body.status as string) === 'disabled' ? 'disabled' : 'enabled'
+    const department = body.department ? String(body.department) : null
+    const defaultHomePage = body.defaultHomePage ? String(body.defaultHomePage) : '/dashboard/workbench'
+    const notes = body.notes ? String(body.notes) : null
+    const permissionMode = body.permissionMode === 'custom' ? 'custom' : 'role'
+    const allowedPages = body.allowedPages ? String(body.allowedPages) : ''
 
     if (!email || !password) {
       return NextResponse.json({ error: '邮箱和密码必填' }, { status: 400 })
@@ -68,6 +78,11 @@ export async function POST(request: NextRequest) {
         password: hashed,
         role,
         status,
+        department,
+        defaultHomePage,
+        notes,
+        permissionMode,
+        allowedPages,
       },
       select: {
         id: true,
@@ -75,6 +90,11 @@ export async function POST(request: NextRequest) {
         name: true,
         role: true,
         status: true,
+        department: true,
+        defaultHomePage: true,
+        notes: true,
+        permissionMode: true,
+        allowedPages: true,
         createdAt: true,
       },
     })
@@ -88,4 +108,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '创建用户失败' }, { status: 500 })
   }
 }
-

@@ -13,6 +13,12 @@ model User {
   password          String
   name              String?
   role              String               @default("operator")
+  department        String?
+  defaultHomePage   String               @default("/dashboard/workbench")
+  notes             String?
+  // 权限控制字段
+  permissionMode    String               @default("role") // "role" | "custom"
+  allowedPages      String               @default("") // 逗号分隔的页面ID列表
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
   status            String               @default("enabled")

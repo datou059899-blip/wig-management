@@ -16,7 +16,7 @@ const requireAdmin = async () => {
   return { session, error: null }
 }
 
-// 更新用户（角色 / 名称 / 重置密码）
+// 更新用户（支持所有字段包括权限）
 export async function PATCH(request: NextRequest, context: { params: { id: string } }) {
   try {
     const { error } = await requireAdmin()
@@ -29,6 +29,11 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
     if (body.name !== undefined) data.name = body.name ? String(body.name) : null
     if (body.role !== undefined) data.role = String(body.role)
     if (body.status !== undefined) data.status = body.status === 'disabled' ? 'disabled' : 'enabled'
+    if (body.department !== undefined) data.department = body.department ? String(body.department) : null
+    if (body.defaultHomePage !== undefined) data.defaultHomePage = String(body.defaultHomePage)
+    if (body.notes !== undefined) data.notes = body.notes ? String(body.notes) : null
+    if (body.permissionMode !== undefined) data.permissionMode = body.permissionMode === 'custom' ? 'custom' : 'role'
+    if (body.allowedPages !== undefined) data.allowedPages = String(body.allowedPages)
     if (body.password) {
       data.password = await bcrypt.hash(String(body.password), 10)
     }
@@ -46,6 +51,11 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
         name: true,
         role: true,
         status: true,
+        department: true,
+        defaultHomePage: true,
+        notes: true,
+        permissionMode: true,
+        allowedPages: true,
         createdAt: true,
       },
     })
@@ -57,3 +67,21 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
   }
 }
 
+// 删除用户
+export async function DELETE(request: NextRequest, context: { params: { id: string } }) {
+  try {
+    const { error } = await requireAdmin()
+    if (error) return error
+
+    const id = context.params.id
+
+    await prisma.user.delete({
+      where: { id },
+    })
+
+    return NextResponse.json({ success: true })
+  } catch (e) {
+    console.error('删除用户失败:', e)
+    return NextResponse.json({ error: '删除用户失败' }, { status: 500 })
+  }
+}

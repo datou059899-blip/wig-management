@@ -44,6 +44,9 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           name: user.name,
           role: user.role,
+          permissionMode: user.permissionMode,
+          allowedPages: user.allowedPages,
+          defaultHomePage: user.defaultHomePage,
         }
       }
     })
@@ -56,6 +59,9 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id = user.id
         token.role = (user as any).role
+        token.permissionMode = (user as any).permissionMode
+        token.allowedPages = (user as any).allowedPages
+        token.defaultHomePage = (user as any).defaultHomePage
       }
       return token
     },
@@ -63,6 +69,9 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         (session.user as any).id = token.id as string
         (session.user as any).role = token.role as string
+        (session.user as any).permissionMode = token.permissionMode as string
+        (session.user as any).allowedPages = token.allowedPages as string
+        (session.user as any).defaultHomePage = token.defaultHomePage as string
       }
       return session
     }
@@ -70,7 +79,6 @@ export const authOptions: NextAuthOptions = {
   pages: {
     signIn: '/login',
   },
-  // 支持多域名 - 允许任何主机
   cookies: {
     sessionToken: {
       name: `next-auth.session-token`,

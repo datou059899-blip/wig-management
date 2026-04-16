@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import Sidebar from '@/components/Sidebar'
+import { PageGuard } from '@/components/PageGuard'
 
 export default async function DashboardLayout({
   children,
@@ -19,7 +20,7 @@ export default async function DashboardLayout({
       <Sidebar />
       <main className="lg:ml-[200px] min-h-screen pt-14 lg:pt-0">
         <div className="p-4 lg:p-6">
-          {children}
+          <PageGuard>{children}</PageGuard>
         </div>
       </main>
     </div>
