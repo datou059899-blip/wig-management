@@ -16,9 +16,8 @@ model User {
   department        String?
   defaultHomePage   String               @default("/dashboard/workbench")
   notes             String?
-  // 权限控制字段
-  permissionMode    String               @default("role") // "role" | "custom"
-  allowedPages      String               @default("") // 逗号分隔的页面ID列表
+  permissionMode    String               @default("role")
+  allowedPages      String               @default("")
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
   status            String               @default("enabled")
@@ -32,7 +31,8 @@ model User {
   workTasksAssigned WorkTask[]           @relation("WorkTaskAssignee")
   workTasksCreated  WorkTask[]           @relation("WorkTaskCreator")
   workTasksOwned    WorkTask[]           @relation("WorkTaskOwner")
-  viralVideoAnalyses ViralVideoAnalysis[]
+  viralVideoAnalyses ViralVideoAnalysis[] @relation("ViralVideoCreator")
+  viralVideoUpdates ViralVideoAnalysis[] @relation("ViralVideoUpdater")
   ownVideoMetrics   OwnVideoMetric[]
 }
 
@@ -377,48 +377,38 @@ model ProductOpportunity {
   @@index([assignee])
 }
 
-// 热门视频拆解分析
 model ViralVideoAnalysis {
-  id                String   @id @default(cuid())
-  title             String
-  platform          String   @default("TikTok")
-  sourceUrl         String?
-  videoDuration     Int      @default(0)
-  
-  // 数据表现
-  viewCount         Int      @default(0)
-  likeCount         Int      @default(0)
-  commentCount      Int      @default(0)
-  shareCount        Int      @default(0)
-  
-  // 内容拆解
-  hookAnalysis      String   @default("")
-  sellingPointAnalysis String @default("")
-  rhythmAnalysis    String   @default("")
-  visualAnalysis    String   @default("")
-  audioAnalysis     String   @default("")
-  
-  // 可复用元素
-  reusableElements  String   @default("")
-  applicableScenes  String   @default("")
-  
-  // 关联
-  productSku        String?
-  tags              String   @default("")
-  
-  createdById       String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  
-  createdBy         User?    @relation(fields: [createdById], references: [id])
-  
+  id                   String   @id @default(cuid())
+  title                String
+  platform             String   @default("TikTok")
+  sourceUrl            String?
+  videoDuration        Int      @default(0)
+  viewCount            Int      @default(0)
+  likeCount            Int      @default(0)
+  commentCount         Int      @default(0)
+  shareCount           Int      @default(0)
+  hookAnalysis         String   @default("")
+  sellingPointAnalysis String   @default("")
+  rhythmAnalysis       String   @default("")
+  visualAnalysis       String   @default("")
+  audioAnalysis        String   @default("")
+  reusableElements     String   @default("")
+  applicableScenes     String   @default("")
+  productSku           String?
+  tags                 String   @default("")
+  createdById          String?
+  updatedById          String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  createdBy            User?    @relation("ViralVideoCreator", fields: [createdById], references: [id])
+  updatedBy            User?    @relation("ViralVideoUpdater", fields: [updatedById], references: [id])
+
   @@index([platform])
   @@index([productSku])
   @@index([createdAt])
   @@index([viewCount])
 }
 
-// 自发短视频数据
 model OwnVideoMetric {
   id                String   @id @default(cuid())
   title             String
@@ -426,52 +416,32 @@ model OwnVideoMetric {
   sourceUrl         String?
   videoDuration     Int      @default(0)
   contentType       String   @default("product_showcase")
-  
-  // 关联产品
   productSku        String?
-  
-  // 曝光数据
   impressions       Int      @default(0)
   views             Int      @default(0)
-  
-  // 互动数据
   likes             Int      @default(0)
   comments          Int      @default(0)
   shares            Int      @default(0)
   saves             Int      @default(0)
-  
-  // 转化数据
   clicks            Int      @default(0)
   addToCarts        Int      @default(0)
   orders            Int      @default(0)
   revenue           Float    @default(0)
-  
-  // 质量数据
   completionRate    Float    @default(0)
   avgWatchTime      Int      @default(0)
-  
-  // 留存分析
   retention3s       Float    @default(0)
   retention5s       Float    @default(0)
   dropOffSecond     Int?
-  
-  // 成本数据
   adSpend           Float    @default(0)
   cpm               Float    @default(0)
   cpc               Float    @default(0)
-  
-  // 发布信息
   publishedAt       DateTime @default(now())
-  
-  // 备注
   notes             String   @default("")
-  
   createdById       String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
-  
   createdBy         User?    @relation(fields: [createdById], references: [id])
-  
+
   @@index([platform])
   @@index([productSku])
   @@index([publishedAt])

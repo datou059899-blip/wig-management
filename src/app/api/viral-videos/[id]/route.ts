@@ -20,6 +20,9 @@ export async function GET(
         createdBy: {
           select: { name: true, email: true },
         },
+        updatedBy: {
+          select: { name: true, email: true },
+        },
       },
     });
 
@@ -46,10 +49,21 @@ export async function PUT(
     }
 
     const data = await request.json();
+    const userId = (session.user as any).id;
+    
+    // 自动更新 updatedById
+    const updateData = {
+      ...data,
+      updatedById: userId,
+    };
     
     const video = await prisma.viralVideoAnalysis.update({
       where: { id: params.id },
-      data,
+      data: updateData,
+      include: {
+        createdBy: { select: { name: true, email: true } },
+        updatedBy: { select: { name: true, email: true } },
+      },
     });
 
     return NextResponse.json(video);

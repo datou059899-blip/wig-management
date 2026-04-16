@@ -30,6 +30,9 @@ export async function GET(request: NextRequest) {
         createdBy: {
           select: { name: true, email: true },
         },
+        updatedBy: {
+          select: { name: true, email: true },
+        },
       },
     });
 
@@ -57,6 +60,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "视频标题不能为空" }, { status: 400 });
     }
     
+    const userId = (session.user as any).id;
+    
     // 构建创建数据对象
     const createData: any = {
       title: data.title,
@@ -76,16 +81,16 @@ export async function POST(request: NextRequest) {
       applicableScenes: data.applicableScenes || "",
       productSku: data.productSku || null,
       tags: data.tags || "",
+      createdById: userId,
+      updatedById: userId,
     };
-    
-    // 只在有用户ID时设置 createdById
-    const userId = (session.user as any).id;
-    if (userId) {
-      createData.createdById = userId;
-    }
     
     const video = await prisma.viralVideoAnalysis.create({
       data: createData,
+      include: {
+        createdBy: { select: { name: true, email: true } },
+        updatedBy: { select: { name: true, email: true } },
+      },
     });
 
     return NextResponse.json(video);

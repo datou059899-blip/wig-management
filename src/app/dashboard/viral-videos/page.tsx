@@ -24,11 +24,35 @@ interface ViralVideo {
   productSku?: string;
   tags: string;
   createdAt: string;
+  updatedAt: string;
   createdBy?: {
     name?: string;
     email?: string;
   };
+  updatedBy?: {
+    name?: string;
+    email?: string;
+  };
 }
+
+// 格式化日期时间
+const formatDateTime = (dateStr: string) => {
+  if (!dateStr) return "-";
+  const date = new Date(dateStr);
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+// 获取用户显示名称
+const getUserDisplayName = (user?: { name?: string; email?: string }) => {
+  if (!user) return "未知";
+  return user.name || user.email?.split("@")[0] || "未知";
+};
 
 export default function ViralVideosPage() {
   const [videos, setVideos] = useState<ViralVideo[]>([]);
@@ -290,24 +314,49 @@ export default function ViralVideosPage() {
                   </div>
                 )}
 
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
-                  <span className="text-xs text-gray-400">
-                    {new Date(video.createdAt).toLocaleDateString()}
-                  </span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleEdit(video)}
-                      className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      onClick={() => handleDelete(video.id)}
-                      className="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded transition-colors"
-                    >
-                      删除
-                    </button>
+                {/* 协作信息 */}
+                <div className="mt-4 pt-3 border-t border-gray-100">
+                  <div className="flex items-center gap-4 text-xs text-gray-500">
+                    <div className="flex items-center gap-1">
+                      <span className="text-gray-400">拆解人:</span>
+                      <span className="text-gray-700 font-medium">
+                        {getUserDisplayName(video.createdBy)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-gray-400">创建:</span>
+                      <span>{formatDateTime(video.createdAt)}</span>
+                    </div>
                   </div>
+                  {(video.updatedBy || video.updatedAt !== video.createdAt) && (
+                    <div className="flex items-center gap-4 text-xs text-gray-500 mt-1">
+                      <div className="flex items-center gap-1">
+                        <span className="text-gray-400">修改人:</span>
+                        <span className="text-gray-700 font-medium">
+                          {getUserDisplayName(video.updatedBy)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-gray-400">更新:</span>
+                        <span>{formatDateTime(video.updatedAt)}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-2 mt-3 pt-3 border-t border-gray-100">
+                  <button
+                    onClick={() => handleEdit(video)}
+                    className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    onClick={() => handleDelete(video.id)}
+                    className="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded transition-colors"
+                  >
+                    删除
+                  </button>
                 </div>
               </div>
             </div>
@@ -330,6 +379,40 @@ export default function ViralVideosPage() {
                   {error}
                 </div>
               )}
+
+              {/* 编辑时显示协作信息 */}
+              {editingVideo && (
+                <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+                  <h4 className="text-sm font-medium text-gray-700 mb-2">协作信息</h4>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-500">拆解人:</span>
+                      <span className="ml-2 text-gray-900 font-medium">
+                        {getUserDisplayName(editingVideo.createdBy)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">创建时间:</span>
+                      <span className="ml-2 text-gray-900">
+                        {formatDateTime(editingVideo.createdAt)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">最后修改人:</span>
+                      <span className="ml-2 text-gray-900 font-medium">
+                        {getUserDisplayName(editingVideo.updatedBy)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">最后修改时间:</span>
+                      <span className="ml-2 text-gray-900">
+                        {formatDateTime(editingVideo.updatedAt)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
