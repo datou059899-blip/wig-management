@@ -444,6 +444,11 @@ model OwnVideoMetric {
   completionRate    Float    @default(0)
   avgWatchTime      Int      @default(0)
   
+  // 留存分析
+  retention3s       Float    @default(0)
+  retention5s       Float    @default(0)
+  dropOffSecond     Int?
+  
   // 成本数据
   adSpend           Float    @default(0)
   cpm               Float    @default(0)
