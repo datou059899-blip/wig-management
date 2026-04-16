@@ -90,6 +90,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "视频标题不能为空" }, { status: 400 });
     }
     
+    // 校验百分比范围
+    const completionRate = parseFloat(data.completionRate) || 0;
+    const retention3s = parseFloat(data.retention3s) || 0;
+    const retention5s = parseFloat(data.retention5s) || 0;
+    
+    if (completionRate < 0 || completionRate > 1) {
+      return NextResponse.json({ error: "完播率必须在 0-100% 之间" }, { status: 400 });
+    }
+    if (retention3s < 0 || retention3s > 1) {
+      return NextResponse.json({ error: "3秒留存率必须在 0-100% 之间" }, { status: 400 });
+    }
+    if (retention5s < 0 || retention5s > 1) {
+      return NextResponse.json({ error: "5秒留存率必须在 0-100% 之间" }, { status: 400 });
+    }
+    
+    // 校验平均观看时长
+    const avgWatchTime = parseFloat(data.avgWatchTime) || 0;
+    if (avgWatchTime < 0) {
+      return NextResponse.json({ error: "平均观看时长不能为负数" }, { status: 400 });
+    }
+    
     const createData: any = {
       title: data.title,
       platform: data.platform || "TikTok",
@@ -107,10 +128,10 @@ export async function POST(request: NextRequest) {
       addToCarts: parseInt(data.addToCarts) || 0,
       orders: parseInt(data.orders) || 0,
       revenue: parseFloat(data.revenue) || 0,
-      completionRate: parseFloat(data.completionRate) || 0,
-      avgWatchTime: parseInt(data.avgWatchTime) || 0,
-      retention3s: parseFloat(data.retention3s) || 0,
-      retention5s: parseFloat(data.retention5s) || 0,
+      completionRate,
+      avgWatchTime,
+      retention3s,
+      retention5s,
       dropOffSecond: data.dropOffSecond ? parseInt(data.dropOffSecond) : null,
       adSpend: parseFloat(data.adSpend) || 0,
       cpm: parseFloat(data.cpm) || 0,

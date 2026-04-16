@@ -428,7 +428,7 @@ model OwnVideoMetric {
   orders            Int      @default(0)
   revenue           Float    @default(0)
   completionRate    Float    @default(0)
-  avgWatchTime      Int      @default(0)
+  avgWatchTime      Float    @default(0)
   retention3s       Float    @default(0)
   retention5s       Float    @default(0)
   dropOffSecond     Int?
