@@ -490,8 +490,9 @@ export default function VideoMetricsPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">平均观看时长（秒）</label>
                     <input
                       type="number"
+                      step="0.01"
                       value={formData.avgWatchTime}
-                      onChange={(e) => setFormData({ ...formData, avgWatchTime: parseInt(e.target.value) || 0 })}
+                      onChange={(e) => setFormData({ ...formData, avgWatchTime: parseFloat(e.target.value) || 0 })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
@@ -499,8 +500,8 @@ export default function VideoMetricsPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">3秒留存率（%）</label>
                     <input
                       type="number"
-                      step="0.1"
-                      value={formData.retention3s ? (formData.retention3s * 100).toFixed(1) : "0"}
+                      step="0.01"
+                      value={formData.retention3s ? (formData.retention3s * 100).toFixed(2) : "0"}
                       onChange={(e) => setFormData({ ...formData, retention3s: parseFloat(e.target.value) / 100 || 0 })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
@@ -509,8 +510,8 @@ export default function VideoMetricsPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">5秒留存率（%）</label>
                     <input
                       type="number"
-                      step="0.1"
-                      value={formData.retention5s ? (formData.retention5s * 100).toFixed(1) : "0"}
+                      step="0.01"
+                      value={formData.retention5s ? (formData.retention5s * 100).toFixed(2) : "0"}
                       onChange={(e) => setFormData({ ...formData, retention5s: parseFloat(e.target.value) / 100 || 0 })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
@@ -519,8 +520,8 @@ export default function VideoMetricsPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">完播率（%）</label>
                     <input
                       type="number"
-                      step="0.1"
-                      value={(formData.completionRate * 100).toFixed(1)}
+                      step="0.01"
+                      value={(formData.completionRate * 100).toFixed(2)}
                       onChange={(e) => setFormData({ ...formData, completionRate: parseFloat(e.target.value) / 100 || 0 })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
