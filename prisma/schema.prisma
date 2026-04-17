@@ -55,6 +55,7 @@ model Product {
   stock                    Int         @default(0)
   scene                    String?
   materialUrl              String?
+  productUrl               String?
   warningStock             Boolean     @default(false)
   warningProfit            Boolean     @default(false)
   warningMissing           Boolean     @default(false)
