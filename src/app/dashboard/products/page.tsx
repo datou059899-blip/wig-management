@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
@@ -30,6 +30,7 @@ export default function ProductsPage() {
   const userRole = (session?.user as any)?.role
   const canAccess = canAccessProducts(userRole)
   const canEdit = canEditProducts(userRole)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (session !== undefined && !canAccess) {
@@ -42,6 +43,8 @@ export default function ProductsPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
   const [showEditModal, setShowEditModal] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
 
   // 加载产品数据
   useEffect(() => {
@@ -81,7 +84,63 @@ export default function ProductsPage() {
   // 处理编辑
   const handleEdit = (product: Product) => {
     setEditingProduct({ ...product })
+    setPreviewUrl(product.image || null)
     setShowEditModal(true)
+  }
+
+  // 处理文件选择
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // 检查文件类型
+    if (!file.type.startsWith('image/')) {
+      alert('请选择图片文件')
+      return
+    }
+
+    // 检查文件大小 (最大 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      alert('图片大小不能超过 5MB')
+      return
+    }
+
+    // 显示本地预览
+    const localUrl = URL.createObjectURL(file)
+    setPreviewUrl(localUrl)
+
+    // 上传图片
+    setUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      })
+
+      if (!res.ok) {
+        const error = await res.json()
+        throw new Error(error.error || '上传失败')
+      }
+
+      const data = await res.json()
+      if (editingProduct) {
+        setEditingProduct({ ...editingProduct, image: data.url })
+      }
+    } catch (error: any) {
+      console.error('上传失败:', error)
+      alert('上传失败: ' + error.message)
+      // 恢复原来的图片
+      setPreviewUrl(editingProduct?.image || null)
+    } finally {
+      setUploading(false)
+      // 清除文件输入
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
   }
 
   // 保存编辑
@@ -106,6 +165,7 @@ export default function ProductsPage() {
       if (res.ok) {
         setShowEditModal(false)
         setEditingProduct(null)
+        setPreviewUrl(null)
         fetchProducts()
       }
     } catch (error) {
@@ -285,32 +345,68 @@ export default function ProductsPage() {
               <h2 className="text-lg font-semibold">编辑产品信息</h2>
             </div>
             <div className="p-6 space-y-4">
-              {/* 图片预览 */}
+              {/* 图片上传 */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">产品图片</label>
-                <div className="relative w-32 h-32 bg-gray-100 rounded-lg overflow-hidden">
-                  {editingProduct.image ? (
-                    <Image
-                      src={editingProduct.image}
-                      alt="产品图片"
-                      fill
-                      className="object-cover"
+                <label className="block text-sm font-medium text-gray-700 mb-2">产品图片</label>
+                <div className="flex items-start gap-4">
+                  {/* 图片预览 */}
+                  <div className="relative w-32 h-32 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
+                    {previewUrl ? (
+                      <Image
+                        src={previewUrl}
+                        alt="产品图片"
+                        fill
+                        className="object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-gray-400">
+                        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                      </div>
+                    )}
+                    {uploading && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* 上传按钮 */}
+                  <div className="flex-1">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleFileSelect}
+                      className="hidden"
                     />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-gray-400">
-                      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                       </svg>
-                    </div>
-                  )}
+                      {uploading ? '上传中...' : '选择图片'}
+                    </button>
+                    <p className="mt-2 text-xs text-gray-500">
+                      支持 JPG、PNG、GIF 格式，最大 5MB
+                    </p>
+                    {editingProduct.image && (
+                      <button
+                        onClick={() => {
+                          setEditingProduct({ ...editingProduct, image: '' })
+                          setPreviewUrl(null)
+                        }}
+                        className="mt-2 text-xs text-red-600 hover:text-red-800"
+                      >
+                        删除图片
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <input
-                  type="text"
-                  value={editingProduct.image || ''}
-                  onChange={(e) => setEditingProduct({ ...editingProduct, image: e.target.value })}
-                  placeholder="图片 URL"
-                  className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
               </div>
 
               {/* SKU */}
@@ -391,14 +487,18 @@ export default function ProductsPage() {
 
             <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
               <button
-                onClick={() => setShowEditModal(false)}
+                onClick={() => {
+                  setShowEditModal(false)
+                  setPreviewUrl(null)
+                }}
                 className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
               >
                 取消
               </button>
               <button
                 onClick={handleSave}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                disabled={uploading}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
                 保存
               </button>
