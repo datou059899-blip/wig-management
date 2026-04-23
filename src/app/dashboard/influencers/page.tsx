@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { canAccessInfluencers, canManageInfluencers } from '@/lib/permissions'
+import SampleShipments from './SampleShipments'
 // import { TaskSummaryBar } from '@/components/TaskSummaryBar'
 // 跨用户同步：以数据库/API 为唯一真源（不再用 localStorage 作为真源）
 
@@ -492,15 +493,14 @@ function StatCard({
   return (
     <button
       onClick={onClick}
-      className={`text-left w-full rounded-xl border shadow-sm px-4 py-3 hover:bg-gray-50 transition ${
+      className={`text-left w-full rounded border px-1.5 py-0.5 hover:bg-gray-50 transition ${
         active
-          ? 'border-primary-400 bg-primary-50 ring-2 ring-primary-200 shadow-md'
-          : 'border-gray-100 bg-white'
+          ? 'border-primary-400 bg-primary-50'
+          : 'border-gray-200 bg-white'
       }`}
     >
-      <div className={`text-[11px] ${active ? 'text-primary-700' : 'text-gray-500'}`}>{label}</div>
-      <div className="mt-1 text-lg font-semibold text-gray-900">{count}</div>
-      <div className="mt-1 text-[11px] text-gray-500">点击筛选</div>
+      <div className={`text-[10px] leading-none ${active ? 'text-primary-700' : 'text-gray-500'}`}>{label}</div>
+      <div className="text-sm font-semibold text-gray-900 leading-none mt-0.5">{count}</div>
     </button>
   )
 }
@@ -724,6 +724,9 @@ function Drawer({
               {infoRow('快递单号', influencer.sample?.tracking)}
               {infoRow('地址', influencer.sample?.address)}
             </div>
+            <div className="mt-3 pt-3 border-t">
+              <SampleShipments influencerId={influencer.id} canManage={canManageProfile} />
+            </div>
           </div>
 
           <div className="border border-gray-100 rounded-xl p-3">
@@ -823,6 +826,18 @@ export default function InfluencersPage() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerScrollTarget, setDrawerScrollTarget] = useState<'timeline' | null>(null)
   const [rowMenuOpenId, setRowMenuOpenId] = useState<string>('')
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+
+  // 寄样记录弹窗状态
+  const [shipmentModalOpen, setShipmentModalOpen] = useState(false)
+  const [shipmentModalInfluencer, setShipmentModalInfluencer] = useState<Influencer | null>(null)
+
+  // 分页状态
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(5)
+
+  // 寄样记录缓存
+  const [shipmentsMap, setShipmentsMap] = useState<Record<string, { count: number; lastDate?: string; items: number }>>({})
 
   const sp = useSearchParams()
   const influencerIdFromQuery = sp.get('influencerId')
@@ -1035,12 +1050,64 @@ export default function InfluencersPage() {
         } as Influencer
       })
       setItems(next)
+      
+      // 批量获取寄样记录摘要
+      void loadShipmentsSummary(next.map((x) => x.id))
     } catch (e) {
       console.error(e)
       pushToast('error', '加载达人数据失败')
       setItems([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  // 批量获取寄样记录摘要
+  const loadShipmentsSummary = async (influencerIds: string[]) => {
+    try {
+      const summary: Record<string, { count: number; lastDate?: string; items: number }> = {}
+      
+      await Promise.all(
+        influencerIds.map(async (id) => {
+          try {
+            const res = await fetch(`/api/influencers/${id}/shipments`)
+            if (!res.ok) return
+            const data = await res.json()
+            const shipments = data.shipments || []
+            if (shipments.length === 0) {
+              summary[id] = { count: 0, items: 0 }
+              return
+            }
+            // 按日期排序，获取最近一次
+            const sorted = shipments.sort((a: any, b: any) => 
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+            )
+            const lastShipment = sorted[0]
+            const lastDate = lastShipment?.sampleDate 
+              ? new Date(lastShipment.sampleDate).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+              : lastShipment?.createdAt
+              ? new Date(lastShipment.createdAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+              : undefined
+            
+            // 计算总件数
+            const totalItems = shipments.reduce((sum: number, s: any) => 
+              sum + (s.items?.reduce((itemSum: number, item: any) => itemSum + (item.quantity || 0), 0) || 0), 0
+            )
+            
+            summary[id] = { 
+              count: shipments.length, 
+              lastDate,
+              items: totalItems
+            }
+          } catch {
+            summary[id] = { count: 0, items: 0 }
+          }
+        })
+      )
+      
+      setShipmentsMap(summary)
+    } catch (e) {
+      console.error('加载寄样摘要失败', e)
     }
   }
 
@@ -1131,6 +1198,13 @@ export default function InfluencersPage() {
 
     return list
   }, [baseItems, search, platform, region, status, owner, coopLevel, productLine, followersBand, followUpRecency, statFilter, effectiveStatus])
+
+  // 分页计算
+  const totalCount = filtered.length
+  const totalPages = Math.ceil(totalCount / pageSize)
+  const startIndex = (currentPage - 1) * pageSize
+  const endIndex = Math.min(startIndex + pageSize, totalCount)
+  const paginatedData = filtered.slice(startIndex, endIndex)
 
   const consumeDrawerScroll = useCallback(() => setDrawerScrollTarget(null), [])
 
@@ -1406,7 +1480,13 @@ export default function InfluencersPage() {
     setProductLine('all')
     setFollowersBand('all')
     setFollowUpRecency('all')
+    setCurrentPage(1)
   }
+
+  // 筛选条件变化时重置到第一页
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [search, platform, region, status, owner, coopLevel, productLine, followersBand, followUpRecency, statFilter])
 
   if (session === undefined || !canAccess) {
     return (
@@ -1416,22 +1496,22 @@ export default function InfluencersPage() {
     )
   }
 
-  const totalCount = baseItems.length
+  const totalItemsCount = baseItems.length
   const debugBuildTag = 'influencers-linkage-debug-2026-03-16-01'
   const isDev = process.env.NODE_ENV !== 'production'
 
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col h-[calc(100vh-120px)] gap-3">
       <Toasts toasts={toasts} onRemove={removeToast} />
-      {/* 顶部标题区 */}
-      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+      {/* 顶部标题区 - 压缩高度 */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">达人建联工作台</h1>
-          <p className="mt-1 text-sm text-gray-600">
+          <h1 className="text-lg font-semibold text-gray-900">达人建联工作台</h1>
+          <p className="text-[11px] text-gray-500">
             统一管理达人筛选、联系、跟进、寄样和出片进度
           </p>
         </div>
-        <div className="flex flex-wrap gap-2 items-center">
+        <div className="flex flex-wrap gap-1.5 items-center">
           {isDev && (
             <button
               onClick={() => setDebugOpen((v) => !v)}
@@ -1516,7 +1596,7 @@ export default function InfluencersPage() {
             <span className="font-mono">build: {debugBuildTag}</span>
             <span className="font-mono">statFilter: {statFilter}</span>
             <span className="font-mono">statusSelect: {status}</span>
-            <span>总人数：{totalCount}</span>
+            <span>总人数：{totalItemsCount}</span>
             <span>待建联：{stats.to_outreach}</span>
             <span>已发送：{stats.sent}</span>
             <span>合作中：{stats.cooperating}</span>
@@ -1537,35 +1617,34 @@ export default function InfluencersPage() {
       )}
 
       {/* 今日待跟进提醒（3-5 条最急事项） */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-sm font-semibold text-gray-900">今日待跟进提醒</div>
-          <div className="text-[11px] text-gray-500">基于简单规则自动提示</div>
+      <div className="bg-white rounded-lg border border-gray-100 p-2">
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="text-xs font-semibold text-gray-900">今日待跟进</div>
+          <div className="text-[10px] text-gray-500">自动提示</div>
         </div>
         {items && (() => {
           const urgent = [...items]
             .map((x) => ({ x, r: computeReminder(x) }))
             .filter((p): p is { x: Influencer; r: OperatingReminder } => Boolean(p.r))
             .sort((a, b) => (b.r.sortDays ?? 0) - (a.r.sortDays ?? 0))
-            .slice(0, 5)
+            .slice(0, 3)
 
           if (urgent.length === 0) {
-            return <div className="text-[11px] text-gray-500">暂无紧急提醒。</div>
+            return <div className="text-[10px] text-gray-500">暂无</div>
           }
           return (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div className="flex flex-wrap gap-1.5">
               {urgent.map(({ x, r }) => (
                 <button
                   key={x.id}
                   type="button"
                   onClick={() => openDetail(x)}
-                  className={`text-left rounded-lg border px-3 py-2 hover:bg-gray-50 ${
+                  className={`text-left rounded border px-2 py-1 hover:bg-gray-50 ${
                     r.level === 'warn' ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-gray-50'
                   }`}
                 >
-                  <div className="text-xs font-semibold text-gray-900">{x.nickname}</div>
-                  <div className="mt-1 text-[11px] text-gray-800 leading-snug">当前问题：{r.issue}</div>
-                  <div className="mt-1.5 text-[11px] text-primary-700 leading-snug">建议下一步：{r.nextStep}</div>
+                  <div className="text-[11px] font-medium text-gray-900">{x.nickname}</div>
+                  <div className="text-[10px] text-gray-600">{r.issue}</div>
                 </button>
               ))}
             </div>
@@ -2170,7 +2249,7 @@ export default function InfluencersPage() {
       </Modal>
 
       {/* 顶部统计卡片 */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
         <StatCard
           label="待建联"
           count={stats.to_outreach}
@@ -2227,262 +2306,282 @@ export default function InfluencersPage() {
         />
       </div>
 
-      {/* 中间筛选区 */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-        <div className="flex flex-col lg:flex-row lg:items-end gap-3">
+      {/* 中间筛选区 - 压缩高度 */}
+      <div className="bg-white rounded-lg border border-gray-100 p-2">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-2">
           <div className="flex-1">
-            <div className="text-[11px] text-gray-500 mb-1">搜索</div>
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="支持达人昵称 / 邮箱 / 平台链接 / 产品关键词"
-              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+              placeholder="搜索昵称/邮箱/链接/产品"
+              className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
             />
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 w-full lg:w-auto">
-            <div>
-              <div className="text-[11px] text-gray-500 mb-1">平台</div>
-              <select
-                value={platform}
-                onChange={(e) => setPlatform(e.target.value)}
-                className="w-full px-2.5 py-2 text-sm border border-gray-200 rounded-lg"
-              >
-                <option value="all">全部</option>
-                {platforms.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div className="text-[11px] text-gray-500 mb-1">国家/地区</div>
-              <select
-                value={region}
-                onChange={(e) => setRegion(e.target.value)}
-                className="w-full px-2.5 py-2 text-sm border border-gray-200 rounded-lg"
-              >
-                <option value="all">全部</option>
-                {regions.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div className="text-[11px] text-gray-500 mb-1">状态</div>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                className="w-full px-2.5 py-2 text-sm border border-gray-200 rounded-lg"
-              >
-                <option value="all">全部</option>
-                {Object.entries(statusLabel).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div className="text-[11px] text-gray-500 mb-1">负责人</div>
-              <select
-                value={owner}
-                onChange={(e) => setOwner(e.target.value)}
-                className="w-full px-2.5 py-2 text-sm border border-gray-200 rounded-lg"
-              >
-                <option value="all">全部</option>
-                {owners.map((o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div className="text-[11px] text-gray-500 mb-1">合作层级</div>
-              <select
-                value={coopLevel}
-                onChange={(e) => setCoopLevel(e.target.value)}
-                className="w-full px-2.5 py-2 text-sm border border-gray-200 rounded-lg"
-              >
-                <option value="all">全部</option>
-                <option value="normal">普通</option>
-                <option value="key">重点</option>
-                <option value="deep">深度合作</option>
-              </select>
-            </div>
-            <div>
-              <div className="text-[11px] text-gray-500 mb-1">产品线</div>
-              <select
-                value={productLine}
-                onChange={(e) => setProductLine(e.target.value)}
-                className="w-full px-2.5 py-2 text-sm border border-gray-200 rounded-lg"
-              >
-                <option value="all">全部</option>
-                {productLines.map((pl) => (
-                  <option key={pl} value={pl}>
-                    {pl}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div className="text-[11px] text-gray-500 mb-1">粉丝量</div>
-              <select
-                value={followersBand}
-                onChange={(e) => setFollowersBand(e.target.value)}
-                className="w-full px-2.5 py-2 text-sm border border-gray-200 rounded-lg"
-              >
-                <option value="all">全部</option>
-                <option value="0-10k">0-10K</option>
-                <option value="10k-50k">10K-50K</option>
-                <option value="50k-200k">50K-200K</option>
-                <option value="200k+">200K+</option>
-              </select>
-            </div>
-            <div>
-              <div className="text-[11px] text-gray-500 mb-1">最近跟进</div>
-              <select
-                value={followUpRecency}
-                onChange={(e) => setFollowUpRecency(e.target.value)}
-                className="w-full px-2.5 py-2 text-sm border border-gray-200 rounded-lg"
-              >
-                <option value="all">全部</option>
-                <option value="3d">近 3 天</option>
-                <option value="7d">近 7 天</option>
-                <option value="14d">近 14 天</option>
-                <option value="over14d">超过 14 天</option>
-              </select>
-            </div>
+          <div className="flex flex-wrap gap-1.5 items-center">
+            <select
+              value={platform}
+              onChange={(e) => setPlatform(e.target.value)}
+              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+            >
+              <option value="all">平台</option>
+              {platforms.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+            <select
+              value={region}
+              onChange={(e) => setRegion(e.target.value)}
+              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+            >
+              <option value="all">地区</option>
+              {regions.map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+            >
+              <option value="all">状态</option>
+              {Object.entries(statusLabel).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+            <select
+              value={owner}
+              onChange={(e) => setOwner(e.target.value)}
+              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+            >
+              <option value="all">负责人</option>
+              {owners.map((o) => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+            <select
+              value={coopLevel}
+              onChange={(e) => setCoopLevel(e.target.value)}
+              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+            >
+              <option value="all">层级</option>
+              <option value="normal">普通</option>
+              <option value="key">重点</option>
+              <option value="deep">深度</option>
+            </select>
+            <select
+              value={productLine}
+              onChange={(e) => setProductLine(e.target.value)}
+              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+            >
+              <option value="all">产品线</option>
+              {productLines.map((pl) => (
+                <option key={pl} value={pl}>{pl}</option>
+              ))}
+            </select>
+            <select
+              value={followersBand}
+              onChange={(e) => setFollowersBand(e.target.value)}
+              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+            >
+              <option value="all">粉丝</option>
+              <option value="0-10k">0-10K</option>
+              <option value="10k-50k">10K-50K</option>
+              <option value="50k-200k">50K-200K</option>
+              <option value="200k+">200K+</option>
+            </select>
+            <select
+              value={followUpRecency}
+              onChange={(e) => setFollowUpRecency(e.target.value)}
+              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+            >
+              <option value="all">跟进</option>
+              <option value="3d">3天内</option>
+              <option value="7d">7天内</option>
+              <option value="14d">14天内</option>
+              <option value="over14d">超14天</option>
+            </select>
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+            >
+              清空
+            </button>
           </div>
         </div>
 
-        <div className="mt-3 flex items-center justify-between gap-2">
-          <div className="text-[11px] text-gray-500">
-            当前 {filtered.length} 位达人（按“下一步动作优先”排序）
+        <div className="mt-1.5 flex items-center justify-between">
+          <div className="text-[10px] text-gray-500">
+            共 {filtered.length} 位
           </div>
-          <button
-            type="button"
-            onClick={resetFilters}
-            className="px-2.5 py-1.5 text-xs bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 shrink-0"
-          >
-            清空筛选
-          </button>
         </div>
       </div>
 
-      {/* 主列表区域 */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-4 py-3 border-b flex items-center justify-between">
-          <div className="text-sm font-semibold text-gray-900">
-            当前显示：{effectiveLabel}达人（{filtered.length}）
+      {/* 主列表区域 - 撑满剩余高度 */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col flex-1" style={{ minHeight: '300px' }}>
+        {/* 列表头部 */}
+        <div className="px-4 py-2 border-b flex items-center justify-between shrink-0 bg-gray-50">
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={selectedIds.length === paginatedData.length && paginatedData.length > 0}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setSelectedIds(paginatedData.map(x => x.id))
+                } else {
+                  setSelectedIds([])
+                }
+              }}
+              className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span className="text-sm font-semibold text-gray-900">
+              {effectiveLabel}达人（{filtered.length}）
+            </span>
+            {selectedIds.length > 0 && (
+              <span className="text-[11px] text-primary-600 bg-primary-50 px-2 py-0.5 rounded">
+                已选 {selectedIds.length} 位
+              </span>
+            )}
           </div>
           <div className="text-[11px] text-gray-500">建议从「待建联 / 已发送 / 合作中」开始推进</div>
         </div>
 
         {loading ? (
-          <div className="px-4 py-10 text-center text-sm text-gray-500">加载中...</div>
+          <div className="px-4 py-10 text-center text-sm text-gray-500 flex-1">加载中...</div>
         ) : filtered.length === 0 ? (
-          <div className="px-4 py-10 text-center text-sm text-gray-500">暂无符合条件的达人。</div>
+          <div className="px-4 py-10 text-center text-sm text-gray-500 flex-1">暂无符合条件的达人。</div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-auto flex-1">
             <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+              <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">达人</th>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">平台</th>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">粉丝量</th>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">内容类型</th>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">匹配产品</th>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">当前状态</th>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">最近跟进</th>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">负责人</th>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">潜力</th>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">合作层级</th>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">下一步动作</th>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">跟进记录</th>
-                  <th className="px-4 py-2 text-left text-[11px] text-gray-500">更多操作</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">达人</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">平台</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">粉丝</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">类型</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">产品</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">状态</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">寄样</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">跟进</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">负责人</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">潜力</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">层级</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">下一步</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">记录</th>
+                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {filtered.map((x) => (
+                {paginatedData.map((x) => (
                   <tr
                     key={x.id}
                     className="hover:bg-gray-50 cursor-pointer"
                     onClick={() => openDetail(x)}
                   >
-                    <td className="px-4 py-2 align-middle">
-                      <div className="text-sm font-medium text-gray-900 truncate max-w-[220px]">
-                        {x.nickname}
-                      </div>
-                      <div className="mt-0.5 text-[11px] text-gray-500 truncate max-w-[220px]">
-                        {x.country || '-'} · {x.productLines[0] || '未标注产品线'}
+                    <td className="px-3 py-1.5 align-middle">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(x.id)}
+                          onChange={(e) => {
+                            e.stopPropagation()
+                            if (e.target.checked) {
+                              setSelectedIds(prev => [...prev, x.id])
+                            } else {
+                              setSelectedIds(prev => prev.filter(id => id !== x.id))
+                            }
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                        />
+                        <div>
+                          <div className="text-xs font-medium text-gray-900 truncate max-w-[160px]">
+                            {x.nickname}
+                          </div>
+                          <div className="text-[10px] text-gray-500 truncate max-w-[160px]">
+                            {x.country || '-'} · {x.productLines[0] || '-'}
+                          </div>
+                        </div>
                       </div>
                     </td>
-                    <td className="px-4 py-2 text-xs text-gray-700 align-middle">
-                      <span className="px-2 py-0.5 rounded-full bg-gray-50 border border-gray-200 text-[11px]">
+                    <td className="px-3 py-1.5 text-[10px] text-gray-700 align-middle">
+                      <span className="px-1.5 py-0.5 rounded bg-gray-50 border border-gray-200 text-[10px]">
                         {x.platform}
                       </span>
                     </td>
-                    <td className="px-4 py-2 text-xs text-gray-700 align-middle">
+                    <td className="px-3 py-1.5 text-[10px] text-gray-700 align-middle">
                       {formatFollowers(x.followers)}
                     </td>
-                    <td className="px-4 py-2 text-xs text-gray-700 align-middle">
-                      <div className="flex flex-wrap gap-1 max-w-[220px]">
+                    <td className="px-3 py-1.5 text-[10px] text-gray-700 align-middle">
+                      <div className="flex flex-wrap gap-0.5 max-w-[120px]">
                         {x.contentTypes.slice(0, 2).map((t) => (
                           <span
                             key={t}
-                            className="px-2 py-0.5 rounded-full bg-gray-50 text-[11px] text-gray-600 border border-gray-200"
+                            className="px-1 py-0 rounded bg-gray-50 text-[10px] text-gray-600 border border-gray-200"
                           >
                             {t}
                           </span>
                         ))}
                         {x.contentTypes.length > 2 && (
-                          <span className="text-[11px] text-gray-400">+{x.contentTypes.length - 2}</span>
+                          <span className="text-[10px] text-gray-400">+{x.contentTypes.length - 2}</span>
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-2 text-xs text-gray-700 align-middle">
-                      <div className="text-[11px] text-gray-700 truncate max-w-[240px]">
-                        {x.matchProducts.join(' / ') || '-'}
+                    <td className="px-3 py-1.5 text-[10px] text-gray-700 align-middle">
+                      <div className="text-[10px] text-gray-700 truncate max-w-[120px]">
+                        {x.matchProducts.slice(0, 2).join(' / ') || '-'}
                       </div>
                     </td>
-                    <td className="px-4 py-2 align-middle">
+                    <td className="px-3 py-1.5 align-middle">
                       <Badge status={x.status} />
                     </td>
-                    <td className="px-4 py-2 align-middle">
-                      <div className="text-[11px] text-gray-700">{daysAgo(x.lastFollowUpAt)}</div>
-                      <div className="text-[11px] text-gray-400 truncate max-w-[200px]">
-                        {x.lastFollowUpNote || '—'}
-                      </div>
+                    <td className="px-3 py-1.5 align-middle">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setShipmentModalInfluencer(x)
+                          setShipmentModalOpen(true)
+                        }}
+                        className="text-left hover:bg-gray-100 rounded px-1.5 py-0.5 -ml-1.5 transition-colors"
+                      >
+                        {(() => {
+                          const shipmentInfo = shipmentsMap[x.id]
+                          if (!shipmentInfo || shipmentInfo.count === 0) {
+                            return <span className="text-[10px] text-gray-400">暂无</span>
+                          }
+                          return (
+                            <span className="text-[10px] text-primary-600">第{shipmentInfo.count}次</span>
+                          )
+                        })()}
+                      </button>
                     </td>
-                    <td className="px-4 py-2 text-xs text-gray-700 align-middle">{x.owner}</td>
-                    <td className="px-4 py-2 align-middle">
+                    <td className="px-3 py-1.5 align-middle">
+                      <div className="text-[10px] text-gray-700">{daysAgo(x.lastFollowUpAt)}</div>
+                    </td>
+                    <td className="px-3 py-1.5 text-[10px] text-gray-700 align-middle">{x.owner}</td>
+                    <td className="px-3 py-1.5 align-middle">
                       <PotentialBadge p={x.potential} />
                     </td>
-                    <td className="px-4 py-2 align-middle">
+                    <td className="px-3 py-1.5 align-middle">
                       <CoopBadge level={(x.cooperationLevel as any) || 'normal'} />
                     </td>
-                    <td className="px-4 py-2 align-middle">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-900 font-medium whitespace-nowrap">{x.nextAction}</span>
+                    <td className="px-3 py-1.5 align-middle">
+                      <div className="flex items-center gap-1">
                         {canManage && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
                               openNextAction(x)
                             }}
-                            className="ml-auto px-2.5 py-1.5 text-[11px] rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+                            className="px-2 py-0.5 text-[10px] rounded bg-primary-600 text-white hover:bg-primary-700"
                           >
-                            {x.nextAction}
+                            推进
                           </button>
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-2 align-middle">
+                    <td className="px-3 py-1.5 align-middle">
                       {canManage ? (
                         <button
                           onClick={(e) => {
@@ -2501,22 +2600,22 @@ export default function InfluencersPage() {
                             }))
                             setFollowUpOpen(true)
                           }}
-                          className="px-2.5 py-1.5 text-[11px] rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                          className="px-2 py-0.5 text-[10px] rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
                         >
-                          记一条跟进
+                          记录
                         </button>
                       ) : (
-                        <span className="text-[11px] text-gray-400">-</span>
+                        <span className="text-[10px] text-gray-400">-</span>
                       )}
                     </td>
-                    <td className="px-4 py-2 align-middle">
+                    <td className="px-3 py-1.5 align-middle">
                       <div className="relative">
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
                             setRowMenuOpenId((v) => (v === x.id ? '' : x.id))
                           }}
-                          className="px-2.5 py-1.5 text-[11px] rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                          className="px-2 py-0.5 text-[10px] rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
                         >
                           更多
                         </button>
@@ -2652,6 +2751,168 @@ export default function InfluencersPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* 批量操作区 */}
+        {!loading && filtered.length > 0 && selectedIds.length > 0 && (
+          <div className="px-4 py-2 border-t bg-primary-50 shrink-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] text-primary-700 font-medium">批量操作：</span>
+              <button
+                onClick={() => {
+                  if (!canManage) return
+                  const nextOwner = window.prompt('将选中的达人分配给：', operatorName) || ''
+                  if (!nextOwner.trim()) return
+                  void Promise.all(
+                    selectedIds.map(id => updateInfluencer(id, { owner: nextOwner.trim() }))
+                  ).then(() => {
+                    pushToast('success', `已批量分配负责人给 ${selectedIds.length} 位达人`)
+                    setSelectedIds([])
+                  })
+                }}
+                className="px-2 py-1 text-[10px] rounded border border-primary-200 bg-white text-primary-700 hover:bg-primary-50"
+              >
+                分配负责人
+              </button>
+              <button
+                onClick={() => {
+                  if (!canManage) return
+                  const next = window.prompt(
+                    `批量更改状态：\n${Object.entries(statusLabel)
+                      .map(([k, v]) => `${k} = ${v}`)
+                      .join('\n')}`,
+                    'to_outreach',
+                  )
+                  if (!next) return
+                  if (!(next in statusLabel)) return
+                  void Promise.all(
+                    selectedIds.map(id => updateInfluencer(id, { status: next as any, nextAction: getNextActionForStatus(next as any) }))
+                  ).then(() => {
+                    pushToast('success', `已批量更新 ${selectedIds.length} 位达人状态`)
+                    setSelectedIds([])
+                  })
+                }}
+                className="px-2 py-1 text-[10px] rounded border border-primary-200 bg-white text-primary-700 hover:bg-primary-50"
+              >
+                更新状态
+              </button>
+              <button
+                onClick={() => {
+                  if (!canManage) return
+                  const note = window.prompt('批量记录跟进（相同内容）：') || ''
+                  if (!note.trim()) return
+                  void Promise.all(
+                    selectedIds.map(id => addFollowUp(id, note.trim()))
+                  ).then(() => {
+                    pushToast('success', `已批量记录 ${selectedIds.length} 位达人跟进`)
+                    setSelectedIds([])
+                  })
+                }}
+                className="px-2 py-1 text-[10px] rounded border border-primary-200 bg-white text-primary-700 hover:bg-primary-50"
+              >
+                记录跟进
+              </button>
+              <button
+                onClick={() => setSelectedIds([])}
+                className="px-2 py-1 text-[10px] rounded border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 ml-auto"
+              >
+                取消选择
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 分页控件 */}
+        {!loading && filtered.length > 0 && (
+          <div className="px-4 py-3 border-t bg-gray-50 shrink-0">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              {/* 左侧：显示信息 */}
+              <div className="text-[11px] text-gray-500">
+                显示 {startIndex + 1}-{endIndex} / 共 {totalCount} 条
+              </div>
+
+              {/* 中间：页码 */}
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setCurrentPage(1)}
+                  disabled={currentPage === 1}
+                  className="px-2 py-1 text-[11px] rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  首页
+                </button>
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-2 py-1 text-[11px] rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  上一页
+                </button>
+
+                {/* 页码按钮 */}
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    // 显示当前页附近的页码
+                    let pageNum: number
+                    if (totalPages <= 5) {
+                      pageNum = i + 1
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1
+                    } else if (currentPage >= totalPages - 2) {
+                      pageNum = totalPages - 4 + i
+                    } else {
+                      pageNum = currentPage - 2 + i
+                    }
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={`min-w-[28px] px-2 py-1 text-[11px] rounded border ${
+                          currentPage === pageNum
+                            ? 'bg-primary-600 text-white border-primary-600'
+                            : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-2 py-1 text-[11px] rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  下一页
+                </button>
+                <button
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={currentPage === totalPages}
+                  className="px-2 py-1 text-[11px] rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  末页
+                </button>
+              </div>
+
+              {/* 右侧：每页条数 */}
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-gray-500">每页</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value))
+                    setCurrentPage(1)
+                  }}
+                  className="px-2 py-1 text-[11px] border border-gray-200 rounded bg-white"
+                >
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                </select>
+                <span className="text-[11px] text-gray-500">条</span>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -2853,7 +3114,7 @@ export default function InfluencersPage() {
                       onChange={(e) => setActionForm((p) => ({ ...p, sampleSentAt: e.target.value }))}
                       className="w-full px-2.5 py-2 border border-gray-200 rounded-lg"
                     />
-                    <div className="mt-1 text-[11px] text-gray-500">提交时会询问是否进入“已寄样”。</div>
+                    <div className="mt-1 text-[11px] text-gray-500">提交时会询问是否进入"已寄样"。</div>
                   </div>
                 </div>
               )}
@@ -2895,6 +3156,37 @@ export default function InfluencersPage() {
             </div>
           )
         })()}
+      </Modal>
+
+      {/* 寄样记录弹窗 */}
+      <Modal
+        open={shipmentModalOpen}
+        title={shipmentModalInfluencer ? `${shipmentModalInfluencer.nickname} - 寄样记录` : '寄样记录'}
+        subtitle="查看历史寄样、管理寄样信息"
+        onClose={() => {
+          setShipmentModalOpen(false)
+          setShipmentModalInfluencer(null)
+        }}
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={() => {
+                setShipmentModalOpen(false)
+                setShipmentModalInfluencer(null)
+              }}
+              className="px-3 py-2 text-xs bg-white border border-gray-200 text-gray-800 rounded-lg hover:bg-gray-50"
+            >
+              关闭
+            </button>
+          </div>
+        }
+      >
+        {shipmentModalInfluencer && (
+          <SampleShipments
+            influencerId={shipmentModalInfluencer.id}
+            canManage={canManage}
+          />
+        )}
       </Modal>
     </div>
   )

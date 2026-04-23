@@ -13,9 +13,9 @@ export async function GET(request: NextRequest) {
 
     const searchParams = request.nextUrl.searchParams
     const page = parseInt(searchParams.get('page') || '1')
-    const pageSize = parseInt(searchParams.get('pageSize') || '20')
+    const pageSize = parseInt(searchParams.get('pageSize') || '100')
     const search = searchParams.get('search') || ''
-    const sortBy = searchParams.get('sortBy') || 'createdAt'
+    const sortBy = searchParams.get('sortBy') || 'updatedAt'
     const sortOrder = searchParams.get('sortOrder') || 'desc'
     const warningFilter = searchParams.get('warning') // stock, profit, missing
 
@@ -26,7 +26,9 @@ export async function GET(request: NextRequest) {
     const stockWarningThreshold = parseInt(configMap.stock_warning_threshold || '10')
     const profitMarginWarningThreshold = parseFloat(configMap.profit_margin_warning_threshold || '20')
 
-    const where: any = {}
+    const where: any = {
+      isActive: true, // 默认只显示启用的产品
+    }
     if (search) {
       where.OR = [
         { name: { contains: search } },
@@ -88,7 +90,20 @@ export async function GET(request: NextRequest) {
                             !product.costCny || !product.priceUsd
 
       return {
-        ...product,
+        id: product.id,
+        name: product.name,
+        sku: product.sku,
+        image: product.image,
+        color: product.color,
+        length: product.length,
+        style: product.style,
+        productUrl: product.productUrl,
+        description: product.description,
+        notes: product.notes,
+        priceUsd: product.priceUsd,
+        costCny: product.costCny,
+        stock: product.stock,
+        updatedAt: product.updatedAt,
         costUsd,
         effectivePrice,
         profit,
@@ -112,7 +127,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// 创建产品
+// 创建产品（所有已登录用户可创建）
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
@@ -120,17 +135,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
     }
 
-    const userRole = (session.user as any).role
-    if (userRole !== 'admin' && userRole !== 'operator') {
-      return NextResponse.json({ error: '无权限' }, { status: 403 })
-    }
-
     const data = await request.json()
+
+    // 如果 sku 为空字符串，设为 null 避免唯一约束冲突
+    const sku = data.sku?.trim() || null
 
     const product = await prisma.product.create({
       data: {
         name: data.name,
-        sku: data.sku,
+        sku: sku,
         skuId: data.skuId,
         image: data.image,
         images: data.images,
@@ -158,23 +171,22 @@ export async function POST(request: NextRequest) {
     })
 
     return NextResponse.json(product)
-  } catch (error) {
+  } catch (error: any) {
     console.error('创建产品失败:', error)
-    return NextResponse.json({ error: '创建产品失败' }, { status: 500 })
+    // 返回更详细的错误信息
+    if (error.code === 'P2002') {
+      return NextResponse.json({ error: 'SKU 已存在，请使用不同的 SKU' }, { status: 400 })
+    }
+    return NextResponse.json({ error: '创建产品失败: ' + (error.message || '未知错误') }, { status: 500 })
   }
 }
 
-// 更新产品（部分字段）
+// 更新产品（部分字段，所有已登录用户可更新）
 export async function PATCH(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
     if (!session) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
-    }
-
-    const userRole = (session.user as any).role
-    if (userRole !== 'admin' && userRole !== 'operator') {
-      return NextResponse.json({ error: '无权限' }, { status: 403 })
     }
 
     const data = await request.json()

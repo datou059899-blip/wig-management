@@ -45,7 +45,7 @@ function StatCard({
   return (
     <Link 
       href={href}
-      className="group block p-6 bg-white rounded-2xl border border-slate-200 hover:border-slate-300 hover:shadow-xl transition-all duration-200"
+      className="group block p-6 bg-white rounded-2xl border border-slate-200 hover:border-brand-300 hover:shadow-lg hover:shadow-brand-100/50 transition-all duration-200"
     >
       <div className="flex items-start justify-between">
         <div>

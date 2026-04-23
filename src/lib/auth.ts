@@ -89,5 +89,8 @@ export const authOptions: NextAuthOptions = {
         secure: process.env.NODE_ENV === 'production'
       }
     }
-  }
+  },
+  // 支持多域名部署（Vercel 预览链接等）
+  // @ts-ignore - trustHost 是 NextAuth 支持的配置但类型定义未包含
+  trustHost: true,
 }

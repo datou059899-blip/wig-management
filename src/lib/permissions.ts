@@ -187,7 +187,7 @@ export function isLead(role?: string): boolean {
   return role === 'lead'
 }
 
-/** 是否可访问产品列表（editor 不可见） */
+/** 是否可访问产品列表（全部角色可见，与导航权限保持一致） */
 export function canAccessProducts(role?: string): boolean {
   return (
     role === 'admin' ||
@@ -196,7 +196,8 @@ export function canAccessProducts(role?: string): boolean {
     role === 'operator' ||
     role === 'optimizer' ||
     role === 'viewer' ||
-    role === 'influencer_operator'
+    role === 'influencer_operator' ||
+    role === 'editor'
   )
 }
 
@@ -205,9 +206,9 @@ export function canAccessProductOpportunities(role?: string): boolean {
   return role === 'admin' || role === 'lead' || role === 'product_operator' || role === 'operator'
 }
 
-/** 是否可编辑产品（admin/lead/product_operator/operator） */
+/** 是否可编辑产品（所有已登录用户） */
 export function canEditProducts(role?: string): boolean {
-  return role === 'admin' || role === 'lead' || role === 'product_operator' || role === 'operator'
+  return !!role // 只要有角色（已登录）就可以编辑
 }
 
 /** 是否可访问 TikTok 同步（仅 admin/operator） */

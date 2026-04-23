@@ -99,13 +99,11 @@ export default function LoginPage() {
         <div className="relative z-10 flex flex-col justify-between p-10 w-full">
           {/* Logo */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-pink-500 to-blue-500 flex items-center justify-center shadow-lg shadow-pink-500/25">
-              <img 
-                src="/logo.png" 
-                alt="Sunnymay"
-                className="w-7 h-7 object-contain"
-              />
-            </div>
+            <img 
+              src="/logo.png" 
+              alt="Sunnymay"
+              className="w-10 h-10 object-contain rounded-lg"
+            />
             <span className="text-white font-bold text-xl">Sunnymay</span>
           </div>
           
@@ -170,13 +168,11 @@ export default function LoginPage() {
         <div className="w-full max-w-[400px]">
           {/* 移动端 Logo */}
           <div className="lg:hidden flex items-center justify-center gap-3 mb-8">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-pink-500 to-blue-500 flex items-center justify-center">
-              <img 
-                src="/logo.png" 
-                alt="Sunnymay"
-                className="w-7 h-7 object-contain"
-              />
-            </div>
+            <img 
+              src="/logo.png" 
+              alt="Sunnymay"
+              className="w-10 h-10 object-contain rounded-lg"
+            />
             <span className="font-bold text-xl text-slate-900">Sunnymay</span>
           </div>
           

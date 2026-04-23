@@ -19,7 +19,7 @@ export const PAGE_PERMISSIONS = {
   // 产品相关
   products: {
     id: 'products',
-    name: '产品列表',
+    name: '产品库',
     path: '/dashboard/products',
     icon: 'Package',
     category: '产品',

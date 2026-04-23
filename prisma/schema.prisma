@@ -8,32 +8,32 @@ datasource db {
 }
 
 model User {
-  id                String               @id @default(cuid())
-  email             String               @unique
-  password          String
-  name              String?
-  role              String               @default("operator")
-  department        String?
-  defaultHomePage   String               @default("/dashboard/workbench")
-  notes             String?
-  permissionMode    String               @default("role")
-  allowedPages      String               @default("")
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
-  status            String               @default("enabled")
-  edits             ScriptBreakdown[]    @relation("BreakdownEditor")
-  updateLogs        ScriptUpdateLog[]
-  scriptAnalyses    ScriptUserAnalysis[]
-  tasksAssigned     TrainingTask[]       @relation("TaskAssignee")
-  tasksCreated      TrainingTask[]       @relation("TaskCreator")
-  tasksOwned        TrainingTask[]       @relation("TaskOwner")
-  scripts           ViralScript[]
-  workTasksAssigned WorkTask[]           @relation("WorkTaskAssignee")
-  workTasksCreated  WorkTask[]           @relation("WorkTaskCreator")
-  workTasksOwned    WorkTask[]           @relation("WorkTaskOwner")
+  id                 String               @id @default(cuid())
+  email              String               @unique
+  password           String
+  name               String?
+  role               String               @default("operator")
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  status             String               @default("enabled")
+  allowedPages       String               @default("")
+  defaultHomePage    String               @default("/dashboard/workbench")
+  department         String?
+  notes              String?
+  permissionMode     String               @default("role")
+  ownVideoMetrics    OwnVideoMetric[]
+  edits              ScriptBreakdown[]    @relation("BreakdownEditor")
+  updateLogs         ScriptUpdateLog[]
+  scriptAnalyses     ScriptUserAnalysis[]
+  tasksAssigned      TrainingTask[]       @relation("TaskAssignee")
+  tasksCreated       TrainingTask[]       @relation("TaskCreator")
+  tasksOwned         TrainingTask[]       @relation("TaskOwner")
+  scripts            ViralScript[]
   viralVideoAnalyses ViralVideoAnalysis[] @relation("ViralVideoCreator")
-  viralVideoUpdates ViralVideoAnalysis[] @relation("ViralVideoUpdater")
-  ownVideoMetrics   OwnVideoMetric[]
+  viralVideoUpdates  ViralVideoAnalysis[] @relation("ViralVideoUpdater")
+  workTasksAssigned  WorkTask[]           @relation("WorkTaskAssignee")
+  workTasksCreated   WorkTask[]           @relation("WorkTaskCreator")
+  workTasksOwned     WorkTask[]           @relation("WorkTaskOwner")
 }
 
 model Product {
@@ -55,7 +55,6 @@ model Product {
   stock                    Int         @default(0)
   scene                    String?
   materialUrl              String?
-  productUrl               String?
   warningStock             Boolean     @default(false)
   warningProfit            Boolean     @default(false)
   warningMissing           Boolean     @default(false)
@@ -80,6 +79,8 @@ model Product {
   scriptReadyAt            DateTime?
   storyboardReadyAt        DateTime?
   workflowStatus           String      @default("待收集")
+  productUrl               String?
+  isActive                 Boolean     @default(true)
   tiktokSync               TiktokSync?
 }
 
@@ -348,11 +349,47 @@ model Influencer {
   deepKeyProducts  String?
   deepNotes        String?
   deepRequirements String?
+  sampleShipments  InfluencerSampleShipment[]
 
   @@index([status])
   @@index([cooperationLevel])
   @@index([owner])
   @@index([updatedAt])
+}
+
+model InfluencerSampleShipment {
+  id             String                  @id @default(cuid())
+  influencerId   String
+  sampleRound    Int                     @default(1)
+  sampleDate     DateTime?
+  status         String                  @default("pending")
+  trackingNumber String?
+  notes          String?
+  createdBy      String?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  influencer     Influencer              @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  items          InfluencerSampleItem[]
+
+  @@index([influencerId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model InfluencerSampleItem {
+  id          String                 @id @default(cuid())
+  shipmentId  String
+  productId   String?
+  sku         String?
+  productName String
+  color       String?
+  length      String?
+  quantity    Int                    @default(1)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  shipment    InfluencerSampleShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId])
 }
 
 model ProductOpportunity {
@@ -398,9 +435,9 @@ model ViralVideoAnalysis {
   productSku           String?
   tags                 String   @default("")
   createdById          String?
-  updatedById          String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
+  updatedById          String?
   createdBy            User?    @relation("ViralVideoCreator", fields: [createdById], references: [id])
   updatedBy            User?    @relation("ViralVideoUpdater", fields: [updatedById], references: [id])
 
@@ -411,37 +448,37 @@ model ViralVideoAnalysis {
 }
 
 model OwnVideoMetric {
-  id                String   @id @default(cuid())
-  title             String
-  platform          String   @default("TikTok")
-  sourceUrl         String?
-  videoDuration     Int      @default(0)
-  contentType       String   @default("product_showcase")
-  productSku        String?
-  impressions       Int      @default(0)
-  views             Int      @default(0)
-  likes             Int      @default(0)
-  comments          Int      @default(0)
-  shares            Int      @default(0)
-  saves             Int      @default(0)
-  clicks            Int      @default(0)
-  addToCarts        Int      @default(0)
-  orders            Int      @default(0)
-  revenue           Float    @default(0)
-  completionRate    Float    @default(0)
-  avgWatchTime      Float    @default(0)
-  retention3s       Float    @default(0)
-  retention5s       Float    @default(0)
-  dropOffSecond     Int?
-  adSpend           Float    @default(0)
-  cpm               Float    @default(0)
-  cpc               Float    @default(0)
-  publishedAt       DateTime @default(now())
-  notes             String   @default("")
-  createdById       String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  createdBy         User?    @relation(fields: [createdById], references: [id])
+  id             String   @id @default(cuid())
+  title          String
+  platform       String   @default("TikTok")
+  sourceUrl      String?
+  videoDuration  Int      @default(0)
+  contentType    String   @default("product_showcase")
+  productSku     String?
+  impressions    Int      @default(0)
+  views          Int      @default(0)
+  likes          Int      @default(0)
+  comments       Int      @default(0)
+  shares         Int      @default(0)
+  saves          Int      @default(0)
+  clicks         Int      @default(0)
+  addToCarts     Int      @default(0)
+  orders         Int      @default(0)
+  revenue        Float    @default(0)
+  completionRate Float    @default(0)
+  avgWatchTime   Float    @default(0)
+  adSpend        Float    @default(0)
+  cpm            Float    @default(0)
+  cpc            Float    @default(0)
+  publishedAt    DateTime @default(now())
+  notes          String   @default("")
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  dropOffSecond  Int?
+  retention3s    Float    @default(0)
+  retention5s    Float    @default(0)
+  createdBy      User?    @relation(fields: [createdById], references: [id])
 
   @@index([platform])
   @@index([productSku])

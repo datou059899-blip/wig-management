@@ -4,13 +4,14 @@
 
 :root {
   --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 248, 250, 252;
-  --background-end-rgb: 255, 255, 255;
+  --background-start-rgb: 253, 252, 254;
+  --background-end-rgb: 252, 250, 252;
+  --brand-pink: 236, 72, 153;
 }
 
 body {
   color: rgb(var(--foreground-rgb));
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  background: linear-gradient(180deg, #fdfcfb 0%, #faf8fa 100%);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -215,9 +216,59 @@ body {
     @apply text-xs text-gray-400 mt-1;
   }
   
-  /* 模块标题 */
+  /* 模块标题 - 带品牌色装饰 */
   .section-title {
-    @apply text-base font-semibold text-gray-900 mb-4;
+    @apply text-base font-semibold text-gray-900 mb-4 flex items-center gap-2;
+  }
+  
+  .section-title::before {
+    content: '';
+    @apply w-1 h-4 bg-brand-400 rounded-full;
+  }
+  
+  /* 页面标题 - 带品牌色装饰 */
+  .page-title-branded {
+    @apply text-xl font-semibold text-gray-900 flex items-center gap-3;
+  }
+  
+  .page-title-branded::before {
+    content: '';
+    @apply w-1.5 h-6 bg-gradient-to-b from-brand-400 to-brand-500 rounded-full;
+  }
+  
+  /* 品牌卡片 - 轻量 hover 效果 */
+  .card-brand {
+    @apply bg-white rounded-xl border border-gray-100 shadow-sm transition-all duration-200;
+  }
+  
+  .card-brand:hover {
+    @apply border-brand-200 shadow-md shadow-brand-100/50;
+  }
+  
+  /* 品牌标签体系 */
+  .tag-brand {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-brand-50 text-brand-600 border border-brand-100;
+  }
+  
+  .tag-brand-highlight {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-brand-100 text-brand-700 border border-brand-200;
+  }
+  
+  .tag-brand-subtle {
+    @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium text-brand-600 bg-brand-50/50;
+  }
+  
+  /* 品牌按钮 */
+  .btn-brand {
+    @apply inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 bg-brand-500 text-white hover:bg-brand-600 focus:ring-brand-500 shadow-sm shadow-brand-200/50;
+  }
+  
+  .btn-brand-secondary {
+    @apply inline-flex items-center justify-center px-4 py-2 border border-brand-200 text-sm font-medium rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 bg-white text-brand-600 hover:bg-brand-50 hover:border-brand-300 focus:ring-brand-500;
+  }
+  
+  .btn-brand-ghost {
+    @apply inline-flex items-center justify-center px-3 py-1.5 text-sm font-medium rounded-lg transition-all text-brand-600 hover:bg-brand-50 hover:text-brand-700;
   }
   
   /* 提示卡片 */

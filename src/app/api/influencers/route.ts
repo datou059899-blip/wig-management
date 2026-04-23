@@ -139,50 +139,72 @@ export async function GET(request: NextRequest) {
     if (status) where.status = status
     if (owner) where.owner = owner
 
+    // 查询达人列表，同时包含寄样记录摘要
     const items = await prisma.influencer.findMany({
       where,
       orderBy: { updatedAt: 'desc' },
       take,
+      include: {
+        sampleShipments: {
+          orderBy: { sampleRound: 'asc' },
+          include: { items: true },
+        },
+      },
     })
 
     const mapped = items
-      .map((x) => ({
-        id: x.id,
-        nickname: x.nickname,
-        platform: x.platform,
-        profileUrl: x.profileUrl || '',
-        country: x.country || '',
-        followers: x.followers,
-        contentTypes: parseJsonArray(x.contentTypes),
-        productLines: parseJsonArray(x.productLines),
-        matchProducts: parseJsonArray(x.matchProducts),
-        status: x.status,
-        cooperationLevel: (x as any).cooperationLevel || 'normal',
-        owner: x.owner,
-        potential: x.potential,
-        email: x.email || '',
-        whatsapp: x.whatsapp || '',
-        phone: x.phone || '',
-        instagram: (x as any).instagram || '',
-        otherContact: (x as any).otherContact || '',
-        language: x.language || '',
-        tags: parseJsonArray(x.tags),
-        deepRequirements: (x as any).deepRequirements || '',
-        deepKeyProducts: parseJsonArray((x as any).deepKeyProducts),
-        deepFrequency: (x as any).deepFrequency || '',
-        deepNotes: (x as any).deepNotes || '',
-        lastFollowUpAt: x.lastFollowUpAt ? x.lastFollowUpAt.toISOString() : undefined,
-        lastFollowUpNote: x.lastFollowUpNote || '',
-        firstContactAt: x.firstContactAt ? x.firstContactAt.toISOString() : undefined,
-        nextFollowUpAt: x.nextFollowUpAt ? x.nextFollowUpAt.toISOString() : undefined,
-        nextAction: x.nextAction || '',
-        timeline: Array.isArray(x.timeline) ? x.timeline : [],
-        quote: x.quote || undefined,
-        sample: x.sample || undefined,
-        deliverables: x.deliverables || undefined,
-        review: x.review || undefined,
-        updatedAt: x.updatedAt.toISOString(),
-      }))
+      .map((x) => {
+        // 计算寄样记录摘要
+        const shipments = x.sampleShipments || []
+        const totalShipments = shipments.length
+        const lastShipment = totalShipments > 0 ? shipments[totalShipments - 1] : null
+        const lastShipmentDate = lastShipment?.sampleDate
+        const lastShipmentStatus = lastShipment?.status
+
+        return {
+          id: x.id,
+          nickname: x.nickname,
+          platform: x.platform,
+          profileUrl: x.profileUrl || '',
+          country: x.country || '',
+          followers: x.followers,
+          contentTypes: parseJsonArray(x.contentTypes),
+          productLines: parseJsonArray(x.productLines),
+          matchProducts: parseJsonArray(x.matchProducts),
+          status: x.status,
+          cooperationLevel: (x as any).cooperationLevel || 'normal',
+          owner: x.owner,
+          potential: x.potential,
+          email: x.email || '',
+          whatsapp: x.whatsapp || '',
+          phone: x.phone || '',
+          instagram: (x as any).instagram || '',
+          otherContact: (x as any).otherContact || '',
+          language: x.language || '',
+          tags: parseJsonArray(x.tags),
+          deepRequirements: (x as any).deepRequirements || '',
+          deepKeyProducts: parseJsonArray((x as any).deepKeyProducts),
+          deepFrequency: (x as any).deepFrequency || '',
+          deepNotes: (x as any).deepNotes || '',
+          lastFollowUpAt: x.lastFollowUpAt ? x.lastFollowUpAt.toISOString() : undefined,
+          lastFollowUpNote: x.lastFollowUpNote || '',
+          firstContactAt: x.firstContactAt ? x.firstContactAt.toISOString() : undefined,
+          nextFollowUpAt: x.nextFollowUpAt ? x.nextFollowUpAt.toISOString() : undefined,
+          nextAction: x.nextAction || '',
+          timeline: Array.isArray(x.timeline) ? x.timeline : [],
+          quote: x.quote || undefined,
+          sample: x.sample || undefined,
+          deliverables: x.deliverables || undefined,
+          review: x.review || undefined,
+          updatedAt: x.updatedAt.toISOString(),
+          // 寄样记录摘要
+          sampleShipmentSummary: {
+            totalCount: totalShipments,
+            lastDate: lastShipmentDate ? lastShipmentDate.toISOString() : undefined,
+            lastStatus: lastShipmentStatus,
+          },
+        }
+      })
       .filter((x) => {
         if (!search) return true
         const hay = [
@@ -301,4 +323,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '创建达人失败' }, { status: 500 })
   }
 }
-
