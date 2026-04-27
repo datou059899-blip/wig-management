@@ -106,7 +106,7 @@ export async function POST(_request: NextRequest, context: { params: { id: strin
         scriptId,
         userId,
         submitStatus: 'draft',
-        storyboard: [],
+        storyboard: '[]',
       },
       include: { user: { select: { id: true, name: true, email: true } } },
     })
@@ -213,7 +213,7 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
         isLearned: Boolean(body.isLearned),
         isPracticing: Boolean(body.isPracticing),
         submitStatus: String(body.submitStatus || 'draft'),
-        storyboard: body.storyboard ?? [],
+        storyboard: body.storyboard ?? '[]',
       },
       include: { user: { select: { id: true, name: true, email: true } } },
     })

@@ -130,6 +130,13 @@ export async function POST(request: NextRequest) {
     // 是否今日必做
     const isTodayMustDo = body.isTodayMustDo === true
 
+    // 任务类型和部门
+    const taskType = String(body.taskType || 'personal').trim() as 'personal' | 'team'
+    const department = taskType === 'team' ? String(body.department || '').trim() : null
+    
+    // 协作执行人
+    const collaboratorUserIds = body.collaboratorUserIds || []
+
     // 完成要求
     const requireCompletionNote = body.requireCompletionNote === true
     const requireCompletionLink = body.requireCompletionLink === true
@@ -145,17 +152,22 @@ export async function POST(request: NextRequest) {
     // 获取执行人和负责人的用户名（用于快照显示）
     const assigneeUser = await prisma.user.findUnique({
       where: { id: assigneeUserId },
-      select: { name: true, email: true },
+      select: { id: true, name: true, email: true },
     })
+    
+    if (!assigneeUser) {
+      console.log('[WorkTasks POST] 执行人用户不存在:', assigneeUserId)
+      return NextResponse.json({ error: '执行人用户不存在' }, { status: 400 })
+    }
     
     const ownerUser = ownerUserId 
       ? await prisma.user.findUnique({
           where: { id: ownerUserId },
-          select: { name: true, email: true },
+          select: { id: true, name: true, email: true },
         })
       : null
 
-    const assigneeName = assigneeUser?.name || assigneeUser?.email || ''
+    const assigneeName = assigneeUser?.name || assigneeUser?.email || '未知用户'
     const ownerName = ownerUser?.name || ownerUser?.email || currentUserName || ''
     const creatorName = currentUserName || ''
 
@@ -164,6 +176,7 @@ export async function POST(request: NextRequest) {
         taskKey,
         title,
         sourceModule,
+        taskType,
         priority,
         creatorUserId,
         creatorName,
@@ -177,6 +190,8 @@ export async function POST(request: NextRequest) {
         status,
         relatedEntityId: relatedEntityId || '-',
         note,
+        department,
+        collaboratorUserIds: collaboratorUserIds || [],
         requireCompletionNote,
         requireCompletionLink,
         requireCompletionResult,

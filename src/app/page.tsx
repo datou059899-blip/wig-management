@@ -66,13 +66,11 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-pink-500 to-blue-500 flex items-center justify-center shadow-lg shadow-pink-500/25">
-                <img 
-                  src="/logo.png" 
-                  alt="Sunnymay"
-                  className="w-7 h-7 object-contain"
-                />
-              </div>
+              <img 
+                src="/logo.png" 
+                alt="Sunnymay"
+                className="w-8 h-8 object-contain"
+              />
               <span className="text-white font-bold text-xl">Sunnymay</span>
             </div>
             <nav className="flex gap-3">

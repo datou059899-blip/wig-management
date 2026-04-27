@@ -113,25 +113,28 @@ export type PagePermissionKey = keyof typeof PAGE_PERMISSIONS;
 // 角色默认权限映射
 export const ROLE_DEFAULT_PAGES: Record<string, PagePermissionKey[]> = {
   admin: Object.keys(PAGE_PERMISSIONS) as PagePermissionKey[],
-  operator: [
-    'workbench',
-    'products',
-    'productOpportunities',
-    'influencers',
-    'scripts',
-    'viralVideos',
-    'videoMetrics',
-    'performance',
-    'tiktokSync',
-    'priceCheck',
-  ],
-  viewer: [
-    'workbench',
-    'products',
-    'performance',
-    'overview',
-  ],
+  boss: ['overview', 'performance', 'products', 'influencers', 'scripts', 'viralVideos', 'videoMetrics'],
+  product: ['workbench', 'products', 'productOpportunities', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance'],
+  operator: ['workbench', 'products', 'productOpportunities', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance', 'tiktokSync', 'priceCheck'],
+  bd: ['workbench', 'influencers', 'products', 'scripts', 'viralVideos'],
+  editor: ['workbench', 'scripts', 'viralVideos'],
+  viewer: ['overview', 'products', 'performance', 'scripts', 'viralVideos', 'videoMetrics', 'influencers'],
 };
+
+// 旧角色映射到新角色
+export function mapOldRole(role?: string): string | undefined {
+  if (!role) return undefined
+  // 新角色直接返回
+  if (ROLE_DEFAULT_PAGES[role]) return role
+  // 旧角色映射
+  const mapping: Record<string, string> = {
+    lead: 'boss',
+    product_operator: 'product',
+    optimizer: 'operator',
+    influencer_operator: 'bd',
+  }
+  return mapping[role] || role
+}
 
 // 获取用户有权限访问的页面列表
 export function getUserAllowedPages(

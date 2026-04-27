@@ -1,0 +1,50 @@
+{
+  "timestamp": "2026-04-27T04:24:10.939Z",
+  "data": {
+    "users": [
+      {
+        "id": "cmogo3cvg0000ji9l8ggue03h",
+        "email": "admin@test.com",
+        "password": "$2a$10$.XgWVAEmBd2Yb7oVy0bLf.o4g58tpS8nDRpUeWus/gRPoe8tRd9S6",
+        "name": "管理员",
+        "role": "admin",
+        "createdAt": "2026-04-27T03:58:32.427Z",
+        "updatedAt": "2026-04-27T03:58:32.427Z",
+        "status": "enabled",
+        "allowedPages": "",
+        "defaultHomePage": "/dashboard/workbench",
+        "department": null,
+        "notes": null,
+        "permissionMode": "role"
+      }
+    ],
+    "products": [],
+    "influencers": [],
+    "workTasks": [],
+    "configs": [
+      {
+        "id": "cmogo3dv10001ji9lm0i9uxhp",
+        "key": "exchange_rate",
+        "value": "7.2",
+        "createdAt": "2026-04-27T03:58:33.709Z",
+        "updatedAt": "2026-04-27T03:58:33.709Z"
+      },
+      {
+        "id": "cmogo3ewx0002ji9lpzgpnz5l",
+        "key": "stock_warning_threshold",
+        "value": "10",
+        "createdAt": "2026-04-27T03:58:35.073Z",
+        "updatedAt": "2026-04-27T03:58:35.073Z"
+      },
+      {
+        "id": "cmogo3fx70003ji9lr7gwxnwi",
+        "key": "profit_margin_warning_threshold",
+        "value": "20",
+        "createdAt": "2026-04-27T03:58:36.380Z",
+        "updatedAt": "2026-04-27T03:58:36.380Z"
+      }
+    ],
+    "trainingTasks": [],
+    "productOpportunities": []
+  }
+}

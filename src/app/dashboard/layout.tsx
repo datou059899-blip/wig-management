@@ -16,6 +16,11 @@ export default async function DashboardLayout({
     redirect('/login')
   }
 
+  // 检查是否需要强制修改密码
+  if ((session.user as any).requirePasswordChange) {
+    redirect('/change-password')
+  }
+
   return (
     <div className="min-h-screen bg-[#fdfcfb] relative">
       <Sidebar />

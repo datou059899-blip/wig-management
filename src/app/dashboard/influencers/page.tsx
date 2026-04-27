@@ -484,23 +484,28 @@ function StatCard({
   count,
   active,
   onClick,
+  icon,
 }: {
   label: string
   count: number
   active?: boolean
   onClick?: () => void
+  icon?: string
 }) {
   return (
     <button
       onClick={onClick}
-      className={`text-left w-full rounded border px-1.5 py-0.5 hover:bg-gray-50 transition ${
+      className={`text-left w-full rounded-lg border px-3 py-2.5 hover:shadow-md transition-all duration-200 ${
         active
-          ? 'border-primary-400 bg-primary-50'
-          : 'border-gray-200 bg-white'
+          ? 'border-primary-500 bg-gradient-to-br from-primary-50 to-primary-100 shadow-md ring-1 ring-primary-200'
+          : 'border-gray-200 bg-white hover:bg-gray-50'
       }`}
     >
-      <div className={`text-[10px] leading-none ${active ? 'text-primary-700' : 'text-gray-500'}`}>{label}</div>
-      <div className="text-sm font-semibold text-gray-900 leading-none mt-0.5">{count}</div>
+      <div className="flex items-center gap-1.5">
+        {icon && <span className="text-base">{icon}</span>}
+        <div className={`text-xs font-medium leading-none ${active ? 'text-primary-800' : 'text-gray-600'}`}>{label}</div>
+      </div>
+      <div className={`text-2xl font-bold leading-none mt-1.5 ${active ? 'text-primary-700' : 'text-gray-900'}`}>{count}</div>
     </button>
   )
 }
@@ -834,7 +839,29 @@ export default function InfluencersPage() {
 
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(5)
+  // 根据屏幕高度自动计算默认每页数量
+  const getDefaultPageSize = () => {
+    if (typeof window === 'undefined') return 10
+    const height = window.innerHeight
+    if (height < 700) return 8      // 小屏
+    if (height > 1000) return 12    // 大屏
+    return 10                       // 普通屏
+  }
+  const [pageSize, setPageSize] = useState(getDefaultPageSize())
+
+  // 窗口大小变化时重新计算（仅当用户未手动选择时）
+  useEffect(() => {
+    const handleResize = () => {
+      // 只在初始化时自动调整，不强制覆盖用户选择
+      const newSize = getDefaultPageSize()
+      // 如果当前 pageSize 是旧的默认值 5，则更新为新的自适应值
+      if (pageSize === 5) {
+        setPageSize(newSize)
+      }
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [pageSize])
 
   // 寄样记录缓存
   const [shipmentsMap, setShipmentsMap] = useState<Record<string, { count: number; lastDate?: string; items: number }>>({})
@@ -1501,7 +1528,7 @@ export default function InfluencersPage() {
   const isDev = process.env.NODE_ENV !== 'production'
 
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)] gap-3">
+    <div className="flex flex-col gap-3 min-h-screen">
       <Toasts toasts={toasts} onRemove={removeToast} />
       {/* 顶部标题区 - 压缩高度 */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
@@ -1769,6 +1796,7 @@ export default function InfluencersPage() {
                       } as any)
                       pushToast('success', '已更新达人资料')
                     } else {
+                      // 新建达人 - 先创建，成功后立即刷新列表
                       const createdId = (await apiCreate({
                         ...payload,
                         timeline: [
@@ -1784,64 +1812,11 @@ export default function InfluencersPage() {
                           },
                         ],
                       })) as string
-                      setItems((prev) => {
-                        const base = prev ?? []
-                        const local: Influencer = {
-                          id: createdId || `tmp_${Math.random().toString(16).slice(2)}`,
-                          nickname: createForm.nickname.trim(),
-                          platform: createForm.platform,
-                          profileUrl: createForm.profileUrl.trim(),
-                          country: createForm.country.trim() || undefined,
-                          followers: createForm.followers ? Number(createForm.followers) : 0,
-                          contentTypes,
-                          productLines,
-                          matchProducts,
-                          status: createForm.status,
-                          cooperationLevel: createForm.cooperationLevel,
-                          owner: createForm.owner || operatorName,
-                          potential: createForm.potential,
-                          email: createForm.email.trim() || undefined,
-                          phone: createForm.phone.trim() || undefined,
-                          whatsapp: createForm.whatsapp.trim() || undefined,
-                          instagram: createForm.instagram.trim() || undefined,
-                          otherContact: createForm.otherContact.trim() || undefined,
-                          language: createForm.language.trim() || undefined,
-                          tags: [],
-                          lastFollowUpAt: now,
-                          lastFollowUpNote: createForm.notes.trim() || '新建达人卡片，等待补全资料。',
-                          nextAction: getNextActionForStatus(createForm.status),
-                          timeline: [
-                            {
-                              id: `fu_${Math.random().toString(16).slice(2)}`,
-                              at: now,
-                              by: operatorName,
-                              type: '其他',
-                              channel: '其他',
-                              responseStatus: '无回复',
-                              note: createForm.notes.trim() || '新建达人卡片，等待补全资料。',
-                              nextAction: getNextActionForStatus(createForm.status),
-                            },
-                          ],
-                          quote,
-                          sample,
-                          deepRequirements:
-                            createForm.cooperationLevel === 'deep'
-                              ? createForm.deepRequirements.trim() || undefined
-                              : undefined,
-                          deepKeyProducts:
-                            createForm.cooperationLevel === 'deep' ? deepKeyProducts : undefined,
-                          deepFrequency:
-                            createForm.cooperationLevel === 'deep'
-                              ? createForm.deepFrequency.trim() || undefined
-                              : undefined,
-                          deepNotes:
-                            createForm.cooperationLevel === 'deep'
-                              ? createForm.deepNotes.trim() || undefined
-                              : undefined,
-                        }
-                        return [local, ...base]
-                      })
-                      pushToast('success', '已新建达人（后台写入中）')
+                      
+                      // 关键修复：创建成功后立即重新加载列表，确保数据持久化
+                      await loadInfluencers()
+                      
+                      pushToast('success', '已新建达人')
                     }
                     setCreateOpen(false)
                     setEditTargetId('')
@@ -2249,11 +2224,12 @@ export default function InfluencersPage() {
       </Modal>
 
       {/* 顶部统计卡片 */}
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
         <StatCard
           label="待建联"
           count={stats.to_outreach}
           active={statFilter === 'to_outreach'}
+          icon="📋"
           onClick={() => {
             setStatus('all')
             setStatFilter((v) => (v === 'to_outreach' ? 'all' : 'to_outreach'))
@@ -2263,6 +2239,7 @@ export default function InfluencersPage() {
           label="已发送"
           count={stats.sent}
           active={statFilter === 'sent'}
+          icon="📤"
           onClick={() => {
             setStatus('all')
             setStatFilter((v) => (v === 'sent' ? 'all' : 'sent'))
@@ -2272,6 +2249,7 @@ export default function InfluencersPage() {
           label="已寄样"
           count={stats.sample_sent}
           active={statFilter === 'sample_sent'}
+          icon="📦"
           onClick={() => {
             setStatus('all')
             setStatFilter((v) => (v === 'sample_sent' ? 'all' : 'sample_sent'))
@@ -2281,6 +2259,7 @@ export default function InfluencersPage() {
           label="合作中"
           count={stats.cooperating}
           active={statFilter === 'cooperating'}
+          icon="🤝"
           onClick={() => {
             setStatus('all')
             setStatFilter((v) => (v === 'cooperating' ? 'all' : 'cooperating'))
@@ -2290,6 +2269,7 @@ export default function InfluencersPage() {
           label="已出片"
           count={stats.posted}
           active={statFilter === 'posted'}
+          icon="🎬"
           onClick={() => {
             setStatus('all')
             setStatFilter((v) => (v === 'posted' ? 'all' : 'posted'))
@@ -2299,6 +2279,7 @@ export default function InfluencersPage() {
           label="已完成"
           count={stats.done}
           active={statFilter === 'done'}
+          icon="✅"
           onClick={() => {
             setStatus('all')
             setStatFilter((v) => (v === 'done' ? 'all' : 'done'))
@@ -2306,23 +2287,23 @@ export default function InfluencersPage() {
         />
       </div>
 
-      {/* 中间筛选区 - 压缩高度 */}
-      <div className="bg-white rounded-lg border border-gray-100 p-2">
-        <div className="flex flex-col lg:flex-row lg:items-center gap-2">
+      {/* 中间筛选区 */}
+      <div className="bg-white rounded-lg border border-gray-100 p-3">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
           <div className="flex-1">
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="搜索昵称/邮箱/链接/产品"
-              className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
             />
           </div>
 
-          <div className="flex flex-wrap gap-1.5 items-center">
+          <div className="flex flex-wrap gap-2 items-center">
             <select
               value={platform}
               onChange={(e) => setPlatform(e.target.value)}
-              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
             >
               <option value="all">平台</option>
               {platforms.map((p) => (
@@ -2332,7 +2313,7 @@ export default function InfluencersPage() {
             <select
               value={region}
               onChange={(e) => setRegion(e.target.value)}
-              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
             >
               <option value="all">地区</option>
               {regions.map((r) => (
@@ -2342,7 +2323,7 @@ export default function InfluencersPage() {
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value)}
-              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
             >
               <option value="all">状态</option>
               {Object.entries(statusLabel).map(([k, v]) => (
@@ -2352,7 +2333,7 @@ export default function InfluencersPage() {
             <select
               value={owner}
               onChange={(e) => setOwner(e.target.value)}
-              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
             >
               <option value="all">负责人</option>
               {owners.map((o) => (
@@ -2362,7 +2343,7 @@ export default function InfluencersPage() {
             <select
               value={coopLevel}
               onChange={(e) => setCoopLevel(e.target.value)}
-              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
             >
               <option value="all">层级</option>
               <option value="normal">普通</option>
@@ -2372,7 +2353,7 @@ export default function InfluencersPage() {
             <select
               value={productLine}
               onChange={(e) => setProductLine(e.target.value)}
-              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
             >
               <option value="all">产品线</option>
               {productLines.map((pl) => (
@@ -2382,7 +2363,7 @@ export default function InfluencersPage() {
             <select
               value={followersBand}
               onChange={(e) => setFollowersBand(e.target.value)}
-              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
             >
               <option value="all">粉丝</option>
               <option value="0-10k">0-10K</option>
@@ -2393,7 +2374,7 @@ export default function InfluencersPage() {
             <select
               value={followUpRecency}
               onChange={(e) => setFollowUpRecency(e.target.value)}
-              className="px-2 py-1 text-xs border border-gray-200 rounded bg-white"
+              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white"
             >
               <option value="all">跟进</option>
               <option value="3d">3天内</option>
@@ -2404,22 +2385,22 @@ export default function InfluencersPage() {
             <button
               type="button"
               onClick={resetFilters}
-              className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+              className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
             >
               清空
             </button>
           </div>
         </div>
 
-        <div className="mt-1.5 flex items-center justify-between">
-          <div className="text-[10px] text-gray-500">
-            共 {filtered.length} 位
+        <div className="mt-2 flex items-center justify-between">
+          <div className="text-sm text-gray-600 font-medium">
+            共 {filtered.length} 位达人
           </div>
         </div>
       </div>
 
       {/* 主列表区域 - 撑满剩余高度 */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col flex-1" style={{ minHeight: '300px' }}>
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col flex-1 min-h-0">
         {/* 列表头部 */}
         <div className="px-4 py-2 border-b flex items-center justify-between shrink-0 bg-gray-50">
           <div className="flex items-center gap-3">
@@ -2456,20 +2437,20 @@ export default function InfluencersPage() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">达人</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">平台</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">粉丝</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">类型</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">产品</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">状态</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">寄样</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">跟进</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">负责人</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">潜力</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">层级</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">下一步</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">记录</th>
-                  <th className="px-3 py-1.5 text-left text-[10px] text-gray-500">操作</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">达人</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">平台</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">粉丝</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">类型</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">产品</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">状态</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">寄样</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">跟进</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">负责人</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">潜力</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">层级</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">下一步</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">记录</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -2479,7 +2460,7 @@ export default function InfluencersPage() {
                     className="hover:bg-gray-50 cursor-pointer"
                     onClick={() => openDetail(x)}
                   >
-                    <td className="px-3 py-1.5 align-middle">
+                    <td className="px-3 py-2 align-middle">
                       <div className="flex items-center gap-2">
                         <input
                           type="checkbox"
@@ -2496,77 +2477,80 @@ export default function InfluencersPage() {
                           className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                         />
                         <div>
-                          <div className="text-xs font-medium text-gray-900 truncate max-w-[160px]">
+                          <div className="text-sm font-medium text-gray-900 truncate max-w-[160px]">
                             {x.nickname}
                           </div>
-                          <div className="text-[10px] text-gray-500 truncate max-w-[160px]">
+                          <div className="text-xs text-gray-500 truncate max-w-[160px]">
                             {x.country || '-'} · {x.productLines[0] || '-'}
                           </div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-3 py-1.5 text-[10px] text-gray-700 align-middle">
-                      <span className="px-1.5 py-0.5 rounded bg-gray-50 border border-gray-200 text-[10px]">
+                    <td className="px-3 py-2 text-sm text-gray-700 align-middle">
+                      <span className="px-2 py-0.5 rounded bg-gray-50 border border-gray-200 text-xs">
                         {x.platform}
                       </span>
                     </td>
-                    <td className="px-3 py-1.5 text-[10px] text-gray-700 align-middle">
+                    <td className="px-3 py-2 text-sm text-gray-700 align-middle">
                       {formatFollowers(x.followers)}
                     </td>
-                    <td className="px-3 py-1.5 text-[10px] text-gray-700 align-middle">
-                      <div className="flex flex-wrap gap-0.5 max-w-[120px]">
+                    <td className="px-3 py-2 text-sm text-gray-700 align-middle">
+                      <div className="flex flex-wrap gap-1 max-w-[120px]">
                         {x.contentTypes.slice(0, 2).map((t) => (
                           <span
                             key={t}
-                            className="px-1 py-0 rounded bg-gray-50 text-[10px] text-gray-600 border border-gray-200"
+                            className="px-1.5 py-0.5 rounded bg-gray-50 text-xs text-gray-600 border border-gray-200"
                           >
                             {t}
                           </span>
                         ))}
                         {x.contentTypes.length > 2 && (
-                          <span className="text-[10px] text-gray-400">+{x.contentTypes.length - 2}</span>
+                          <span className="text-xs text-gray-400">+{x.contentTypes.length - 2}</span>
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-1.5 text-[10px] text-gray-700 align-middle">
-                      <div className="text-[10px] text-gray-700 truncate max-w-[120px]">
+                    <td className="px-3 py-2 text-sm text-gray-700 align-middle">
+                      <div className="text-sm text-gray-700 truncate max-w-[120px]">
                         {x.matchProducts.slice(0, 2).join(' / ') || '-'}
                       </div>
                     </td>
-                    <td className="px-3 py-1.5 align-middle">
+                    <td className="px-3 py-2 align-middle">
                       <Badge status={x.status} />
                     </td>
-                    <td className="px-3 py-1.5 align-middle">
+                    <td className="px-3 py-2 align-middle">
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
                           setShipmentModalInfluencer(x)
                           setShipmentModalOpen(true)
                         }}
-                        className="text-left hover:bg-gray-100 rounded px-1.5 py-0.5 -ml-1.5 transition-colors"
+                        className="text-left hover:bg-gray-100 rounded px-2 py-1 -ml-2 transition-colors"
                       >
                         {(() => {
                           const shipmentInfo = shipmentsMap[x.id]
                           if (!shipmentInfo || shipmentInfo.count === 0) {
-                            return <span className="text-[10px] text-gray-400">暂无</span>
+                            return <span className="text-xs text-gray-400">暂无</span>
+                          }
+                          if (shipmentInfo.count === 1) {
+                            return <span className="text-xs text-primary-600 font-medium">已寄样 · 1次</span>
                           }
                           return (
-                            <span className="text-[10px] text-primary-600">第{shipmentInfo.count}次</span>
+                            <span className="text-xs text-primary-600 font-medium">已寄样 · {shipmentInfo.count}次</span>
                           )
                         })()}
                       </button>
                     </td>
-                    <td className="px-3 py-1.5 align-middle">
-                      <div className="text-[10px] text-gray-700">{daysAgo(x.lastFollowUpAt)}</div>
+                    <td className="px-3 py-2 align-middle">
+                      <div className="text-sm text-gray-700">{daysAgo(x.lastFollowUpAt)}</div>
                     </td>
-                    <td className="px-3 py-1.5 text-[10px] text-gray-700 align-middle">{x.owner}</td>
-                    <td className="px-3 py-1.5 align-middle">
+                    <td className="px-3 py-2 text-sm text-gray-700 align-middle">{x.owner}</td>
+                    <td className="px-3 py-2 align-middle">
                       <PotentialBadge p={x.potential} />
                     </td>
-                    <td className="px-3 py-1.5 align-middle">
+                    <td className="px-3 py-2 align-middle">
                       <CoopBadge level={(x.cooperationLevel as any) || 'normal'} />
                     </td>
-                    <td className="px-3 py-1.5 align-middle">
+                    <td className="px-3 py-2 align-middle">
                       <div className="flex items-center gap-1">
                         {canManage && (
                           <button
@@ -2574,14 +2558,14 @@ export default function InfluencersPage() {
                               e.stopPropagation()
                               openNextAction(x)
                             }}
-                            className="px-2 py-0.5 text-[10px] rounded bg-primary-600 text-white hover:bg-primary-700"
+                            className="px-2.5 py-1 text-xs rounded bg-primary-600 text-white hover:bg-primary-700"
                           >
                             推进
                           </button>
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-1.5 align-middle">
+                    <td className="px-3 py-2 align-middle">
                       {canManage ? (
                         <button
                           onClick={(e) => {
@@ -2600,12 +2584,12 @@ export default function InfluencersPage() {
                             }))
                             setFollowUpOpen(true)
                           }}
-                          className="px-2 py-0.5 text-[10px] rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                          className="px-2.5 py-1 text-xs rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
                         >
                           记录
                         </button>
                       ) : (
-                        <span className="text-[10px] text-gray-400">-</span>
+                        <span className="text-xs text-gray-400">-</span>
                       )}
                     </td>
                     <td className="px-3 py-1.5 align-middle">

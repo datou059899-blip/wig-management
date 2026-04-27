@@ -11,7 +11,7 @@ type WorkTask = {
   taskKey: string
   title: string
   sourceModule: string
-  taskType: 'assigned' | 'system' | 'self'
+  taskType: 'assigned' | 'system' | 'self' | 'personal' | 'team'
   priority: string
   // 使用 userId
   assigneeUserId: string
@@ -29,6 +29,9 @@ type WorkTask = {
   delayDays?: number | null
   isTodayMustDo?: boolean | null
   isPrimary?: boolean | null
+  // 团队任务字段
+  department?: string | null
+  collaboratorUserIds?: string[] | null
   // 完成要求（新字段名）
   requireCompletionNote?: boolean | null
   requireCompletionLink?: boolean | null
@@ -77,12 +80,16 @@ const taskTypeLabels: Record<string, string> = {
   'assigned': '负责人分配',
   'system': '系统生成',
   'self': '自建任务',
+  'personal': '个人任务',
+  'team': '团队任务',
 }
 
 const taskTypeColors: Record<string, string> = {
   'assigned': 'badge-primary',
   'system': 'badge-success',
   'self': 'badge-purple',
+  'personal': 'badge-blue',
+  'team': 'badge-orange',
 }
 
 const SOURCE_MODULE_OPTIONS = [
@@ -385,18 +392,38 @@ export default function WorkbenchPage() {
     completedLink: '',
     completedResult: '',
   })
+  // 任务类型和部门选项
+  const TASK_TYPES = [
+    { value: 'personal', label: '个人任务' },
+    { value: 'team', label: '团队任务' },
+  ]
+  
+  const DEPARTMENTS = [
+    { value: 'product', label: '产品' },
+    { value: 'operation', label: '运营' },
+    { value: 'bd', label: 'BD' },
+    { value: 'editor', label: '剪辑' },
+    { value: 'boss', label: '老板' },
+    { value: 'management', label: '管理' },
+    { value: 'browse', label: '浏览' },
+  ]
+
   const [form, setForm] = useState({
     title: '',
     sourceModule: '产品',
-    taskType: 'self' as 'assigned' | 'system' | 'self',
+    taskType: 'personal' as 'personal' | 'team',
     priority: '中',
     assigneeUserId: currentUserId,
-    ownerUserId: '',
+    ownerUserId: currentUserId,
     dueDate: dayKey,
     remindAt: '',
     isTodayMustDo: false,
     relatedEntityId: '',
     note: '',
+    // 团队任务字段
+    department: '',
+    // 协作执行人（多选）
+    collaboratorUserIds: [] as string[],
     // 完成要求
     requireCompletionNote: false,
     requireCompletionLink: false,
@@ -434,6 +461,7 @@ export default function WorkbenchPage() {
       const payload = {
         title: form.title.trim(),
         sourceModule: form.sourceModule,
+        taskType: form.taskType,
         priority: form.priority,
         assigneeUserId: form.assigneeUserId,
         ownerUserId: form.ownerUserId || null,
@@ -443,6 +471,8 @@ export default function WorkbenchPage() {
         status: '待做',
         note: form.note || null,
         relatedEntityId: form.relatedEntityId || '-',
+        department: form.department || null,
+        collaboratorUserIds: form.collaboratorUserIds,
         requireCompletionNote: form.requireCompletionNote,
         requireCompletionLink: form.requireCompletionLink,
         requireCompletionResult: form.requireCompletionResult,
@@ -469,15 +499,17 @@ export default function WorkbenchPage() {
         setForm({
           title: '',
           sourceModule: '产品',
-          taskType: 'self',
+          taskType: 'personal',
           priority: '中',
           assigneeUserId: currentUserId,
-          ownerUserId: '',
+          ownerUserId: currentUserId,
           dueDate: dayKey,
           remindAt: '',
           isTodayMustDo: false,
           relatedEntityId: '',
           note: '',
+          department: '',
+          collaboratorUserIds: [],
           requireCompletionNote: false,
           requireCompletionLink: false,
           requireCompletionResult: false,
@@ -799,7 +831,7 @@ export default function WorkbenchPage() {
       {createOpen && (
         <div className="modal">
           <div className="modal-backdrop" onClick={() => setCreateOpen(false)} />
-          <div className="modal-content max-w-2xl">
+          <div className="modal-content max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="modal-header">
               <div className="text-base font-semibold">新建任务</div>
             </div>
@@ -814,15 +846,16 @@ export default function WorkbenchPage() {
                 />
               </div>
 
+              {/* 任务类型 */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs text-gray-600 mb-1.5 block">来源模块</label>
+                  <label className="text-xs text-gray-600 mb-1.5 block">任务类型</label>
                   <select
-                    value={form.sourceModule}
-                    onChange={(e) => setForm({ ...form, sourceModule: e.target.value })}
+                    value={form.taskType}
+                    onChange={(e) => setForm({ ...form, taskType: e.target.value as 'personal' | 'team' })}
                     className="input"
                   >
-                    {SOURCE_MODULE_OPTIONS.map((opt) => (
+                    {TASK_TYPES.map((opt) => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </select>
@@ -841,33 +874,91 @@ export default function WorkbenchPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              {/* 团队任务时显示所属部门 */}
+              {form.taskType === 'team' && (
                 <div>
-                  <label className="text-xs text-gray-600 mb-1.5 block">执行人 *</label>
+                  <label className="text-xs text-gray-600 mb-1.5 block">所属部门 *</label>
                   <select
-                    value={form.assigneeUserId}
-                    onChange={(e) => setForm({ ...form, assigneeUserId: e.target.value })}
+                    value={form.department}
+                    onChange={(e) => setForm({ ...form, department: e.target.value })}
                     className="input"
                   >
-                    {users.map((u) => (
-                      <option key={u.id} value={u.id}>{u.name}</option>
+                    <option value="">请选择部门</option>
+                    {DEPARTMENTS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-gray-600 mb-1.5 block">来源模块</label>
+                  <select
+                    value={form.sourceModule}
+                    onChange={(e) => setForm({ ...form, sourceModule: e.target.value })}
+                    className="input"
+                  >
+                    {SOURCE_MODULE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-gray-600 mb-1.5 block">负责人（可选）</label>
+                  <label className="text-xs text-gray-600 mb-1.5 block">负责人</label>
                   <select
                     value={form.ownerUserId}
                     onChange={(e) => setForm({ ...form, ownerUserId: e.target.value })}
                     className="input"
                   >
-                    <option value="">默认创建人</option>
                     {users.map((u) => (
-                      <option key={u.id} value={u.id}>{u.name}</option>
+                      <option key={u.id} value={u.id}>{u.name} {u.id === currentUserId ? '(我)' : ''}</option>
                     ))}
                   </select>
                 </div>
               </div>
+
+              {/* 主执行人 */}
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">主执行人 *</label>
+                <select
+                  value={form.assigneeUserId}
+                  onChange={(e) => setForm({ ...form, assigneeUserId: e.target.value })}
+                  className="input"
+                >
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>{u.name} {u.id === currentUserId ? '(我)' : ''}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-gray-400 mt-1">主执行人对任务负主要责任</p>
+              </div>
+
+              {/* 团队任务时显示协作执行人 */}
+              {form.taskType === 'team' && (
+                <div>
+                  <label className="text-xs text-gray-600 mb-1.5 block">协作执行人（可选）</label>
+                  <div className="border border-gray-200 rounded-lg p-3 max-h-32 overflow-y-auto">
+                    {users.map((u) => (
+                      <label key={u.id} className="flex items-center gap-2 py-1">
+                        <input
+                          type="checkbox"
+                          checked={form.collaboratorUserIds.includes(u.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setForm({ ...form, collaboratorUserIds: [...form.collaboratorUserIds, u.id] })
+                            } else {
+                              setForm({ ...form, collaboratorUserIds: form.collaboratorUserIds.filter(id => id !== u.id) })
+                            }
+                          }}
+                          className="rounded"
+                        />
+                        <span className="text-sm text-gray-700">{u.name} {u.id === currentUserId ? '(我)' : ''}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-1">协作执行人共同参与任务执行</p>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -949,7 +1040,13 @@ export default function WorkbenchPage() {
             </div>
             <div className="modal-footer">
               <button onClick={() => setCreateOpen(false)} className="btn-secondary">取消</button>
-              <button onClick={() => void submitCreate()} disabled={!form.title.trim() || !form.assigneeUserId} className="btn-primary">创建</button>
+              <button 
+                onClick={() => void submitCreate()} 
+                disabled={!form.title.trim() || !form.assigneeUserId || (form.taskType === 'team' && !form.department)} 
+                className="btn-primary"
+              >
+                创建
+              </button>
             </div>
           </div>
         </div>

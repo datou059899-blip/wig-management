@@ -22,12 +22,16 @@ type User = {
 }
 
 const ROLES = [
-  { value: 'admin', label: '管理员' },
+  { value: 'admin', label: '管理' },
+  { value: 'boss', label: '老板' },
+  { value: 'product', label: '产品' },
   { value: 'operator', label: '运营' },
-  { value: 'viewer', label: '查看者' },
+  { value: 'bd', label: 'BD' },
+  { value: 'editor', label: '剪辑' },
+  { value: 'viewer', label: '浏览' },
 ]
 
-const DEPARTMENTS = ['运营部', '产品部', '内容部', '数据部', '管理层']
+const DEPARTMENTS = ['产品部', '运营部', 'BD部', '剪辑部', '管理层']
 
 // 页面分组
 const PAGE_CATEGORIES = {
@@ -53,8 +57,11 @@ export default function UsersPage() {
 
   // 编辑用户
   const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [isCreating, setIsCreating] = useState(false)
   const [editForm, setEditForm] = useState({
     name: '',
+    email: '',
+    password: '',
     role: 'operator',
     department: '',
     defaultHomePage: '/dashboard/workbench',
@@ -89,10 +96,31 @@ export default function UsersPage() {
     }
   }
 
+  const resetForm = () => {
+    setEditForm({
+      name: '',
+      email: '',
+      password: '',
+      role: 'operator',
+      department: '',
+      defaultHomePage: '/dashboard/workbench',
+      notes: '',
+      permissionMode: 'role',
+      allowedPages: [],
+    })
+  }
+
+  const handleCreate = () => {
+    setIsCreating(true)
+    resetForm()
+  }
+
   const handleEdit = (user: User) => {
     setEditingUser(user)
     setEditForm({
       name: user.name || '',
+      email: user.email || '',
+      password: '',
       role: user.role || 'operator',
       department: user.department || '',
       defaultHomePage: user.defaultHomePage || '/dashboard/workbench',
@@ -100,6 +128,52 @@ export default function UsersPage() {
       permissionMode: user.permissionMode || 'role',
       allowedPages: user.allowedPages ? user.allowedPages.split(',').filter(Boolean) : [],
     })
+  }
+
+  const handleCreateSubmit = async () => {
+    if (!editForm.email || !editForm.password) {
+      setMessage({ type: 'error', text: '邮箱和密码必填' })
+      return
+    }
+    setSaving(true)
+    try {
+      const validHomePage = validateDefaultHomePage(
+        editForm.defaultHomePage,
+        editForm.role,
+        editForm.permissionMode,
+        editForm.allowedPages.join(',')
+      )
+
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: editForm.email,
+          password: editForm.password,
+          name: editForm.name,
+          role: editForm.role,
+          department: editForm.department,
+          defaultHomePage: validHomePage,
+          notes: editForm.notes,
+          permissionMode: editForm.permissionMode,
+          allowedPages: editForm.allowedPages.join(','),
+        }),
+      })
+
+      if (res.ok) {
+        setMessage({ type: 'success', text: '创建成功' })
+        setIsCreating(false)
+        resetForm()
+        fetchUsers()
+      } else {
+        const data = await res.json()
+        setMessage({ type: 'error', text: data.error || '创建失败' })
+      }
+    } catch (e) {
+      setMessage({ type: 'error', text: '创建失败' })
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleSave = async () => {
@@ -119,12 +193,14 @@ export default function UsersPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: editForm.name,
+          email: editForm.email,
           role: editForm.role,
           department: editForm.department,
           defaultHomePage: validHomePage,
           notes: editForm.notes,
           permissionMode: editForm.permissionMode,
           allowedPages: editForm.allowedPages.join(','),
+          password: editForm.password || undefined,
         }),
       })
 
@@ -140,6 +216,67 @@ export default function UsersPage() {
       setMessage({ type: 'error', text: '保存失败' })
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleToggleStatus = async (user: User) => {
+    const newStatus = user.status === 'disabled' ? 'enabled' : 'disabled'
+    const actionText = newStatus === 'disabled' ? '停用' : '启用'
+    if (!confirm(`确定要${actionText}用户 "${user.name || user.email}" 吗？`)) return
+    
+    try {
+      const res = await fetch(`/api/users/${user.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      })
+      if (res.ok) {
+        setMessage({ type: 'success', text: `${actionText}成功` })
+        fetchUsers()
+      } else {
+        const data = await res.json()
+        setMessage({ type: 'error', text: data.error || `${actionText}失败` })
+      }
+    } catch (e) {
+      setMessage({ type: 'error', text: `${actionText}失败` })
+    }
+  }
+
+  const handleDelete = async (user: User) => {
+    if (!confirm(`确定要删除用户 "${user.name || user.email}" 吗？此操作不可恢复。`)) return
+    
+    try {
+      const res = await fetch(`/api/users/${user.id}`, {
+        method: 'DELETE',
+      })
+      if (res.ok) {
+        setMessage({ type: 'success', text: '删除成功' })
+        fetchUsers()
+      } else {
+        const data = await res.json()
+        setMessage({ type: 'error', text: data.error || '删除失败' })
+      }
+    } catch (e) {
+      setMessage({ type: 'error', text: '删除失败' })
+    }
+  }
+
+  const handleResetPassword = async (user: User) => {
+    if (!confirm(`确定要重置用户 "${user.name || user.email}" 的密码吗？`)) return
+    
+    try {
+      const res = await fetch(`/api/users/${user.id}/reset-password`, {
+        method: 'POST',
+      })
+      const data = await res.json()
+      if (res.ok) {
+        alert(`密码重置成功！\n\n新密码: ${data.newPassword}\n\n请立即保存此密码并告知用户。`)
+        setMessage({ type: 'success', text: '密码重置成功' })
+      } else {
+        setMessage({ type: 'error', text: data.error || '重置密码失败' })
+      }
+    } catch (e) {
+      setMessage({ type: 'error', text: '重置密码失败' })
     }
   }
 
@@ -175,6 +312,19 @@ export default function UsersPage() {
           {message.text}
         </div>
       )}
+
+      {/* 添加用户按钮 */}
+      <div className="mb-4">
+        <button
+          onClick={handleCreate}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          添加用户
+        </button>
+      </div>
 
       {loading ? (
         <div className="flex justify-center py-12">
@@ -224,17 +374,215 @@ export default function UsersPage() {
                     </span>
                   </td>
                   <td className="px-6 py-4 text-sm">
-                    <button
-                      onClick={() => handleEdit(user)}
-                      className="text-blue-600 hover:text-blue-800"
-                    >
-                      编辑
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleEdit(user)}
+                        className="text-blue-600 hover:text-blue-800"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => handleResetPassword(user)}
+                        className="text-purple-600 hover:text-purple-800"
+                      >
+                        重置密码
+                      </button>
+                      <button
+                        onClick={() => handleToggleStatus(user)}
+                        className={user.status === 'disabled' ? 'text-green-600 hover:text-green-800' : 'text-orange-600 hover:text-orange-800'}
+                      >
+                        {user.status === 'disabled' ? '启用' : '停用'}
+                      </button>
+                      <button
+                        onClick={() => handleDelete(user)}
+                        className="text-red-600 hover:text-red-800"
+                      >
+                        删除
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* 创建用户弹窗 */}
+      {isCreating && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b">
+              <h2 className="text-xl font-semibold">添加用户</h2>
+              <p className="text-gray-500 text-sm">创建新用户账号</p>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              {/* 基本信息 */}
+              <div>
+                <h3 className="font-medium mb-3">基本信息</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">邮箱 *</label>
+                    <input
+                      type="email"
+                      value={editForm.email}
+                      onChange={e => setEditForm({ ...editForm, email: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      placeholder="请输入邮箱"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">密码 *</label>
+                    <input
+                      type="password"
+                      value={editForm.password}
+                      onChange={e => setEditForm({ ...editForm, password: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      placeholder="请输入密码"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">姓名</label>
+                    <input
+                      type="text"
+                      value={editForm.name}
+                      onChange={e => setEditForm({ ...editForm, name: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      placeholder="请输入姓名"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">角色</label>
+                    <select
+                      value={editForm.role}
+                      onChange={e => setEditForm({ ...editForm, role: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                    >
+                      {ROLES.map(r => (
+                        <option key={r.value} value={r.value}>{r.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">部门</label>
+                    <select
+                      value={editForm.department}
+                      onChange={e => setEditForm({ ...editForm, department: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                    >
+                      <option value="">请选择</option>
+                      {DEPARTMENTS.map(d => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">默认首页</label>
+                    <select
+                      value={editForm.defaultHomePage}
+                      onChange={e => setEditForm({ ...editForm, defaultHomePage: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                    >
+                      {getAllowedPagesForSelect().map(page => (
+                        <option key={page.id} value={page.path}>{page.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
+                    <textarea
+                      value={editForm.notes}
+                      onChange={e => setEditForm({ ...editForm, notes: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      rows={2}
+                      placeholder="可选"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 权限配置 */}
+              <div className="border-t pt-6">
+                <h3 className="font-medium mb-3">权限配置</h3>
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">权限模式</label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        value="role"
+                        checked={editForm.permissionMode === 'role'}
+                        onChange={e => setEditForm({ ...editForm, permissionMode: e.target.value })}
+                        className="mr-2"
+                      />
+                      <span>跟随角色默认</span>
+                    </label>
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        value="custom"
+                        checked={editForm.permissionMode === 'custom'}
+                        onChange={e => setEditForm({ ...editForm, permissionMode: e.target.value })}
+                        className="mr-2"
+                      />
+                      <span>自定义权限</span>
+                    </label>
+                  </div>
+                </div>
+
+                {editForm.permissionMode === 'custom' && (
+                  <div className="border rounded-lg p-4 bg-gray-50">
+                    <p className="text-sm text-gray-600 mb-3">勾选该员工可以访问的页面：</p>
+                    {Object.entries(PAGE_CATEGORIES).map(([category, pageIds]) => (
+                      <div key={category} className="mb-4">
+                        <h4 className="text-sm font-medium text-gray-700 mb-2">{category}</h4>
+                        <div className="flex flex-wrap gap-2">
+                          {pageIds.map(pageId => {
+                            const page = PAGE_PERMISSIONS[pageId as keyof typeof PAGE_PERMISSIONS]
+                            if (!page) return null
+                            const isChecked = editForm.allowedPages.includes(pageId)
+                            return (
+                              <label
+                                key={pageId}
+                                className={`flex items-center px-3 py-2 rounded border cursor-pointer transition-colors ${
+                                  isChecked ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => togglePage(pageId)}
+                                  className="mr-2"
+                                />
+                                <span className="text-sm">{page.name}</span>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-6 border-t flex justify-end gap-3">
+              <button
+                onClick={() => setIsCreating(false)}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleCreateSubmit}
+                disabled={saving}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving ? '创建中...' : '创建用户'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

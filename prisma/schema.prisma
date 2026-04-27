@@ -5,6 +5,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -21,6 +22,7 @@ model User {
   department         String?
   notes              String?
   permissionMode     String               @default("role")
+  requirePasswordChange Boolean           @default(false)
   ownVideoMetrics    OwnVideoMetric[]
   edits              ScriptBreakdown[]    @relation("BreakdownEditor")
   updateLogs         ScriptUpdateLog[]
@@ -191,7 +193,7 @@ model ScriptUserAnalysis {
   isLearned        Boolean     @default(false)
   isPracticing     Boolean     @default(false)
   submitStatus     String      @default("draft")
-  storyboard       Json?
+  storyboard       String?
   updatedAt        DateTime    @updatedAt
   createdAt        DateTime    @default(now())
   script           ViralScript @relation(fields: [scriptId], references: [id], onDelete: Cascade)
@@ -264,6 +266,7 @@ model WorkTask {
   taskKey                 String    @unique
   title                   String
   sourceModule            String
+  taskType                String    @default("personal") // personal | team
   priority                String
   dueDate                 DateTime
   status                  String
@@ -290,6 +293,9 @@ model WorkTask {
   requireCompletionNote   Boolean   @default(false)
   requireCompletionResult Boolean   @default(false)
   workspaceId             String?
+  // 团队任务字段
+  department              String?   // 所属部门：product, operation, bd, editor, boss, management, browse
+  collaboratorUserIds     String[]  // 协作执行人ID列表
   assignee                User?     @relation("WorkTaskAssignee", fields: [assigneeUserId], references: [id])
   creator                 User?     @relation("WorkTaskCreator", fields: [creatorUserId], references: [id])
   owner                   User?     @relation("WorkTaskOwner", fields: [ownerUserId], references: [id])
@@ -301,6 +307,8 @@ model WorkTask {
   @@index([sourceModule, relatedEntityId])
   @@index([isTodayMustDo])
   @@index([workspaceId])
+  @@index([taskType])
+  @@index([department])
 }
 
 model TikTokSyncLog {
@@ -319,9 +327,9 @@ model Influencer {
   profileUrl       String?
   country          String?
   followers        Int       @default(0)
-  contentTypes     String?
-  productLines     String?
-  matchProducts    String?
+  contentTypes     Json?     // 数组: ["测评", "教程"]
+  productLines     Json?     // 数组: ["蕾丝假发"]
+  matchProducts    Json?     // 数组: ["HD Lace Bob"]
   status           String    @default("to_outreach")
   owner            String    @default("运营")
   potential        String    @default("C")
@@ -329,24 +337,24 @@ model Influencer {
   whatsapp         String?
   phone            String?
   language         String?
-  tags             String?
+  tags             Json?     // 数组: ["tag1", "tag2"]
   lastFollowUpAt   DateTime?
   lastFollowUpNote String?
   firstContactAt   DateTime?
   nextFollowUpAt   DateTime?
   nextAction       String?
-  timeline         Json?
-  quote            Json?
-  sample           Json?
-  deliverables     Json?
-  review           Json?
+  timeline         Json?     // 对象数组: [{ id, at, by, type, channel, responseStatus, note, nextAction }]
+  quote            Json?     // 对象: { currency, amount, note }
+  sample           Json?     // 对象: { address, sentAt, trackingNumber }
+  deliverables     Json?     // 对象: { videoUrl, postedAt }
+  review           Json?     // 对象: { summary, rating }
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   instagram        String?
   otherContact     String?
   cooperationLevel String    @default("normal")
   deepFrequency    String?
-  deepKeyProducts  String?
+  deepKeyProducts  Json?     // 数组: ["产品1", "产品2"]
   deepNotes        String?
   deepRequirements String?
   sampleShipments  InfluencerSampleShipment[]

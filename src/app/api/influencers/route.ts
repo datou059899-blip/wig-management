@@ -5,20 +5,30 @@ import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
 
-const canAccess = (role?: string) =>
-  role === 'admin' || role === 'lead' || role === 'operator' || role === 'influencer_operator'
+const canAccess = (role?: string) => {
+  const allowed = ['admin', 'boss', 'product', 'operator', 'bd', 'viewer']
+  return allowed.includes(role || '')
+}
 
-const canManage = (role?: string) =>
-  role === 'admin' || role === 'lead' || role === 'operator' || role === 'influencer_operator'
+const canManage = (role?: string) => {
+  const allowed = ['admin', 'product', 'operator', 'bd']
+  return allowed.includes(role || '')
+}
 
-const parseJsonArray = (value: unknown) => {
-  if (Array.isArray(value)) return value.map((x) => String(x))
+// 安全解析 Prisma Json 字段：Prisma 返回的 Json 字段已经是数组/对象
+const parseJsonArray = (value: unknown): string[] => {
+  // 如果已经是数组，直接返回字符串映射
+  if (Array.isArray(value)) {
+    return value.map((x) => String(x)).filter(Boolean)
+  }
+  // 如果是字符串（旧数据兼容），尝试解析
   if (typeof value === 'string' && value.trim()) {
     try {
       const parsed = JSON.parse(value)
-      if (Array.isArray(parsed)) return parsed.map((x) => String(x))
+      if (Array.isArray(parsed)) return parsed.map((x) => String(x)).filter(Boolean)
     } catch {
-      // ignore
+      // 解析失败，按逗号分割
+      return value.split(/[,/;\n]/).map(s => s.trim()).filter(Boolean)
     }
   }
   return []
@@ -139,70 +149,121 @@ export async function GET(request: NextRequest) {
     if (status) where.status = status
     if (owner) where.owner = owner
 
-    // 查询达人列表，同时包含寄样记录摘要
-    const items = await prisma.influencer.findMany({
-      where,
-      orderBy: { updatedAt: 'desc' },
-      take,
-      include: {
-        sampleShipments: {
-          orderBy: { sampleRound: 'asc' },
-          include: { items: true },
-        },
-      },
-    })
+    console.log('[GET /api/influencers] 开始查询, take=', take)
 
-    const mapped = items
-      .map((x) => {
-        // 计算寄样记录摘要
-        const shipments = x.sampleShipments || []
-        const totalShipments = shipments.length
-        const lastShipment = totalShipments > 0 ? shipments[totalShipments - 1] : null
-        const lastShipmentDate = lastShipment?.sampleDate
-        const lastShipmentStatus = lastShipment?.status
+    // 先尝试简单查询（不带关联）
+    let items: any[]
+    try {
+      items = await prisma.influencer.findMany({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        take,
+      })
+      console.log('[GET /api/influencers] 基础查询成功, 条数:', items.length)
+    } catch (queryError: any) {
+      console.error('[GET /api/influencers] 基础查询失败:', queryError?.message, queryError?.code)
+      throw new Error(`基础查询失败: ${queryError?.message}`)
+    }
 
-        return {
-          id: x.id,
-          nickname: x.nickname,
-          platform: x.platform,
-          profileUrl: x.profileUrl || '',
-          country: x.country || '',
-          followers: x.followers,
-          contentTypes: parseJsonArray(x.contentTypes),
-          productLines: parseJsonArray(x.productLines),
-          matchProducts: parseJsonArray(x.matchProducts),
-          status: x.status,
-          cooperationLevel: (x as any).cooperationLevel || 'normal',
-          owner: x.owner,
-          potential: x.potential,
-          email: x.email || '',
-          whatsapp: x.whatsapp || '',
-          phone: x.phone || '',
-          instagram: (x as any).instagram || '',
-          otherContact: (x as any).otherContact || '',
-          language: x.language || '',
-          tags: parseJsonArray(x.tags),
-          deepRequirements: (x as any).deepRequirements || '',
-          deepKeyProducts: parseJsonArray((x as any).deepKeyProducts),
-          deepFrequency: (x as any).deepFrequency || '',
-          deepNotes: (x as any).deepNotes || '',
-          lastFollowUpAt: x.lastFollowUpAt ? x.lastFollowUpAt.toISOString() : undefined,
-          lastFollowUpNote: x.lastFollowUpNote || '',
-          firstContactAt: x.firstContactAt ? x.firstContactAt.toISOString() : undefined,
-          nextFollowUpAt: x.nextFollowUpAt ? x.nextFollowUpAt.toISOString() : undefined,
-          nextAction: x.nextAction || '',
-          timeline: Array.isArray(x.timeline) ? x.timeline : [],
-          quote: x.quote || undefined,
-          sample: x.sample || undefined,
-          deliverables: x.deliverables || undefined,
-          review: x.review || undefined,
-          updatedAt: x.updatedAt.toISOString(),
+    // 如果有数据，再查询寄样记录
+    // 先给每个 item 添加默认的 sampleShipments 空数组，防止后续处理出错
+    let itemsWithShipments: any[] = items.map(item => ({ ...item, sampleShipments: [] }))
+    if (items.length > 0) {
+      try {
+        const itemsWithRelations = await prisma.influencer.findMany({
+          where,
+          orderBy: { updatedAt: 'desc' },
+          take,
+          include: {
+            sampleShipments: {
+              orderBy: { sampleRound: 'asc' },
+              include: { items: true },
+            },
+          },
+        })
+        itemsWithShipments = itemsWithRelations
+        console.log('[GET /api/influencers] 关联查询成功')
+      } catch (includeError: any) {
+        console.error('[GET /api/influencers] 关联查询失败:', includeError?.message, includeError?.code)
+        // 关联查询失败，使用已设置好默认 sampleShipments 的基础数据继续
+      }
+    }
+
+    console.log('[GET /api/influencers] 开始映射数据, 条数:', itemsWithShipments.length)
+
+    const mapped = itemsWithShipments
+      .map((x, index) => {
+        try {
+          // 计算寄样记录摘要
+          const shipments = x.sampleShipments || []
+          const totalShipments = shipments.length
+          const lastShipment = totalShipments > 0 ? shipments[totalShipments - 1] : null
+          const lastShipmentDate = lastShipment?.sampleDate
+          const lastShipmentStatus = lastShipment?.status
+
+          // 逐个字段处理，便于定位错误
+          const result: any = { id: x.id }
+          
+          try { result.nickname = x.nickname } catch (e) { console.error(`[map] nickname 字段错误, id=${x.id}:`, e) }
+          try { result.platform = x.platform } catch (e) { console.error(`[map] platform 字段错误, id=${x.id}:`, e) }
+          try { result.profileUrl = x.profileUrl || '' } catch (e) { console.error(`[map] profileUrl 字段错误, id=${x.id}:`, e) }
+          try { result.country = x.country || '' } catch (e) { console.error(`[map] country 字段错误, id=${x.id}:`, e) }
+          try { result.followers = x.followers } catch (e) { console.error(`[map] followers 字段错误, id=${x.id}:`, e) }
+          try { result.contentTypes = parseJsonArray(x.contentTypes) } catch (e) { console.error(`[map] contentTypes 字段错误, id=${x.id}:`, e); result.contentTypes = [] }
+          try { result.productLines = parseJsonArray(x.productLines) } catch (e) { console.error(`[map] productLines 字段错误, id=${x.id}:`, e); result.productLines = [] }
+          try { result.matchProducts = parseJsonArray(x.matchProducts) } catch (e) { console.error(`[map] matchProducts 字段错误, id=${x.id}:`, e); result.matchProducts = [] }
+          try { result.status = x.status } catch (e) { console.error(`[map] status 字段错误, id=${x.id}:`, e) }
+          try { result.cooperationLevel = (x as any).cooperationLevel || 'normal' } catch (e) { console.error(`[map] cooperationLevel 字段错误, id=${x.id}:`, e) }
+          try { result.owner = x.owner } catch (e) { console.error(`[map] owner 字段错误, id=${x.id}:`, e) }
+          try { result.potential = x.potential } catch (e) { console.error(`[map] potential 字段错误, id=${x.id}:`, e) }
+          try { result.email = x.email || '' } catch (e) { console.error(`[map] email 字段错误, id=${x.id}:`, e) }
+          try { result.whatsapp = x.whatsapp || '' } catch (e) { console.error(`[map] whatsapp 字段错误, id=${x.id}:`, e) }
+          try { result.phone = x.phone || '' } catch (e) { console.error(`[map] phone 字段错误, id=${x.id}:`, e) }
+          try { result.instagram = (x as any).instagram || '' } catch (e) { console.error(`[map] instagram 字段错误, id=${x.id}:`, e) }
+          try { result.otherContact = (x as any).otherContact || '' } catch (e) { console.error(`[map] otherContact 字段错误, id=${x.id}:`, e) }
+          try { result.language = x.language || '' } catch (e) { console.error(`[map] language 字段错误, id=${x.id}:`, e) }
+          try { result.tags = parseJsonArray(x.tags) } catch (e) { console.error(`[map] tags 字段错误, id=${x.id}:`, e); result.tags = [] }
+          try { result.deepRequirements = (x as any).deepRequirements || '' } catch (e) { console.error(`[map] deepRequirements 字段错误, id=${x.id}:`, e) }
+          try { result.deepKeyProducts = parseJsonArray((x as any).deepKeyProducts) } catch (e) { console.error(`[map] deepKeyProducts 字段错误, id=${x.id}:`, e); result.deepKeyProducts = [] }
+          try { result.deepFrequency = (x as any).deepFrequency || '' } catch (e) { console.error(`[map] deepFrequency 字段错误, id=${x.id}:`, e) }
+          try { result.deepNotes = (x as any).deepNotes || '' } catch (e) { console.error(`[map] deepNotes 字段错误, id=${x.id}:`, e) }
+          try { result.lastFollowUpAt = x.lastFollowUpAt ? x.lastFollowUpAt.toISOString() : undefined } catch (e) { console.error(`[map] lastFollowUpAt 字段错误, id=${x.id}:`, e) }
+          try { result.lastFollowUpNote = x.lastFollowUpNote || '' } catch (e) { console.error(`[map] lastFollowUpNote 字段错误, id=${x.id}:`, e) }
+          try { result.firstContactAt = x.firstContactAt ? x.firstContactAt.toISOString() : undefined } catch (e) { console.error(`[map] firstContactAt 字段错误, id=${x.id}:`, e) }
+          try { result.nextFollowUpAt = x.nextFollowUpAt ? x.nextFollowUpAt.toISOString() : undefined } catch (e) { console.error(`[map] nextFollowUpAt 字段错误, id=${x.id}:`, e) }
+          try { result.nextAction = x.nextAction || '' } catch (e) { console.error(`[map] nextAction 字段错误, id=${x.id}:`, e) }
+          try { result.timeline = Array.isArray(x.timeline) ? x.timeline : [] } catch (e) { console.error(`[map] timeline 字段错误, id=${x.id}:`, e); result.timeline = [] }
+          try { result.quote = x.quote || undefined } catch (e) { console.error(`[map] quote 字段错误, id=${x.id}:`, e) }
+          try { result.sample = x.sample || undefined } catch (e) { console.error(`[map] sample 字段错误, id=${x.id}:`, e) }
+          try { result.deliverables = x.deliverables || undefined } catch (e) { console.error(`[map] deliverables 字段错误, id=${x.id}:`, e) }
+          try { result.review = x.review || undefined } catch (e) { console.error(`[map] review 字段错误, id=${x.id}:`, e) }
+          try { result.updatedAt = x.updatedAt.toISOString() } catch (e) { console.error(`[map] updatedAt 字段错误, id=${x.id}:`, e) }
+          
           // 寄样记录摘要
-          sampleShipmentSummary: {
+          result.sampleShipmentSummary = {
             totalCount: totalShipments,
             lastDate: lastShipmentDate ? lastShipmentDate.toISOString() : undefined,
             lastStatus: lastShipmentStatus,
-          },
+          }
+
+          return result
+        } catch (mapError: any) {
+          console.error(`[GET /api/influencers] 映射第 ${index} 条数据失败, id=${x?.id}:`, mapError?.message)
+          // 返回最小化的数据，避免整个接口挂掉
+          return {
+            id: x?.id || `error_${index}`,
+            nickname: x?.nickname || '数据错误',
+            platform: x?.platform || 'Unknown',
+            status: x?.status || 'unknown',
+            owner: x?.owner || 'unknown',
+            followers: 0,
+            contentTypes: [],
+            productLines: [],
+            matchProducts: [],
+            tags: [],
+            deepKeyProducts: [],
+            timeline: [],
+          }
         }
       })
       .filter((x) => {
@@ -223,10 +284,15 @@ export async function GET(request: NextRequest) {
         return hay.includes(search)
       })
 
+    console.log('[GET /api/influencers] 映射完成, 返回条数:', mapped.length)
     return NextResponse.json({ items: mapped })
-  } catch (e) {
-    console.error('获取达人列表失败:', e)
-    return NextResponse.json({ error: '获取达人列表失败' }, { status: 500 })
+  } catch (e: any) {
+    console.error('[GET /api/influencers] 整体错误:', e?.message, e?.stack)
+    return NextResponse.json({ 
+      error: '获取达人列表失败', 
+      detail: e?.message,
+      code: e?.code,
+    }, { status: 500 })
   }
 }
 
@@ -287,6 +353,20 @@ export async function POST(request: NextRequest) {
     const nickname = String(body.nickname || '').trim()
     if (!nickname) return NextResponse.json({ error: '昵称不能为空' }, { status: 400 })
 
+    // 辅助函数：确保是数组
+    const ensureArray = (value: unknown): string[] => {
+      if (Array.isArray(value)) return value.map(String)
+      if (typeof value === 'string' && value.trim()) {
+        try {
+          const parsed = JSON.parse(value)
+          if (Array.isArray(parsed)) return parsed.map(String)
+        } catch {
+          return value.split(/[,/;\n]/).map(s => s.trim()).filter(Boolean)
+        }
+      }
+      return []
+    }
+
     const created = await prisma.influencer.create({
       data: {
         nickname,
@@ -294,9 +374,9 @@ export async function POST(request: NextRequest) {
         profileUrl: body.profileUrl ? String(body.profileUrl) : null,
         country: body.country ? String(body.country) : null,
         followers: Number(body.followers || 0) || 0,
-        contentTypes: parseJsonArrayStr(body.contentTypes),
-        productLines: parseJsonArrayStr(body.productLines),
-        matchProducts: parseJsonArrayStr(body.matchProducts),
+        contentTypes: ensureArray(body.contentTypes) as any,
+        productLines: ensureArray(body.productLines) as any,
+        matchProducts: ensureArray(body.matchProducts) as any,
         status: String(body.status || 'to_outreach'),
         cooperationLevel: String(body.cooperationLevel || 'normal'),
         owner: String(body.owner || (session.user as any)?.name || session.user?.email || '运营'),
@@ -307,19 +387,36 @@ export async function POST(request: NextRequest) {
         instagram: body.instagram ? String(body.instagram) : null,
         otherContact: body.otherContact ? String(body.otherContact) : null,
         language: body.language ? String(body.language) : null,
-        tags: JSON.stringify(parseJsonArray(body.tags)),
+        tags: ensureArray(body.tags) as any,
         nextAction: body.nextAction ? String(body.nextAction) : null,
         timeline: Array.isArray(body.timeline) ? body.timeline : [],
+        quote: body.quote || null,
+        sample: body.sample || null,
         deepRequirements: body.deepRequirements ? String(body.deepRequirements) : null,
-        deepKeyProducts: parseJsonArrayStr(body.deepKeyProducts),
+        deepKeyProducts: ensureArray(body.deepKeyProducts) as any,
         deepFrequency: body.deepFrequency ? String(body.deepFrequency) : null,
         deepNotes: body.deepNotes ? String(body.deepNotes) : null,
       },
     })
 
     return NextResponse.json({ id: created.id })
-  } catch (e) {
+  } catch (e: any) {
     console.error('创建达人失败:', e)
-    return NextResponse.json({ error: '创建达人失败' }, { status: 500 })
+    // 返回详细错误信息
+    const errorMessage = e?.message || '创建达人失败'
+    const errorCode = e?.code
+    
+    // Prisma 错误处理
+    if (errorCode === 'P2002') {
+      return NextResponse.json({ error: '该达人已存在（昵称或链接重复）' }, { status: 400 })
+    }
+    if (errorCode === 'P2003') {
+      return NextResponse.json({ error: '关联数据不存在' }, { status: 400 })
+    }
+    if (errorCode?.startsWith('P')) {
+      return NextResponse.json({ error: `数据库错误: ${errorCode}` }, { status: 500 })
+    }
+    
+    return NextResponse.json({ error: errorMessage }, { status: 500 })
   }
 }

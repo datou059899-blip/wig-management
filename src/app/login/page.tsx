@@ -78,13 +78,18 @@ export default function LoginPage() {
         redirect: false,
       })
 
+      console.log('Login result:', result)
+
       if (result?.error) {
-        setError(AUTH_ERROR_MESSAGES[result.error] || '登录失败，请重试')
-      } else {
+        setError(AUTH_ERROR_MESSAGES[result.error] || `登录失败: ${result.error}`)
+      } else if (result?.ok) {
         router.push('/dashboard')
+      } else {
+        setError('登录失败，请重试')
       }
-    } catch {
-      setError('登录失败，请重试')
+    } catch (err: any) {
+      console.error('Login error:', err)
+      setError(`登录失败: ${err.message || '请重试'}`)
     } finally {
       setLoading(false)
     }
@@ -102,7 +107,7 @@ export default function LoginPage() {
             <img 
               src="/logo.png" 
               alt="Sunnymay"
-              className="w-10 h-10 object-contain rounded-lg"
+              className="w-10 h-10 object-contain"
             />
             <span className="text-white font-bold text-xl">Sunnymay</span>
           </div>
@@ -171,7 +176,7 @@ export default function LoginPage() {
             <img 
               src="/logo.png" 
               alt="Sunnymay"
-              className="w-10 h-10 object-contain rounded-lg"
+              className="w-10 h-10 object-contain"
             />
             <span className="font-bold text-xl text-slate-900">Sunnymay</span>
           </div>

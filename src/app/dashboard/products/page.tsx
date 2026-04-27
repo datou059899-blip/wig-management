@@ -67,6 +67,9 @@ export default function ProductsPage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [recentlyUpdated, setRecentlyUpdated] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  
+  // 图片预览状态
+  const [previewProduct, setPreviewProduct] = useState<Product | null>(null)
 
   // 自动隐藏 Toast
   useEffect(() => {
@@ -340,6 +343,17 @@ export default function ProductsPage() {
     }
   }
 
+  // 监听 Esc 键关闭预览
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && previewProduct) {
+        setPreviewProduct(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [previewProduct])
+
   if (!canAccess) return null
 
   return (
@@ -473,15 +487,29 @@ export default function ProductsPage() {
                   </div>
                 )}
                 {/* 产品图片 */}
-                <div className="relative aspect-square bg-gray-100">
+                <div 
+                  className="relative aspect-square bg-gray-100 cursor-pointer group/image"
+                  onClick={() => product.image && setPreviewProduct(product)}
+                >
                   {product.image ? (
-                    <Image
-                      src={product.image}
-                      alt={product.name}
-                      fill
-                      className="object-cover"
-                      sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 20vw"
-                    />
+                    <>
+                      <Image
+                        src={product.image}
+                        alt={product.name}
+                        fill
+                        className="object-cover"
+                        sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 20vw"
+                      />
+                      {/* 悬停提示 */}
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/image:opacity-100 transition-opacity flex items-center justify-center">
+                        <span className="text-white text-sm font-medium flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+                          </svg>
+                          点击查看大图
+                        </span>
+                      </div>
+                    </>
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-gray-400">
                       <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -808,6 +836,95 @@ export default function ProductsPage() {
             <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
               <button onClick={() => { setShowDeleteConfirm(false); setProductToDelete(null); }} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg">取消</button>
               <button onClick={handleDeleteConfirm} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">确认下架</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 图片预览弹窗 */}
+      {previewProduct && (
+        <div 
+          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+          onClick={() => setPreviewProduct(null)}
+        >
+          <div 
+            className="relative max-w-4xl w-full max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 关闭按钮 */}
+            <button
+              onClick={() => setPreviewProduct(null)}
+              className="absolute -top-12 right-0 p-2 text-white/80 hover:text-white transition-colors"
+              title="关闭 (Esc)"
+            >
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            {/* 图片容器 */}
+            <div className="relative flex-1 flex items-center justify-center bg-black/50 rounded-lg overflow-hidden min-h-[300px]">
+              {previewProduct.image ? (
+                <Image
+                  src={previewProduct.image}
+                  alt={previewProduct.name}
+                  width={800}
+                  height={800}
+                  className="object-contain max-h-[70vh] w-auto"
+                  priority
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-gray-400">
+                  <svg className="w-24 h-24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </div>
+              )}
+            </div>
+
+            {/* 产品信息 */}
+            <div className="mt-4 bg-white rounded-lg p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <div className="text-sm font-mono text-gray-500 mb-1">
+                    {previewProduct.sku || '无 SKU'}
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                    {previewProduct.name}
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {previewProduct.color && (
+                      <span className="px-2 py-1 bg-pink-50 text-pink-700 text-sm rounded">
+                        颜色: {previewProduct.color}
+                      </span>
+                    )}
+                    {previewProduct.length && (
+                      <span className="px-2 py-1 bg-blue-50 text-blue-700 text-sm rounded">
+                        长度: {previewProduct.length}
+                      </span>
+                    )}
+                    {previewProduct.style && (
+                      <span className="px-2 py-1 bg-purple-50 text-purple-700 text-sm rounded">
+                        款式: {previewProduct.style}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {previewProduct.productUrl && (
+                  <a
+                    href={previewProduct.productUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 whitespace-nowrap"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                    打开链接
+                  </a>
+                )}
+              </div>
             </div>
           </div>
         </div>

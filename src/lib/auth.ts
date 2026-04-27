@@ -47,6 +47,7 @@ export const authOptions: NextAuthOptions = {
           permissionMode: user.permissionMode,
           allowedPages: user.allowedPages,
           defaultHomePage: user.defaultHomePage,
+          requirePasswordChange: (user as any).requirePasswordChange,
         }
       }
     })
@@ -62,6 +63,7 @@ export const authOptions: NextAuthOptions = {
         token.permissionMode = (user as any).permissionMode
         token.allowedPages = (user as any).allowedPages
         token.defaultHomePage = (user as any).defaultHomePage
+        token.requirePasswordChange = (user as any).requirePasswordChange
       }
       return token
     },
@@ -72,23 +74,13 @@ export const authOptions: NextAuthOptions = {
         (session.user as any).permissionMode = token.permissionMode as string
         (session.user as any).allowedPages = token.allowedPages as string
         (session.user as any).defaultHomePage = token.defaultHomePage as string
+        (session.user as any).requirePasswordChange = token.requirePasswordChange as boolean
       }
       return session
     }
   },
   pages: {
     signIn: '/login',
-  },
-  cookies: {
-    sessionToken: {
-      name: `next-auth.session-token`,
-      options: {
-        httpOnly: true,
-        sameSite: 'lax',
-        path: '/',
-        secure: process.env.NODE_ENV === 'production'
-      }
-    }
   },
   // 支持多域名部署（Vercel 预览链接等）
   // @ts-ignore - trustHost 是 NextAuth 支持的配置但类型定义未包含
