@@ -25,27 +25,24 @@ export async function GET() {
     // 测试数据库连接
     const result = await prisma.$queryRaw`SELECT 
       current_database() as db_name,
-      version() as version,
-      inet_server_addr() as server_addr,
-      inet_server_port() as server_port
+      version() as version
     `;
     
-    // 获取表统计
-    const tableStats = await prisma.$queryRaw`
-      SELECT 
-        schemaname,
-        tablename,
-        n_tup_ins as inserts
-      FROM pg_stat_user_tables 
-      WHERE schemaname = 'public'
-      ORDER BY tablename
-    `;
+    // 尝试获取用户和产品数量（如果表存在）
+    let userCount = 0;
+    let productCount = 0;
+    let tablesExist = false;
     
-    // 获取用户和产品数量
-    const [userCount, productCount] = await Promise.all([
-      prisma.user.count(),
-      prisma.product.count()
-    ]);
+    try {
+      [userCount, productCount] = await Promise.all([
+        prisma.user.count(),
+        prisma.product.count()
+      ]);
+      tablesExist = true;
+    } catch (e) {
+      // 表不存在，这是正常的对于新数据库
+      tablesExist = false;
+    }
     
     return NextResponse.json({
       environment: process.env.VERCEL_ENV || 'unknown',
@@ -54,11 +51,11 @@ export async function GET() {
         direct_host: directHost,
         ...(result as any[])[0]
       },
+      tablesExist,
       counts: {
         users: userCount,
         products: productCount
       },
-      tables: tableStats,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
