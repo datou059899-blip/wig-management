@@ -9,7 +9,8 @@ import { PAGE_PERMISSIONS, getUserAllowedPages, validateDefaultHomePage } from '
 
 type User = {
   id: string
-  email: string
+  email: string | null
+  phone: string | null
   name?: string | null
   role: string
   status?: string
@@ -44,6 +45,48 @@ const PAGE_CATEGORIES = {
   '系统': ['users', 'settings'],
 }
 
+// 密码输入框组件（带显示/隐藏切换）
+function PasswordInput({ 
+  value, 
+  onChange, 
+  placeholder = "••••••••"
+}: { 
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+}) {
+  const [showPassword, setShowPassword] = useState(false)
+
+  return (
+    <div className="relative">
+      <input
+        type={showPassword ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full px-3 py-2 border rounded-lg pr-10"
+        placeholder={placeholder}
+      />
+      <button
+        type="button"
+        onClick={() => setShowPassword(!showPassword)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+        tabIndex={-1}
+      >
+        {showPassword ? (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+          </svg>
+        ) : (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+        )}
+      </button>
+    </div>
+  )
+}
+
 export default function UsersPage() {
   const router = useRouter()
   const { data: session } = useSession()
@@ -61,9 +104,11 @@ export default function UsersPage() {
   const [editForm, setEditForm] = useState({
     name: '',
     email: '',
+    phone: '',
     password: '',
     role: 'operator',
     department: '',
+    status: 'enabled',
     defaultHomePage: '/dashboard/workbench',
     notes: '',
     permissionMode: 'role',
@@ -100,9 +145,11 @@ export default function UsersPage() {
     setEditForm({
       name: '',
       email: '',
+      phone: '',
       password: '',
       role: 'operator',
       department: '',
+      status: 'enabled',
       defaultHomePage: '/dashboard/workbench',
       notes: '',
       permissionMode: 'role',
@@ -120,9 +167,11 @@ export default function UsersPage() {
     setEditForm({
       name: user.name || '',
       email: user.email || '',
+      phone: user.phone || '',
       password: '',
       role: user.role || 'operator',
       department: user.department || '',
+      status: user.status || 'enabled',
       defaultHomePage: user.defaultHomePage || '/dashboard/workbench',
       notes: user.notes || '',
       permissionMode: user.permissionMode || 'role',
@@ -130,11 +179,28 @@ export default function UsersPage() {
     })
   }
 
-  const handleCreateSubmit = async () => {
-    if (!editForm.email || !editForm.password) {
-      setMessage({ type: 'error', text: '邮箱和密码必填' })
-      return
+  const validateForm = () => {
+    // 创建时：邮箱和手机号至少填写一个
+    if (isCreating && !editForm.email && !editForm.phone) {
+      setMessage({ type: 'error', text: '邮箱和手机号至少填写一个' })
+      return false
     }
+    // 创建时：密码必填
+    if (isCreating && !editForm.password) {
+      setMessage({ type: 'error', text: '密码必填' })
+      return false
+    }
+    // 编辑时：如果清空了邮箱和手机号，提示错误
+    if (!isCreating && !editForm.email && !editForm.phone) {
+      setMessage({ type: 'error', text: '邮箱和手机号至少保留一个' })
+      return false
+    }
+    return true
+  }
+
+  const handleCreateSubmit = async () => {
+    if (!validateForm()) return
+    
     setSaving(true)
     try {
       const validHomePage = validateDefaultHomePage(
@@ -148,7 +214,8 @@ export default function UsersPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: editForm.email,
+          email: editForm.email || null,
+          phone: editForm.phone || null,
           password: editForm.password,
           name: editForm.name,
           role: editForm.role,
@@ -178,6 +245,8 @@ export default function UsersPage() {
 
   const handleSave = async () => {
     if (!editingUser) return
+    if (!validateForm()) return
+    
     setSaving(true)
     try {
       // 验证默认首页
@@ -193,8 +262,10 @@ export default function UsersPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: editForm.name,
-          email: editForm.email,
+          email: editForm.email || null,
+          phone: editForm.phone || null,
           role: editForm.role,
+          status: editForm.status,
           department: editForm.department,
           defaultHomePage: validHomePage,
           notes: editForm.notes,
@@ -222,7 +293,7 @@ export default function UsersPage() {
   const handleToggleStatus = async (user: User) => {
     const newStatus = user.status === 'disabled' ? 'enabled' : 'disabled'
     const actionText = newStatus === 'disabled' ? '停用' : '启用'
-    if (!confirm(`确定要${actionText}用户 "${user.name || user.email}" 吗？`)) return
+    if (!confirm(`确定要${actionText}用户 "${user.name || user.email || user.phone}" 吗？`)) return
     
     try {
       const res = await fetch(`/api/users/${user.id}`, {
@@ -243,7 +314,7 @@ export default function UsersPage() {
   }
 
   const handleDelete = async (user: User) => {
-    if (!confirm(`确定要删除用户 "${user.name || user.email}" 吗？此操作不可恢复。`)) return
+    if (!confirm(`确定要删除用户 "${user.name || user.email || user.phone}" 吗？此操作不可恢复。`)) return
     
     try {
       const res = await fetch(`/api/users/${user.id}`, {
@@ -262,7 +333,7 @@ export default function UsersPage() {
   }
 
   const handleResetPassword = async (user: User) => {
-    if (!confirm(`确定要重置用户 "${user.name || user.email}" 的密码吗？`)) return
+    if (!confirm(`确定要重置用户 "${user.name || user.email || user.phone}" 的密码吗？`)) return
     
     try {
       const res = await fetch(`/api/users/${user.id}/reset-password`, {
@@ -297,6 +368,19 @@ export default function UsersPage() {
       editForm.allowedPages.join(',')
     )
     return allowed.map(id => PAGE_PERMISSIONS[id as keyof typeof PAGE_PERMISSIONS]).filter(Boolean)
+  }
+
+  // 格式化用户显示名称
+  const getUserDisplayName = (user: User) => {
+    return user.name || user.email || user.phone || '未命名用户'
+  }
+
+  // 格式化联系方式显示
+  const getContactInfo = (user: User) => {
+    const parts = []
+    if (user.email) parts.push(user.email)
+    if (user.phone) parts.push(user.phone)
+    return parts.join(' / ') || '-'
   }
 
   if (!isAdmin) {
@@ -335,7 +419,7 @@ export default function UsersPage() {
           <table className="min-w-full">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">邮箱</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">联系方式</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">姓名</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">角色</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">部门</th>
@@ -347,7 +431,13 @@ export default function UsersPage() {
             <tbody className="divide-y divide-gray-200">
               {users.map(user => (
                 <tr key={user.id}>
-                  <td className="px-6 py-4 text-sm text-gray-900">{user.email}</td>
+                  <td className="px-6 py-4 text-sm text-gray-900">
+                    <div className="flex flex-col gap-1">
+                      {user.email && <span className="text-gray-900">{user.email}</span>}
+                      {user.phone && <span className="text-gray-500 text-xs">{user.phone}</span>}
+                      {!user.email && !user.phone && <span className="text-gray-400">-</span>}
+                    </div>
+                  </td>
                   <td className="px-6 py-4 text-sm text-gray-900">{user.name || '-'}</td>
                   <td className="px-6 py-4 text-sm">
                     <span className={`px-2 py-1 rounded text-xs ${
@@ -422,23 +512,31 @@ export default function UsersPage() {
               <div>
                 <h3 className="font-medium mb-3">基本信息</h3>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="col-span-2">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">邮箱 *</label>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">邮箱</label>
                     <input
                       type="email"
                       value={editForm.email}
                       onChange={e => setEditForm({ ...editForm, email: e.target.value })}
                       className="w-full px-3 py-2 border rounded-lg"
-                      placeholder="请输入邮箱"
+                      placeholder="name@company.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">手机号</label>
+                    <input
+                      type="tel"
+                      value={editForm.phone}
+                      onChange={e => setEditForm({ ...editForm, phone: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      placeholder="13800138000"
                     />
                   </div>
                   <div className="col-span-2">
                     <label className="block text-sm font-medium text-gray-700 mb-1">密码 *</label>
-                    <input
-                      type="password"
+                    <PasswordInput
                       value={editForm.password}
-                      onChange={e => setEditForm({ ...editForm, password: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-lg"
+                      onChange={(value) => setEditForm({ ...editForm, password: value })}
                       placeholder="请输入密码"
                     />
                   </div>
@@ -592,7 +690,7 @@ export default function UsersPage() {
           <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b">
               <h2 className="text-xl font-semibold">编辑用户</h2>
-              <p className="text-gray-500 text-sm">{editingUser.email}</p>
+              <p className="text-gray-500 text-sm">{getContactInfo(editingUser)}</p>
             </div>
             
             <div className="p-6 space-y-6">
@@ -600,6 +698,26 @@ export default function UsersPage() {
               <div>
                 <h3 className="font-medium mb-3">基本信息</h3>
                 <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">邮箱</label>
+                    <input
+                      type="email"
+                      value={editForm.email}
+                      onChange={e => setEditForm({ ...editForm, email: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      placeholder="name@company.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">手机号</label>
+                    <input
+                      type="tel"
+                      value={editForm.phone}
+                      onChange={e => setEditForm({ ...editForm, phone: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                      placeholder="13800138000"
+                    />
+                  </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">姓名</label>
                     <input
@@ -635,6 +753,17 @@ export default function UsersPage() {
                     </select>
                   </div>
                   <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">状态</label>
+                    <select
+                      value={editForm.status}
+                      onChange={e => setEditForm({ ...editForm, status: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                    >
+                      <option value="enabled">启用</option>
+                      <option value="disabled">禁用</option>
+                    </select>
+                  </div>
+                  <div className="col-span-2">
                     <label className="block text-sm font-medium text-gray-700 mb-1">默认首页</label>
                     <select
                       value={editForm.defaultHomePage}
@@ -645,6 +774,14 @@ export default function UsersPage() {
                         <option key={page.id} value={page.path}>{page.name}</option>
                       ))}
                     </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">新密码（留空则不修改）</label>
+                    <PasswordInput
+                      value={editForm.password}
+                      onChange={(value) => setEditForm({ ...editForm, password: value })}
+                      placeholder="输入新密码"
+                    />
                   </div>
                   <div className="col-span-2">
                     <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>

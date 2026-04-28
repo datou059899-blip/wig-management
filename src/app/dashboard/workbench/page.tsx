@@ -603,7 +603,28 @@ export default function WorkbenchPage() {
               {teamView ? '👁️ 我的任务' : '👥 团队任务'}
             </button>
           )}
-          <button type="button" onClick={() => setCreateOpen(true)} className="btn-primary">
+          <button type="button" onClick={() => {
+            // 打开弹窗时重置表单，确保使用最新的 currentUserId
+            setForm({
+              title: '',
+              sourceModule: '产品',
+              taskType: 'personal',
+              priority: '中',
+              assigneeUserId: currentUserId,
+              ownerUserId: currentUserId,
+              dueDate: dayKey,
+              remindAt: '',
+              isTodayMustDo: false,
+              relatedEntityId: '',
+              note: '',
+              department: '',
+              collaboratorUserIds: [],
+              requireCompletionNote: false,
+              requireCompletionLink: false,
+              requireCompletionResult: false,
+            })
+            setCreateOpen(true)
+          }} className="btn-primary">
             + 新建任务
           </button>
         </div>
@@ -620,7 +641,28 @@ export default function WorkbenchPage() {
       {!loading && !hasAnyTask && (
         <div className="card p-8">
           {EmptyStatePresets.noTasks(
-            <button type="button" onClick={() => setCreateOpen(true)} className="btn-primary">
+            <button type="button" onClick={() => {
+              // 打开弹窗时重置表单，确保使用最新的 currentUserId
+              setForm({
+                title: '',
+                sourceModule: '产品',
+                taskType: 'personal',
+                priority: '中',
+                assigneeUserId: currentUserId,
+                ownerUserId: currentUserId,
+                dueDate: dayKey,
+                remindAt: '',
+                isTodayMustDo: false,
+                relatedEntityId: '',
+                note: '',
+                department: '',
+                collaboratorUserIds: [],
+                requireCompletionNote: false,
+                requireCompletionLink: false,
+                requireCompletionResult: false,
+              })
+              setCreateOpen(true)
+            }} className="btn-primary">
               创建任务
             </button>
           )}

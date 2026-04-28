@@ -3,39 +3,43 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
 model User {
-  id                 String               @id @default(cuid())
-  email              String               @unique
-  password           String
-  name               String?
-  role               String               @default("operator")
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  status             String               @default("enabled")
-  allowedPages       String               @default("")
-  defaultHomePage    String               @default("/dashboard/workbench")
-  department         String?
-  notes              String?
-  permissionMode     String               @default("role")
-  requirePasswordChange Boolean           @default(false)
-  ownVideoMetrics    OwnVideoMetric[]
-  edits              ScriptBreakdown[]    @relation("BreakdownEditor")
-  updateLogs         ScriptUpdateLog[]
-  scriptAnalyses     ScriptUserAnalysis[]
-  tasksAssigned      TrainingTask[]       @relation("TaskAssignee")
-  tasksCreated       TrainingTask[]       @relation("TaskCreator")
-  tasksOwned         TrainingTask[]       @relation("TaskOwner")
-  scripts            ViralScript[]
-  viralVideoAnalyses ViralVideoAnalysis[] @relation("ViralVideoCreator")
-  viralVideoUpdates  ViralVideoAnalysis[] @relation("ViralVideoUpdater")
-  workTasksAssigned  WorkTask[]           @relation("WorkTaskAssignee")
-  workTasksCreated   WorkTask[]           @relation("WorkTaskCreator")
-  workTasksOwned     WorkTask[]           @relation("WorkTaskOwner")
+  id                    String               @id @default(cuid())
+  email                 String?              @unique
+  password              String
+  name                  String?
+  role                  String               @default("operator")
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  status                String               @default("enabled")
+  allowedPages          String               @default("")
+  defaultHomePage       String               @default("/dashboard/workbench")
+  department            String?
+  notes                 String?
+  permissionMode        String               @default("role")
+  requirePasswordChange Boolean              @default(false)
+  phone                 String?              @unique
+  ownVideoMetrics       OwnVideoMetric[]
+  edits                 ScriptBreakdown[]    @relation("BreakdownEditor")
+  updateLogs            ScriptUpdateLog[]
+  scriptAnalyses        ScriptUserAnalysis[]
+  tasksAssigned         TrainingTask[]       @relation("TaskAssignee")
+  tasksCreated          TrainingTask[]       @relation("TaskCreator")
+  tasksOwned            TrainingTask[]       @relation("TaskOwner")
+  scripts               ViralScript[]
+  viralVideoAnalyses    ViralVideoAnalysis[] @relation("ViralVideoCreator")
+  viralVideoUpdates     ViralVideoAnalysis[] @relation("ViralVideoUpdater")
+  workTasksAssigned     WorkTask[]           @relation("WorkTaskAssignee")
+  workTasksCreated      WorkTask[]           @relation("WorkTaskCreator")
+  workTasksOwned        WorkTask[]           @relation("WorkTaskOwner")
+
+  @@index([email])
+  @@index([phone])
 }
 
 model Product {
@@ -266,7 +270,7 @@ model WorkTask {
   taskKey                 String    @unique
   title                   String
   sourceModule            String
-  taskType                String    @default("personal") // personal | team
+  taskType                String    @default("personal")
   priority                String
   dueDate                 DateTime
   status                  String
@@ -293,9 +297,8 @@ model WorkTask {
   requireCompletionNote   Boolean   @default(false)
   requireCompletionResult Boolean   @default(false)
   workspaceId             String?
-  // 团队任务字段
-  department              String?   // 所属部门：product, operation, bd, editor, boss, management, browse
-  collaboratorUserIds     String[]  // 协作执行人ID列表
+  department              String?
+  collaboratorUserIds     String[]
   assignee                User?     @relation("WorkTaskAssignee", fields: [assigneeUserId], references: [id])
   creator                 User?     @relation("WorkTaskCreator", fields: [creatorUserId], references: [id])
   owner                   User?     @relation("WorkTaskOwner", fields: [ownerUserId], references: [id])
@@ -321,40 +324,40 @@ model TikTokSyncLog {
 }
 
 model Influencer {
-  id               String    @id @default(cuid())
+  id               String                     @id @default(cuid())
   nickname         String
   platform         String
   profileUrl       String?
   country          String?
-  followers        Int       @default(0)
-  contentTypes     Json?     // 数组: ["测评", "教程"]
-  productLines     Json?     // 数组: ["蕾丝假发"]
-  matchProducts    Json?     // 数组: ["HD Lace Bob"]
-  status           String    @default("to_outreach")
-  owner            String    @default("运营")
-  potential        String    @default("C")
+  followers        Int                        @default(0)
+  contentTypes     Json?
+  productLines     Json?
+  matchProducts    Json?
+  status           String                     @default("to_outreach")
+  owner            String                     @default("运营")
+  potential        String                     @default("C")
   email            String?
   whatsapp         String?
   phone            String?
   language         String?
-  tags             Json?     // 数组: ["tag1", "tag2"]
+  tags             Json?
   lastFollowUpAt   DateTime?
   lastFollowUpNote String?
   firstContactAt   DateTime?
   nextFollowUpAt   DateTime?
   nextAction       String?
-  timeline         Json?     // 对象数组: [{ id, at, by, type, channel, responseStatus, note, nextAction }]
-  quote            Json?     // 对象: { currency, amount, note }
-  sample           Json?     // 对象: { address, sentAt, trackingNumber }
-  deliverables     Json?     // 对象: { videoUrl, postedAt }
-  review           Json?     // 对象: { summary, rating }
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  timeline         Json?
+  quote            Json?
+  sample           Json?
+  deliverables     Json?
+  review           Json?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
   instagram        String?
   otherContact     String?
-  cooperationLevel String    @default("normal")
+  cooperationLevel String                     @default("normal")
   deepFrequency    String?
-  deepKeyProducts  Json?     // 数组: ["产品1", "产品2"]
+  deepKeyProducts  Json?
   deepNotes        String?
   deepRequirements String?
   sampleShipments  InfluencerSampleShipment[]
@@ -366,18 +369,18 @@ model Influencer {
 }
 
 model InfluencerSampleShipment {
-  id             String                  @id @default(cuid())
+  id             String                 @id @default(cuid())
   influencerId   String
-  sampleRound    Int                     @default(1)
+  sampleRound    Int                    @default(1)
   sampleDate     DateTime?
-  status         String                  @default("pending")
+  status         String                 @default("pending")
   trackingNumber String?
   notes          String?
   createdBy      String?
-  createdAt      DateTime                @default(now())
-  updatedAt      DateTime                @updatedAt
-  influencer     Influencer              @relation(fields: [influencerId], references: [id], onDelete: Cascade)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
   items          InfluencerSampleItem[]
+  influencer     Influencer             @relation(fields: [influencerId], references: [id], onDelete: Cascade)
 
   @@index([influencerId])
   @@index([status])
@@ -385,16 +388,16 @@ model InfluencerSampleShipment {
 }
 
 model InfluencerSampleItem {
-  id          String                 @id @default(cuid())
+  id          String                   @id @default(cuid())
   shipmentId  String
   productId   String?
   sku         String?
   productName String
   color       String?
   length      String?
-  quantity    Int                    @default(1)
-  createdAt   DateTime               @default(now())
-  updatedAt   DateTime               @updatedAt
+  quantity    Int                      @default(1)
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
   shipment    InfluencerSampleShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
 
   @@index([shipmentId])
