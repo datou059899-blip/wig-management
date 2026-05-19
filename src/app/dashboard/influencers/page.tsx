@@ -882,6 +882,9 @@ export default function InfluencersPage() {
 
   const [actionOpen, setActionOpen] = useState(false)
   const [actionTargetId, setActionTargetId] = useState('')
+  const [statusModalOpen, setStatusModalOpen] = useState(false)
+  const [statusModalTargetId, setStatusModalTargetId] = useState('')
+  const [statusModalUpdating, setStatusModalUpdating] = useState(false)
   const [actionForm, setActionForm] = useState({
     summary: '',
     messageSummary: '',
@@ -2668,16 +2671,8 @@ export default function InfluencersPage() {
                                 e.stopPropagation()
                                 setRowMenuOpenId('')
                                 if (!canManage) return
-                                const next = window.prompt(
-                                  `更改状态：\n${Object.entries(statusLabel)
-                                    .map(([k, v]) => `${k} = ${v}`)
-                                    .join('\n')}`,
-                                  x.status,
-                                )
-                                if (!next) return
-                                if (!(next in statusLabel)) return
-                                void updateInfluencer(x.id, { status: next as any, nextAction: getNextActionForStatus(next as any) })
-                                pushToast('success', '已更新状态')
+                                setStatusModalTargetId(x.id)
+                                setStatusModalOpen(true)
                               }}
                               className="block w-full px-3 py-1.5 text-left hover:bg-gray-50 text-gray-700"
                             >
@@ -3180,6 +3175,58 @@ export default function InfluencersPage() {
             canManage={canManage}
           />
         )}
+      </Modal>
+
+      {/* 状态选择弹窗 */}
+      <Modal
+        open={statusModalOpen}
+        title="选择达人状态"
+        onClose={() => {
+          setStatusModalOpen(false)
+          setStatusModalTargetId('')
+        }}
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={() => {
+                setStatusModalOpen(false)
+                setStatusModalTargetId('')
+              }}
+              className="px-3 py-2 text-xs bg-white border border-gray-200 text-gray-800 rounded-lg hover:bg-gray-50"
+            >
+              取消
+            </button>
+          </div>
+        }
+      >
+        <div className="grid grid-cols-2 gap-2">
+          {Object.entries(statusLabel).map(([statusKey, statusValue]) => (
+            <button
+              key={statusKey}
+              onClick={async () => {
+                setStatusModalUpdating(true)
+                try {
+                  await updateInfluencer(statusModalTargetId, {
+                    status: statusKey as InfluencerStatus,
+                    nextAction: getNextActionForStatus(statusKey as InfluencerStatus)
+                  })
+                  pushToast('success', '状态已更新')
+                  setStatusModalOpen(false)
+                  setStatusModalTargetId('')
+                } catch (e) {
+                  console.error(e)
+                  pushToast('error', '更新失败')
+                } finally {
+                  setStatusModalUpdating(false)
+                }
+              }}
+              disabled={statusModalUpdating}
+              className="px-3 py-2 text-xs rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {statusModalUpdating ? '更新中...' : statusValue}
+            </button>
+          ))}
+        </div>
       </Modal>
     </div>
   )
