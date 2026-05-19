@@ -1,0 +1,347 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useSession } from 'next-auth/react'
+import { useRouter } from 'next/navigation'
+import { PageGuard } from '@/components/PageGuard'
+
+interface SummaryData {
+  todaySales: number
+  yesterdaySales: number
+  weekSales: number
+  monthSales: number
+  totalStock: number
+  lowStockCount: number
+  outOfStockCount: number
+}
+
+interface ProductData {
+  id: string
+  sku: string
+  name: string
+  color: string
+  length: string
+  todaySales: number
+  yesterdaySales: number
+  weekSales: number
+  monthSales: number
+  stock: number
+  stockStatus: string
+  updatedAt: string
+}
+
+export default function ProductSalesPage() {
+  const router = useRouter()
+  const { data: session } = useSession()
+  const [summary, setSummary] = useState<SummaryData | null>(null)
+  const [products, setProducts] = useState<ProductData[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
+    key: 'sku',
+    direction: 'asc',
+  })
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true)
+        const response = await fetch('/api/product-sales')
+        if (!response.ok) {
+          throw new Error('获取数据失败')
+        }
+        const data = await response.json()
+        setSummary(data.summary)
+        setProducts(data.products)
+        setError(null)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '获取数据失败')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [])
+
+  const handleSort = (key: string) => {
+    setSortConfig((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc',
+    }))
+  }
+
+  const sortedProducts = [...products].sort((a, b) => {
+    const aValue = a[sortConfig.key as keyof ProductData]
+    const bValue = b[sortConfig.key as keyof ProductData]
+
+    if (typeof aValue === 'string' && typeof bValue === 'string') {
+      return sortConfig.direction === 'asc' ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue)
+    }
+
+    if (typeof aValue === 'number' && typeof bValue === 'number') {
+      return sortConfig.direction === 'asc' ? aValue - bValue : bValue - aValue
+    }
+
+    return 0
+  })
+
+  const SortIcon = ({ columnKey }: { columnKey: string }) => {
+    if (sortConfig.key !== columnKey) {
+      return <span className="text-slate-400 text-xs">⇅</span>
+    }
+    return <span className="text-pink-500 text-xs">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+  }
+
+  return (
+    <PageGuard>
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6 lg:p-8">
+        <div className="max-w-7xl mx-auto">
+          {/* 页面标题 */}
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-slate-900">产品销售库存</h1>
+            <p className="text-slate-600 mt-2">查看产品销售趋势和库存现状</p>
+          </div>
+
+          {/* 错误提示 */}
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+              {error}
+            </div>
+          )}
+
+          {/* 加载状态 */}
+          {loading ? (
+            <div className="flex items-center justify-center h-96">
+              <div className="text-center">
+                <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-pink-500"></div>
+                <p className="mt-4 text-slate-600">加载中...</p>
+              </div>
+            </div>
+          ) : summary ? (
+            <>
+              {/* 汇总卡片 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                {/* 今日销量 */}
+                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-500">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-slate-600 text-sm font-medium">今日销量</p>
+                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.todaySales}</p>
+                    </div>
+                    <div className="text-4xl text-blue-500 opacity-20">📊</div>
+                  </div>
+                </div>
+
+                {/* 昨日销量 */}
+                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-green-500">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-slate-600 text-sm font-medium">昨日销量</p>
+                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.yesterdaySales}</p>
+                    </div>
+                    <div className="text-4xl text-green-500 opacity-20">📈</div>
+                  </div>
+                </div>
+
+                {/* 近7天销量 */}
+                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-purple-500">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-slate-600 text-sm font-medium">近7天销量</p>
+                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.weekSales}</p>
+                    </div>
+                    <div className="text-4xl text-purple-500 opacity-20">📅</div>
+                  </div>
+                </div>
+
+                {/* 近30天销量 */}
+                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-orange-500">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-slate-600 text-sm font-medium">近30天销量</p>
+                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.monthSales}</p>
+                    </div>
+                    <div className="text-4xl text-orange-500 opacity-20">📊</div>
+                  </div>
+                </div>
+
+                {/* 当前总库存 */}
+                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-indigo-500">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-slate-600 text-sm font-medium">当前总库存</p>
+                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.totalStock}</p>
+                    </div>
+                    <div className="text-4xl text-indigo-500 opacity-20">📦</div>
+                  </div>
+                </div>
+
+                {/* 低库存产品数 */}
+                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-yellow-500">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-slate-600 text-sm font-medium">低库存产品数</p>
+                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.lowStockCount}</p>
+                    </div>
+                    <div className="text-4xl text-yellow-500 opacity-20">⚠️</div>
+                  </div>
+                </div>
+
+                {/* 断货产品数 */}
+                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-red-500">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-slate-600 text-sm font-medium">断货产品数</p>
+                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.outOfStockCount}</p>
+                    </div>
+                    <div className="text-4xl text-red-500 opacity-20">❌</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 产品表格 */}
+              <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        <th className="px-6 py-3 text-left">
+                          <button
+                            onClick={() => handleSort('sku')}
+                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
+                          >
+                            SKU <SortIcon columnKey="sku" />
+                          </button>
+                        </th>
+                        <th className="px-6 py-3 text-left">
+                          <button
+                            onClick={() => handleSort('name')}
+                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
+                          >
+                             产品名称 <SortIcon columnKey="name" />
+                          </button>
+                        </th>
+                        <th className="px-6 py-3 text-left">
+                          <button
+                            onClick={() => handleSort('color')}
+                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
+                          >
+                            颜色 <SortIcon columnKey="color" />
+                          </button>
+                        </th>
+                        <th className="px-6 py-3 text-left">
+                          <button
+                            onClick={() => handleSort('length')}
+                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
+                          >
+                            长度 <SortIcon columnKey="length" />
+                          </button>
+                        </th>
+                        <th className="px-6 py-3 text-center">
+                          <button
+                            onClick={() => handleSort('todaySales')}
+                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                          >
+                            今日销量 <SortIcon columnKey="todaySales" />
+                          </button>
+                        </th>
+                        <th className="px-6 py-3 text-center">
+                          <button
+                            onClick={() => handleSort('yesterdaySales')}
+                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                          >
+                            昨日销量 <SortIcon columnKey="yesterdaySales" />
+                          </button>
+                        </th>
+                        <th className="px-6 py-3 text-center">
+                          <button
+                            onClick={() => handleSort('weekSales')}
+                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                          >
+                            近7天销量 <SortIcon columnKey="weekSales" />
+                          </button>
+                        </th>
+                        <th className="px-6 py-3 text-center">
+                          <button
+                            onClick={() => handleSort('monthSales')}
+                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                          >
+                            近30天销量 <SortIcon columnKey="monthSales" />
+                          </button>
+                        </th>
+                        <th className="px-6 py-3 text-center">
+                          <button
+                            onClick={() => handleSort('stock')}
+                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                          >
+                            当前库存 <SortIcon columnKey="stock" />
+                          </button>
+                        </th>
+                        <th className="px-6 py-3 text-center">
+                          <button
+                            onClick={() => handleSort('stockStatus')}
+                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                          >
+                            库存状态 <SortIcon columnKey="stockStatus" />
+                          </button>
+                        </th>
+                        <th className="px-6 py-3 text-left">
+                          <button
+                            onClick={() => handleSort('updatedAt')}
+                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
+                          >
+                            更新时间 <SortIcon columnKey="updatedAt" />
+                          </button>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedProducts.length === 0 ? (
+                        <tr>
+                          <td colSpan={11} className="px-6 py-8 text-center text-slate-500">
+                            暂无产品数据
+                          </td>
+                        </tr>
+                      ) : (
+                        sortedProducts.map((product) => (
+                          <tr key={product.id} className="border-b border-slate-200 hover:bg-slate-50 transition-colors">
+                            <td className="px-6 py-4 text-sm font-medium text-slate-900">{product.sku}</td>
+                            <td className="px-6 py-4 text-sm text-slate-700">{product.name}</td>
+                            <td className="px-6 py-4 text-sm text-slate-700">{product.color}</td>
+                            <td className="px-6 py-4 text-sm text-slate-700">{product.length}</td>
+                            <td className="px-6 py-4 text-sm text-center text-slate-700">{product.todaySales}</td>
+                            <td className="px-6 py-4 text-sm text-center text-slate-700">{product.yesterdaySales}</td>
+                            <td className="px-6 py-4 text-sm text-center text-slate-700">{product.weekSales}</td>
+                            <td className="px-6 py-4 text-sm text-center text-slate-700">{product.monthSales}</td>
+                            <td className="px-6 py-4 text-sm text-center font-medium text-slate-900">{product.stock}</td>
+                            <td className="px-6 py-4 text-sm text-center">
+                              <span
+                                className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
+                                  product.stockStatus === '断货'
+                                    ? 'bg-red-100 text-red-700'
+                                    : product.stockStatus === '低库存'
+                                      ? 'bg-yellow-100 text-yellow-700'
+                                      : 'bg-green-100 text-green-700'
+                                }`}
+                              >
+                                {product.stockStatus}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {new Date(product.updatedAt).toLocaleString('zh-CN')}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </PageGuard>
+  )
+}

@@ -11,6 +11,7 @@ const PATH_TO_PAGE_ID: Record<string, string> = {
   '/dashboard/overview': 'overview',
   '/dashboard/products': 'products',
   '/dashboard/products/opportunities': 'productOpportunities',
+  '/dashboard/product-sales': 'productSales',
   '/dashboard/influencers': 'influencers',
   '/dashboard/scripts': 'scripts',
   '/dashboard/viral-videos': 'viralVideos',

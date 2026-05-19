@@ -31,6 +31,13 @@ export const PAGE_PERMISSIONS = {
     icon: 'Lightbulb',
     category: '产品',
   },
+  productSales: {
+    id: 'productSales',
+    name: '销售库存',
+    path: '/dashboard/product-sales',
+    icon: 'Package',
+    category: '产品',
+  },
   
   // 达人相关
   influencers: {
@@ -113,12 +120,12 @@ export type PagePermissionKey = keyof typeof PAGE_PERMISSIONS;
 // 角色默认权限映射
 export const ROLE_DEFAULT_PAGES: Record<string, PagePermissionKey[]> = {
   admin: Object.keys(PAGE_PERMISSIONS) as PagePermissionKey[],
-  boss: ['overview', 'performance', 'products', 'influencers', 'scripts', 'viralVideos', 'videoMetrics'],
-  product: ['workbench', 'products', 'productOpportunities', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance'],
-  operator: ['workbench', 'products', 'productOpportunities', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance', 'tiktokSync', 'priceCheck'],
+  boss: ['overview', 'performance', 'productSales', 'products', 'influencers', 'scripts', 'viralVideos', 'videoMetrics'],
+  product: ['workbench', 'products', 'productOpportunities', 'productSales', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance'],
+  operator: ['workbench', 'products', 'productOpportunities', 'productSales', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance', 'tiktokSync', 'priceCheck'],
   bd: ['workbench', 'influencers', 'products', 'scripts', 'viralVideos'],
   editor: ['workbench', 'scripts', 'viralVideos'],
-  viewer: ['overview', 'products', 'performance', 'scripts', 'viralVideos', 'videoMetrics', 'influencers'],
+  viewer: ['overview', 'products', 'productSales', 'performance', 'scripts', 'viralVideos', 'videoMetrics', 'influencers'],
 };
 
 // 旧角色映射到新角色
