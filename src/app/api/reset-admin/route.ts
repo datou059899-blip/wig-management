@@ -3,6 +3,14 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 
 export async function POST() {
+  // 只允许开发环境使用
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({
+      success: false,
+      error: 'This endpoint is not available in production'
+    }, { status: 403 })
+  }
+
   try {
     // 删除所有现有用户
     await prisma.user.deleteMany({})

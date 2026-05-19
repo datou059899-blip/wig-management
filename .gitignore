@@ -1,16 +1,19 @@
-node_modules/
+node_modules
+.next
+.env
+.env.local
+.DS_Store
+__MACOSX
+prisma/dev.db
 
 # Next.js
-.next/
 out/
 dist/
 
 # Env (never commit)
-.env
 .env.*
 
 # Prisma (local sqlite)
-prisma/*.db
 prisma/*.db-journal
 
 # Logs
@@ -19,6 +22,4 @@ yarn-debug.log*
 pnpm-debug.log*
 
 # OS
-.DS_Store
 .vercel
-.env*.local
