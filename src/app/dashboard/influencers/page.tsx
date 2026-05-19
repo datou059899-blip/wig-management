@@ -1307,6 +1307,10 @@ export default function InfluencersPage() {
   }
 
   const updateInfluencer = async (id: string, patch: Partial<Influencer>) => {
+    // 保存原始状态用于回滚
+    const originalItems = items
+    const originalSelected = selected
+
     setItems((prev) => {
       if (!prev) return prev
       return prev.map((x) => (x.id === id ? { ...x, ...patch } : x))
@@ -1318,7 +1322,12 @@ export default function InfluencersPage() {
       pushToast('success', '已保存')
     } catch (e) {
       console.error(e)
-      pushToast('error', '保存失败（可重试）')
+      // 回滚 UI 更新
+      setItems(originalItems)
+      setSelected(originalSelected)
+      // 显示具体错误信息
+      const errorMsg = (e as any)?.message || '保存失败'
+      pushToast('error', errorMsg)
     }
   }
 

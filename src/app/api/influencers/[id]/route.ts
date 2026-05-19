@@ -14,10 +14,20 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
     if (!session) return NextResponse.json({ error: '未登录' }, { status: 401 })
 
     const role = (session.user as any)?.role as string | undefined
-    if (!canManage(role)) return NextResponse.json({ error: '无权限' }, { status: 403 })
-
+    const currentUserName = (session.user as any)?.name as string | undefined
+    
     const id = context.params.id
     const body = await request.json()
+
+    // 权限检查：admin 或达人负责人可以修改
+    if (role !== 'admin') {
+      // 非 admin 需要检查是否是负责人
+      const influencer = await prisma.influencer.findUnique({ where: { id } })
+      if (!influencer) return NextResponse.json({ error: '达人不存在' }, { status: 404 })
+      if (influencer.owner !== currentUserName) {
+        return NextResponse.json({ error: '只有管理员或负责人可以修改该达人' }, { status: 403 })
+      }
+    }
 
     const data: any = {}
     const str = (k: string) => (body[k] !== undefined ? (body[k] ? String(body[k]) : null) : undefined)
@@ -41,7 +51,14 @@ export async function PATCH(request: NextRequest, context: { params: { id: strin
     if (body.matchProducts !== undefined) data.matchProducts = JSON.stringify(Array.isArray(body.matchProducts) ? body.matchProducts : [])
     if (body.tags !== undefined) data.tags = JSON.stringify(Array.isArray(body.tags) ? body.tags : [])
 
-    if (body.status !== undefined) data.status = String(body.status || 'to_outreach')
+    if (body.status !== undefined) {
+      const validStatuses = ['to_outreach', 'sent', 'sample_sent', 'cooperating', 'posted', 'done', 'paused', 'not_coop']
+      const statusValue = String(body.status || 'to_outreach')
+      if (!validStatuses.includes(statusValue)) {
+        return NextResponse.json({ error: `无效的状态值: ${statusValue}。允许的值: ${validStatuses.join(', ')}` }, { status: 400 })
+      }
+      data.status = statusValue
+    }
     if (body.owner !== undefined) data.owner = String(body.owner || '运营')
     if (body.potential !== undefined) data.potential = String(body.potential || 'C')
 
