@@ -10,9 +10,10 @@ datasource db {
 
 model User {
   id                    String               @id @default(cuid())
-  email                 String?              @unique
+  email                 String               @unique
   password              String
   name                  String?
+  phone                 String?
   role                  String               @default("operator")
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
@@ -23,7 +24,6 @@ model User {
   notes                 String?
   permissionMode        String               @default("role")
   requirePasswordChange Boolean              @default(false)
-  phone                 String?              @unique
   ownVideoMetrics       OwnVideoMetric[]
   edits                 ScriptBreakdown[]    @relation("BreakdownEditor")
   updateLogs            ScriptUpdateLog[]
@@ -37,9 +37,6 @@ model User {
   workTasksAssigned     WorkTask[]           @relation("WorkTaskAssignee")
   workTasksCreated      WorkTask[]           @relation("WorkTaskCreator")
   workTasksOwned        WorkTask[]           @relation("WorkTaskOwner")
-
-  @@index([email])
-  @@index([phone])
 }
 
 model Product {
@@ -121,6 +118,26 @@ model PerformanceDaily {
   @@unique([date, sku])
   @@index([date])
   @@index([sku])
+}
+
+model ProductInventorySnapshot {
+  id              String   @id @default(cuid())
+  sku             String
+  date            DateTime
+  availableQty    Int      @default(0)
+  lockedQty       Int      @default(0)
+  sunnymayHairQty Int      @default(0)
+  fc03Atl1Qty     Int      @default(0)
+  fc14Ewr4Qty     Int      @default(0)
+  fc09Atl2Qty     Int      @default(0)
+  totalQty        Int      @default(0)
+  sourceFileName  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([sku, date])
+  @@index([sku])
+  @@index([date])
 }
 
 model PerformanceMeta {
