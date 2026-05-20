@@ -10,18 +10,34 @@ type InventoryFailure = {
   reason: string
 }
 
-function parseQty(value: unknown): number {
-  if (value === null || value === undefined) return 0
+type QtyParseResult = {
+  value: number
+  invalid: boolean
+}
+
+function parseQty(value: unknown): QtyParseResult {
+  if (value === null || value === undefined) {
+    return { value: 0, invalid: false }
+  }
   if (typeof value === 'number') {
-    return Number.isFinite(value) ? Math.round(value) : 0
+    return {
+      value: Number.isFinite(value) ? Math.round(value) : 0,
+      invalid: !Number.isFinite(value),
+    }
   }
 
   const text = String(value).trim()
-  if (!text || text === '/') return 0
+  if (!text || text === '/' || text.toLowerCase() === 'null' || text.toLowerCase() === 'undefined') {
+    return { value: 0, invalid: false }
+  }
 
   const normalized = text.replace(/,/g, '')
   const parsed = Number(normalized)
-  return Number.isFinite(parsed) ? Math.round(parsed) : 0
+  if (!Number.isFinite(parsed)) {
+    return { value: 0, invalid: true }
+  }
+
+  return { value: Math.round(parsed), invalid: false }
 }
 
 function normalizeHeader(value: unknown) {
@@ -107,13 +123,36 @@ export async function POST(request: NextRequest) {
         return null
       }
 
-      const availableQty = parseQty(getCell(record, '可售数量'))
-      const lockedQty = parseQty(getCell(record, '锁定数量'))
+      const availableQtyResult = parseQty(getCell(record, '可售数量'))
+      const lockedQtyResult = parseQty(getCell(record, '锁定数量'))
       const rawSunnymayHairQty = getCell(record, 'Sunnymay Hair 总数量')
-      const sunnymayHairQty = parseQty(rawSunnymayHairQty)
-      const fc03Atl1Qty = parseQty(getCell(record, 'FC03_ATL1 总数量'))
-      const fc14Ewr4Qty = parseQty(getCell(record, 'FC14_EWR4 总数量'))
-      const fc09Atl2Qty = parseQty(getCell(record, 'FC09_ATL2 总数量'))
+      const sunnymayHairQtyResult = parseQty(rawSunnymayHairQty)
+      const fc03Atl1QtyResult = parseQty(getCell(record, 'FC03_ATL1 总数量'))
+      const fc14Ewr4QtyResult = parseQty(getCell(record, 'FC14_EWR4 总数量'))
+      const fc09Atl2QtyResult = parseQty(getCell(record, 'FC09_ATL2 总数量'))
+
+      if (
+        availableQtyResult.invalid ||
+        lockedQtyResult.invalid ||
+        sunnymayHairQtyResult.invalid ||
+        fc03Atl1QtyResult.invalid ||
+        fc14Ewr4QtyResult.invalid ||
+        fc09Atl2QtyResult.invalid
+      ) {
+        failures.push({
+          row: excelRowNumber,
+          sku,
+          reason: '数量字段格式错误',
+        })
+        return null
+      }
+
+      const availableQty = availableQtyResult.value
+      const lockedQty = lockedQtyResult.value
+      const sunnymayHairQty = sunnymayHairQtyResult.value
+      const fc03Atl1Qty = fc03Atl1QtyResult.value
+      const fc14Ewr4Qty = fc14Ewr4QtyResult.value
+      const fc09Atl2Qty = fc09Atl2QtyResult.value
       const hasSunnymayHairQty =
         rawSunnymayHairQty !== null &&
         rawSunnymayHairQty !== undefined &&
