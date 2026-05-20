@@ -51,6 +51,7 @@ interface ImportResult {
   updatedExistingCount?: number
   autoFilledSkuCount?: number
   autoCreatedCount?: number
+  reviewCount?: number
   failureCount: number
   failures: ImportFailure[]
   hint?: string | null
@@ -65,7 +66,12 @@ interface TrendPoint {
 
 interface SkuOption {
   sku: string
+}
+
+interface ProductSalesGroup {
+  id: string
   name: string
+  skus: string[]
 }
 
 type StockEditMode = 'set' | 'increase' | 'decrease'
@@ -75,16 +81,19 @@ export default function ProductSalesPage() {
   const { data: session } = useSession()
   const inventoryInputRef = useRef<HTMLInputElement>(null)
   const ordersInputRef = useRef<HTMLInputElement>(null)
+
   const [summary, setSummary] = useState<SummaryData | null>(null)
   const [products, setProducts] = useState<ProductData[]>([])
   const [skuOptions, setSkuOptions] = useState<SkuOption[]>([])
-  const [groupOptions, setGroupOptions] = useState<string[]>([])
+  const [groups, setGroups] = useState<ProductSalesGroup[]>([])
   const [selectedSku, setSelectedSku] = useState('')
-  const [selectedGroup, setSelectedGroup] = useState('')
+  const [selectedGroupId, setSelectedGroupId] = useState('')
   const [trendRange, setTrendRange] = useState<7 | 30>(7)
   const [trendTitle, setTrendTitle] = useState('销售库存趋势 - 全部 SKU')
   const [trends, setTrends] = useState<TrendPoint[]>([])
+
   const [loading, setLoading] = useState(true)
+  const [trendLoading, setTrendLoading] = useState(false)
   const [importingInventory, setImportingInventory] = useState(false)
   const [importingOrders, setImportingOrders] = useState(false)
   const [editingStockSku, setEditingStockSku] = useState<string | null>(null)
@@ -93,6 +102,13 @@ export default function ProductSalesPage() {
   const [stockEditMode, setStockEditMode] = useState<StockEditMode>('set')
   const [stockEditValue, setStockEditValue] = useState('')
   const [stockEditError, setStockEditError] = useState<string | null>(null)
+  const [groupManagerOpen, setGroupManagerOpen] = useState(false)
+  const [groupFormId, setGroupFormId] = useState<string | null>(null)
+  const [groupFormName, setGroupFormName] = useState('')
+  const [groupFormSkus, setGroupFormSkus] = useState<string[]>([])
+  const [groupFormError, setGroupFormError] = useState<string | null>(null)
+  const [savingGroup, setSavingGroup] = useState(false)
+  const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [ordersImportResult, setOrdersImportResult] = useState<ImportResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -101,43 +117,94 @@ export default function ProductSalesPage() {
     direction: 'asc',
   })
 
-  const loadData = async (sku = selectedSku, group = selectedGroup, range = trendRange) => {
+  const loadPageData = async () => {
+    const response = await fetch('/api/product-sales')
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.error || '获取数据失败')
+    }
+
+    setSummary(data.summary)
+    setProducts(Array.isArray(data.products) ? data.products : [])
+    setSkuOptions(Array.isArray(data.skuOptions) ? data.skuOptions : [])
+  }
+
+  const loadGroups = async () => {
+    const response = await fetch('/api/product-sales/groups')
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.error || '获取分组失败')
+    }
+
+    setGroups(Array.isArray(data.groups) ? data.groups : [])
+  }
+
+  const loadTrendData = async (
+    sku = selectedSku,
+    groupId = selectedGroupId,
+    range = trendRange,
+    showLoading = true,
+  ) => {
     try {
-      setLoading(true)
+      if (showLoading) {
+        setTrendLoading(true)
+      }
+
       const params = new URLSearchParams()
       if (sku) {
         params.set('sku', sku)
       }
-      if (group) {
-        params.set('group', group)
+      if (groupId) {
+        params.set('groupId', groupId)
       }
       params.set('range', String(range))
 
-      const response = await fetch(`/api/product-sales?${params.toString()}`)
-      if (!response.ok) {
-        throw new Error('获取数据失败')
-      }
+      const response = await fetch(`/api/product-sales/trends?${params.toString()}`)
       const data = await response.json()
-      setSummary(data.summary)
-      setProducts(data.products)
-      setSkuOptions(Array.isArray(data.skuOptions) ? data.skuOptions : [])
-      setGroupOptions(Array.isArray(data.groupOptions) ? data.groupOptions : [])
+      if (!response.ok) {
+        throw new Error(data.error || '获取趋势失败')
+      }
+
       setSelectedSku(data.selectedSku || '')
-      setSelectedGroup(data.selectedGroup || '')
+      setSelectedGroupId(data.selectedGroupId || '')
       setTrendRange(data.trendRange === 30 ? 30 : 7)
       setTrendTitle(data.trendTitle || '销售库存趋势 - 全部 SKU')
       setTrends(Array.isArray(data.trends) ? data.trends : [])
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '获取数据失败')
+      setError(err instanceof Error ? err.message : '获取趋势失败')
     } finally {
-      setLoading(false)
+      if (showLoading) {
+        setTrendLoading(false)
+      }
     }
   }
 
   useEffect(() => {
-    void loadData('', '', 7)
+    const initialize = async () => {
+      try {
+        setLoading(true)
+        await Promise.all([loadPageData(), loadGroups()])
+        await loadTrendData('', '', 7, false)
+        setError(null)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '获取数据失败')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    void initialize()
   }, [])
+
+  const refreshAfterMutation = async () => {
+    await Promise.all([
+      loadPageData(),
+      loadGroups(),
+      loadTrendData(selectedSku, selectedGroupId, trendRange, false),
+    ])
+    router.refresh()
+  }
 
   const handleImportInventory = () => {
     inventoryInputRef.current?.click()
@@ -174,13 +241,13 @@ export default function ProductSalesPage() {
         updatedExistingCount: data.updatedExistingCount || 0,
         autoFilledSkuCount: data.autoFilledSkuCount || 0,
         autoCreatedCount: data.autoCreatedCount || 0,
+        reviewCount: data.reviewCount || 0,
         failureCount: data.failureCount || 0,
         failures: Array.isArray(data.failures) ? data.failures : [],
         hint: data.hint || null,
       })
 
-      await loadData(selectedSku, selectedGroup, trendRange)
-      router.refresh()
+      await refreshAfterMutation()
     } catch (err) {
       setError(err instanceof Error ? err.message : '导入库存失败')
     } finally {
@@ -217,8 +284,7 @@ export default function ProductSalesPage() {
         failures: Array.isArray(data.failures) ? data.failures : [],
       })
 
-      await loadData(selectedSku, selectedGroup, trendRange)
-      router.refresh()
+      await refreshAfterMutation()
     } catch (err) {
       setError(err instanceof Error ? err.message : '导入订单失败')
     } finally {
@@ -227,7 +293,7 @@ export default function ProductSalesPage() {
     }
   }
 
-  const handleEditStock = async (product: ProductData) => {
+  const handleEditStock = (product: ProductData) => {
     if (!product.sku || product.sku === '-') {
       setError('该产品缺少 SKU，无法修改库存')
       return
@@ -282,8 +348,7 @@ export default function ProductSalesPage() {
         throw new Error(data.error || '修改库存失败')
       }
 
-      await loadData(selectedSku, selectedGroup, trendRange)
-      router.refresh()
+      await refreshAfterMutation()
       setStockEditTarget(null)
     } catch (err) {
       const message = err instanceof Error ? err.message : '修改库存失败'
@@ -324,12 +389,99 @@ export default function ProductSalesPage() {
         throw new Error(data.error || '删除库存失败')
       }
 
-      await loadData(selectedSku, selectedGroup, trendRange)
-      router.refresh()
+      await refreshAfterMutation()
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除库存失败')
     } finally {
       setDeletingStockSku(null)
+    }
+  }
+
+  const resetGroupForm = () => {
+    setGroupFormId(null)
+    setGroupFormName('')
+    setGroupFormSkus([])
+    setGroupFormError(null)
+  }
+
+  const handleEditGroup = (group: ProductSalesGroup) => {
+    setGroupFormId(group.id)
+    setGroupFormName(group.name)
+    setGroupFormSkus(group.skus)
+    setGroupFormError(null)
+  }
+
+  const toggleGroupSku = (sku: string) => {
+    setGroupFormSkus((prev) =>
+      prev.includes(sku) ? prev.filter((item) => item !== sku) : [...prev, sku],
+    )
+  }
+
+  const handleSaveGroup = async () => {
+    const name = groupFormName.trim()
+    if (!name) {
+      setGroupFormError('分组名称不能为空')
+      return
+    }
+
+    try {
+      setSavingGroup(true)
+      setGroupFormError(null)
+
+      const response = await fetch(
+        groupFormId ? `/api/product-sales/groups/${groupFormId}` : '/api/product-sales/groups',
+        {
+          method: groupFormId ? 'PATCH' : 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name,
+            skus: groupFormSkus,
+          }),
+        },
+      )
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '保存分组失败')
+      }
+
+      await loadGroups()
+      await loadTrendData(selectedSku, selectedGroupId, trendRange, false)
+      resetGroupForm()
+    } catch (err) {
+      setGroupFormError(err instanceof Error ? err.message : '保存分组失败')
+    } finally {
+      setSavingGroup(false)
+    }
+  }
+
+  const handleDeleteGroup = async (group: ProductSalesGroup) => {
+    const confirmed = window.confirm(`确认删除分组“${group.name}”吗？不会删除产品、库存和销量数据。`)
+    if (!confirmed) return
+
+    try {
+      setDeletingGroupId(group.id)
+
+      const response = await fetch(`/api/product-sales/groups/${group.id}`, {
+        method: 'DELETE',
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '删除分组失败')
+      }
+
+      await loadGroups()
+      await loadTrendData(selectedSku, selectedGroupId, trendRange, false)
+      if (groupFormId === group.id) {
+        resetGroupForm()
+      }
+    } catch (err) {
+      setGroupFormError(err instanceof Error ? err.message : '删除分组失败')
+    } finally {
+      setDeletingGroupId(null)
     }
   }
 
@@ -366,27 +518,28 @@ export default function ProductSalesPage() {
     <PageGuard>
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6 lg:p-8">
         <div className="max-w-7xl mx-auto">
-          {/* 页面标题 */}
           <div className="mb-8">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h1 className="text-3xl font-bold text-slate-900">产品销售库存</h1>
                 <p className="text-slate-600 mt-2">查看产品销售趋势和库存现状</p>
               </div>
-              <button
-                onClick={handleImportInventory}
-                className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
-                disabled={importingInventory || importingOrders || loading}
-              >
-                {importingInventory ? '正在导入库存表...' : '导入库存表'}
-              </button>
-              <button
-                onClick={handleImportOrders}
-                className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
-                disabled={importingOrders || importingInventory || loading}
-              >
-                {importingOrders ? '正在导入订单表...' : '导入订单表'}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleImportInventory}
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+                  disabled={importingInventory || importingOrders || loading}
+                >
+                  {importingInventory ? '正在导入库存表...' : '导入库存表'}
+                </button>
+                <button
+                  onClick={handleImportOrders}
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                  disabled={importingOrders || importingInventory || loading}
+                >
+                  {importingOrders ? '正在导入订单表...' : '导入订单表'}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -405,7 +558,6 @@ export default function ProductSalesPage() {
             onChange={handleOrdersFileChange}
           />
 
-          {/* 错误提示 */}
           {error && (
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
               {error}
@@ -415,19 +567,16 @@ export default function ProductSalesPage() {
           {importResult && (
             <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-center gap-4 text-sm text-slate-700">
-                <span className="font-semibold text-slate-900">
-                  库存导入完成
-                </span>
+                <span className="font-semibold text-slate-900">库存导入完成</span>
                 <span>成功 {importResult.successCount} 条</span>
                 <span>更新已有产品 {importResult.updatedExistingCount || 0} 条</span>
                 <span>自动补齐 SKU {importResult.autoFilledSkuCount || 0} 条</span>
                 <span>自动创建产品 {importResult.autoCreatedCount || 0} 条</span>
+                <span>人工确认 {importResult.reviewCount || 0} 条</span>
                 <span>失败 {importResult.failureCount} 条</span>
               </div>
               {importResult.hint && (
-                <div className="mt-2 text-sm text-amber-700">
-                  {importResult.hint}
-                </div>
+                <div className="mt-2 text-sm text-amber-700">{importResult.hint}</div>
               )}
               {importResult.failures.length > 0 && (
                 <div className="mt-3 overflow-x-auto">
@@ -457,9 +606,7 @@ export default function ProductSalesPage() {
           {ordersImportResult && (
             <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-center gap-4 text-sm text-slate-700">
-                <span className="font-semibold text-slate-900">
-                  订单导入完成
-                </span>
+                <span className="font-semibold text-slate-900">订单导入完成</span>
                 <span>成功 {ordersImportResult.successCount} 条</span>
                 <span>失败 {ordersImportResult.failureCount} 条</span>
               </div>
@@ -488,239 +635,6 @@ export default function ProductSalesPage() {
             </div>
           )}
 
-          {skuOptions.length > 0 && (
-            <div className="mb-8 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900">销售库存趋势</h2>
-                  <p className="mt-1 text-sm text-slate-600">{trendTitle}</p>
-                </div>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <select
-                    value={selectedGroup}
-                    onChange={(event) => {
-                      const nextGroup = event.target.value
-                      setSelectedGroup(nextGroup)
-                      void loadData(selectedSku, nextGroup, trendRange)
-                    }}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
-                  >
-                    <option value="">全部分组</option>
-                    {groupOptions.map((group) => (
-                      <option key={group} value={group}>
-                        {group}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={selectedSku}
-                    onChange={(event) => {
-                      const nextSku = event.target.value
-                      setSelectedSku(nextSku)
-                      void loadData(nextSku, selectedGroup, trendRange)
-                    }}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
-                  >
-                    <option value="">全部 SKU</option>
-                    {skuOptions.map((option) => (
-                      <option key={option.sku} value={option.sku}>
-                        {option.sku}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="inline-flex rounded-lg border border-slate-300 p-1">
-                    <button
-                      onClick={() => {
-                        setTrendRange(7)
-                        void loadData(selectedSku, selectedGroup, 7)
-                      }}
-                      className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                        trendRange === 7 ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
-                      }`}
-                    >
-                      最近 7 天
-                    </button>
-                    <button
-                      onClick={() => {
-                        setTrendRange(30)
-                        void loadData(selectedSku, selectedGroup, 30)
-                      }}
-                      className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                        trendRange === 30 ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
-                      }`}
-                    >
-                      最近 30 天
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
-                  <div className="mb-3">
-                    <div className="text-sm font-medium text-slate-900">每日销量曲线</div>
-                    <div className="text-xs text-slate-500">{trendTitle}</div>
-                  </div>
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={trends} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-                        <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                        <Tooltip />
-                        <Legend />
-                        <Line
-                          type="monotone"
-                          dataKey="orders"
-                          name="每日销量"
-                          stroke="#2563eb"
-                          strokeWidth={2}
-                          dot={{ r: 3 }}
-                          activeDot={{ r: 5 }}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
-                  <div className="mb-3">
-                    <div className="text-sm font-medium text-slate-900">每日剩余库存曲线</div>
-                    <div className="text-xs text-slate-500">缺失快照时沿用最近一次库存</div>
-                  </div>
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={trends} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-                        <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                        <Tooltip />
-                        <Legend />
-                        <Line
-                          type="monotone"
-                          dataKey="stock"
-                          name="每日剩余库存"
-                          stroke="#db2777"
-                          strokeWidth={2}
-                          dot={{ r: 3 }}
-                          activeDot={{ r: 5 }}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {stockEditTarget && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-              <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h3 className="text-lg font-semibold text-slate-900">编辑库存</h3>
-                    <p className="mt-1 text-sm text-slate-600">
-                      SKU：{stockEditTarget.sku}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-600">
-                      当前库存：{stockEditTarget.stock}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      if (editingStockSku) return
-                      setStockEditTarget(null)
-                      setStockEditError(null)
-                    }}
-                    className="text-sm text-slate-500 hover:text-slate-700"
-                    disabled={Boolean(editingStockSku)}
-                  >
-                    关闭
-                  </button>
-                </div>
-
-                <div className="mt-5 space-y-4">
-                  <div>
-                    <div className="mb-2 text-sm font-medium text-slate-900">修改方式</div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      {[
-                        { value: 'set', label: '设置为指定库存' },
-                        { value: 'increase', label: '增加库存' },
-                        { value: 'decrease', label: '减少库存' },
-                      ].map((option) => (
-                        <button
-                          key={option.value}
-                          onClick={() => {
-                            const nextMode = option.value as StockEditMode
-                            setStockEditMode(nextMode)
-                            setStockEditValue(nextMode === 'set' ? String(stockEditTarget.stock) : '')
-                            setStockEditError(null)
-                          }}
-                          className={`rounded-lg border px-3 py-2 text-sm ${
-                            stockEditMode === option.value
-                              ? 'border-slate-900 bg-slate-900 text-white'
-                              : 'border-slate-300 text-slate-700 hover:bg-slate-50'
-                          }`}
-                          disabled={Boolean(editingStockSku)}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-900">
-                      {stockEditMode === 'set' ? '新的库存数值' : '调整数量'}
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      inputMode="numeric"
-                      value={stockEditValue}
-                      onChange={(event) => {
-                        setStockEditValue(event.target.value)
-                        setStockEditError(null)
-                      }}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
-                      placeholder={stockEditMode === 'set' ? '请输入新的库存数值' : '请输入调整数量'}
-                      disabled={Boolean(editingStockSku)}
-                    />
-                  </div>
-
-                  {stockEditError && (
-                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                      {stockEditError}
-                    </div>
-                  )}
-
-                  <div className="flex justify-end gap-3">
-                    <button
-                      onClick={() => {
-                        if (editingStockSku) return
-                        setStockEditTarget(null)
-                        setStockEditError(null)
-                      }}
-                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                      disabled={Boolean(editingStockSku)}
-                    >
-                      取消
-                    </button>
-                    <button
-                      onClick={handleSaveStock}
-                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-                      disabled={Boolean(editingStockSku)}
-                    >
-                      {editingStockSku ? '保存中...' : '保存'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 加载状态 */}
           {loading ? (
             <div className="flex items-center justify-center h-96">
               <div className="text-center">
@@ -728,222 +642,598 @@ export default function ProductSalesPage() {
                 <p className="mt-4 text-slate-600">加载中...</p>
               </div>
             </div>
-          ) : summary ? (
+          ) : (
             <>
-              {/* 汇总卡片 */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-                {/* 今日销量 */}
-                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-500">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-slate-600 text-sm font-medium">今日销量</p>
-                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.todaySales}</p>
+              <div className="mb-8 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">销售库存趋势</h2>
+                    <p className="mt-1 text-sm text-slate-600">{trendTitle}</p>
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                    <select
+                      value={selectedGroupId}
+                      onChange={(event) => {
+                        const nextGroupId = event.target.value
+                        setSelectedGroupId(nextGroupId)
+                        void loadTrendData(selectedSku, nextGroupId, trendRange)
+                      }}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                    >
+                      <option value="">全部分组</option>
+                      {groups.map((group) => (
+                        <option key={group.id} value={group.id}>
+                          {group.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={selectedSku}
+                      onChange={(event) => {
+                        const nextSku = event.target.value
+                        setSelectedSku(nextSku)
+                        void loadTrendData(nextSku, selectedGroupId, trendRange)
+                      }}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                    >
+                      <option value="">全部 SKU</option>
+                      {skuOptions.map((option) => (
+                        <option key={option.sku} value={option.sku}>
+                          {option.sku}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="inline-flex rounded-lg border border-slate-300 p-1">
+                      <button
+                        onClick={() => {
+                          setTrendRange(7)
+                          void loadTrendData(selectedSku, selectedGroupId, 7)
+                        }}
+                        className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                          trendRange === 7 ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        最近 7 天
+                      </button>
+                      <button
+                        onClick={() => {
+                          setTrendRange(30)
+                          void loadTrendData(selectedSku, selectedGroupId, 30)
+                        }}
+                        className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                          trendRange === 30 ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        最近 30 天
+                      </button>
                     </div>
-                    <div className="text-4xl text-blue-500 opacity-20">📊</div>
+                    <button
+                      onClick={() => {
+                        setGroupManagerOpen(true)
+                        resetGroupForm()
+                      }}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 hover:bg-slate-50"
+                    >
+                      分组管理
+                    </button>
                   </div>
                 </div>
 
-                {/* 昨日销量 */}
-                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-green-500">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-slate-600 text-sm font-medium">昨日销量</p>
-                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.yesterdaySales}</p>
+                <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
+                    <div className="mb-3">
+                      <div className="text-sm font-medium text-slate-900">每日销量曲线</div>
+                      <div className="text-xs text-slate-500">{trendTitle}</div>
                     </div>
-                    <div className="text-4xl text-green-500 opacity-20">📈</div>
-                  </div>
-                </div>
-
-                {/* 近7天销量 */}
-                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-purple-500">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-slate-600 text-sm font-medium">近7天销量</p>
-                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.weekSales}</p>
-                    </div>
-                    <div className="text-4xl text-purple-500 opacity-20">📅</div>
-                  </div>
-                </div>
-
-                {/* 近30天销量 */}
-                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-orange-500">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-slate-600 text-sm font-medium">近30天销量</p>
-                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.monthSales}</p>
-                    </div>
-                    <div className="text-4xl text-orange-500 opacity-20">📊</div>
-                  </div>
-                </div>
-
-                {/* 当前总库存 */}
-                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-indigo-500">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-slate-600 text-sm font-medium">当前总库存</p>
-                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.totalStock}</p>
-                    </div>
-                    <div className="text-4xl text-indigo-500 opacity-20">📦</div>
-                  </div>
-                </div>
-
-                {/* 低库存产品数 */}
-                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-yellow-500">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-slate-600 text-sm font-medium">低库存产品数</p>
-                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.lowStockCount}</p>
-                    </div>
-                    <div className="text-4xl text-yellow-500 opacity-20">⚠️</div>
-                  </div>
-                </div>
-
-                {/* 断货产品数 */}
-                <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-red-500">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-slate-600 text-sm font-medium">断货产品数</p>
-                      <p className="text-3xl font-bold text-slate-900 mt-2">{summary.outOfStockCount}</p>
-                    </div>
-                    <div className="text-4xl text-red-500 opacity-20">❌</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* 产品表格 */}
-              <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200">
-                        <th className="px-6 py-3 text-left">
-                          <button
-                            onClick={() => handleSort('sku')}
-                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
-                          >
-                            SKU <SortIcon columnKey="sku" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-3 text-center">
-                          <button
-                            onClick={() => handleSort('todaySales')}
-                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                          >
-                            今日销量 <SortIcon columnKey="todaySales" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-3 text-center">
-                          <button
-                            onClick={() => handleSort('yesterdaySales')}
-                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                          >
-                            昨日销量 <SortIcon columnKey="yesterdaySales" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-3 text-center">
-                          <button
-                            onClick={() => handleSort('weekSales')}
-                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                          >
-                            近7天销量 <SortIcon columnKey="weekSales" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-3 text-center">
-                          <button
-                            onClick={() => handleSort('monthSales')}
-                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                          >
-                            近30天销量 <SortIcon columnKey="monthSales" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-3 text-center">
-                          <button
-                            onClick={() => handleSort('stock')}
-                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                          >
-                            当前库存 <SortIcon columnKey="stock" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-3 text-center">
-                          <button
-                            onClick={() => handleSort('stockStatus')}
-                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                          >
-                            库存状态 <SortIcon columnKey="stockStatus" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-3 text-left">
-                          <button
-                            onClick={() => handleSort('updatedAt')}
-                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
-                          >
-                            更新时间 <SortIcon columnKey="updatedAt" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-3 text-center font-semibold text-slate-900">
-                          操作
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedProducts.length === 0 ? (
-                        <tr>
-                          <td colSpan={9} className="px-6 py-8 text-center text-slate-500">
-                            暂无产品数据
-                          </td>
-                        </tr>
+                    <div className="h-64">
+                      {trendLoading ? (
+                        <div className="flex h-full items-center justify-center text-sm text-slate-500">
+                          趋势加载中...
+                        </div>
                       ) : (
-                        sortedProducts.map((product) => (
-                          <tr key={product.id} className="border-b border-slate-200 hover:bg-slate-50 transition-colors">
-                            <td className="px-6 py-4 text-sm font-medium text-slate-900">{product.sku}</td>
-                            <td className="px-6 py-4 text-sm text-center text-slate-700">{product.todaySales}</td>
-                            <td className="px-6 py-4 text-sm text-center text-slate-700">{product.yesterdaySales}</td>
-                            <td className="px-6 py-4 text-sm text-center text-slate-700">{product.weekSales}</td>
-                            <td className="px-6 py-4 text-sm text-center text-slate-700">{product.monthSales}</td>
-                            <td className="px-6 py-4 text-sm text-center font-medium text-slate-900">{product.stock}</td>
-                            <td className="px-6 py-4 text-sm text-center">
-                              <span
-                                className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
-                                  product.stockStatus === '断货'
-                                    ? 'bg-red-100 text-red-700'
-                                    : product.stockStatus === '低库存'
-                                      ? 'bg-yellow-100 text-yellow-700'
-                                      : 'bg-green-100 text-green-700'
-                                }`}
-                              >
-                                {product.stockStatus}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 text-sm text-slate-600">
-                              {new Date(product.updatedAt).toLocaleString('zh-CN')}
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              <div className="flex items-center justify-center gap-2">
-                                <button
-                                  onClick={() => handleEditStock(product)}
-                                  className="inline-flex items-center justify-center rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                  disabled={editingStockSku === product.sku || deletingStockSku === product.sku || product.sku === '-'}
-                                >
-                                  {editingStockSku === product.sku ? '保存中...' : '编辑库存'}
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteInventory(product)}
-                                  className="inline-flex items-center justify-center rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                  disabled={deletingStockSku === product.sku || editingStockSku === product.sku || product.sku === '-'}
-                                >
-                                  {deletingStockSku === product.sku ? '删除中...' : '删除库存'}
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={trends} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                            <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                            <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                            <Tooltip />
+                            <Legend />
+                            <Line
+                              type="monotone"
+                              dataKey="orders"
+                              name="每日销量"
+                              stroke="#2563eb"
+                              strokeWidth={2}
+                              dot={{ r: 3 }}
+                              activeDot={{ r: 5 }}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
                       )}
-                    </tbody>
-                  </table>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
+                    <div className="mb-3">
+                      <div className="text-sm font-medium text-slate-900">每日剩余库存曲线</div>
+                      <div className="text-xs text-slate-500">缺失快照时沿用最近一次库存；完全没有快照时使用当前库存</div>
+                    </div>
+                    <div className="h-64">
+                      {trendLoading ? (
+                        <div className="flex h-full items-center justify-center text-sm text-slate-500">
+                          趋势加载中...
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={trends} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                            <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                            <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                            <Tooltip />
+                            <Legend />
+                            <Line
+                              type="monotone"
+                              dataKey="stock"
+                              name="每日剩余库存"
+                              stroke="#db2777"
+                              strokeWidth={2}
+                              dot={{ r: 3 }}
+                              activeDot={{ r: 5 }}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
+
+              {stockEditTarget && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+                  <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900">编辑库存</h3>
+                        <p className="mt-1 text-sm text-slate-600">SKU：{stockEditTarget.sku}</p>
+                        <p className="mt-1 text-sm text-slate-600">当前库存：{stockEditTarget.stock}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (editingStockSku) return
+                          setStockEditTarget(null)
+                          setStockEditError(null)
+                        }}
+                        className="text-sm text-slate-500 hover:text-slate-700"
+                        disabled={Boolean(editingStockSku)}
+                      >
+                        关闭
+                      </button>
+                    </div>
+
+                    <div className="mt-5 space-y-4">
+                      <div>
+                        <div className="mb-2 text-sm font-medium text-slate-900">修改方式</div>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                          {[
+                            { value: 'set', label: '设置为指定库存' },
+                            { value: 'increase', label: '增加库存' },
+                            { value: 'decrease', label: '减少库存' },
+                          ].map((option) => (
+                            <button
+                              key={option.value}
+                              onClick={() => {
+                                const nextMode = option.value as StockEditMode
+                                setStockEditMode(nextMode)
+                                setStockEditValue(nextMode === 'set' ? String(stockEditTarget.stock) : '')
+                                setStockEditError(null)
+                              }}
+                              className={`rounded-lg border px-3 py-2 text-sm ${
+                                stockEditMode === option.value
+                                  ? 'border-slate-900 bg-slate-900 text-white'
+                                  : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+                              }`}
+                              disabled={Boolean(editingStockSku)}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-slate-900">
+                          {stockEditMode === 'set' ? '新的库存数值' : '调整数量'}
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          inputMode="numeric"
+                          value={stockEditValue}
+                          onChange={(event) => {
+                            setStockEditValue(event.target.value)
+                            setStockEditError(null)
+                          }}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                          placeholder={stockEditMode === 'set' ? '请输入新的库存数值' : '请输入调整数量'}
+                          disabled={Boolean(editingStockSku)}
+                        />
+                      </div>
+
+                      {stockEditError && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                          {stockEditError}
+                        </div>
+                      )}
+
+                      <div className="flex justify-end gap-3">
+                        <button
+                          onClick={() => {
+                            if (editingStockSku) return
+                            setStockEditTarget(null)
+                            setStockEditError(null)
+                          }}
+                          className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                          disabled={Boolean(editingStockSku)}
+                        >
+                          取消
+                        </button>
+                        <button
+                          onClick={handleSaveStock}
+                          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+                          disabled={Boolean(editingStockSku)}
+                        >
+                          {editingStockSku ? '保存中...' : '保存'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {groupManagerOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+                  <div className="w-full max-w-5xl rounded-xl bg-white p-6 shadow-xl">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900">分组管理</h3>
+                        <p className="mt-1 text-sm text-slate-600">自定义分组名称，并手动选择多个 SKU 归入分组。</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (savingGroup) return
+                          setGroupManagerOpen(false)
+                          resetGroupForm()
+                        }}
+                        className="text-sm text-slate-500 hover:text-slate-700"
+                        disabled={savingGroup}
+                      >
+                        关闭
+                      </button>
+                    </div>
+
+                    <div className="mt-5 grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+                      <div className="rounded-lg border border-slate-200 p-4">
+                        <div className="mb-3 flex items-center justify-between">
+                          <div className="text-sm font-semibold text-slate-900">已有分组</div>
+                          <button
+                            onClick={resetGroupForm}
+                            className="text-xs text-slate-600 hover:text-slate-900"
+                          >
+                            新建分组
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {groups.length === 0 ? (
+                            <div className="text-sm text-slate-500">暂无分组</div>
+                          ) : (
+                            groups.map((group) => (
+                              <div key={group.id} className="rounded-lg border border-slate-200 p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="text-sm font-medium text-slate-900">{group.name}</div>
+                                    <div className="mt-1 text-xs text-slate-500">
+                                      {group.skus.length} 个 SKU
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => handleEditGroup(group)}
+                                      className="text-xs text-slate-600 hover:text-slate-900"
+                                    >
+                                      编辑
+                                    </button>
+                                    <button
+                                      onClick={() => void handleDeleteGroup(group)}
+                                      className="text-xs text-red-600 hover:text-red-700 disabled:opacity-60"
+                                      disabled={deletingGroupId === group.id}
+                                    >
+                                      {deletingGroupId === group.id ? '删除中...' : '删除'}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-slate-200 p-4">
+                        <div className="mb-3 text-sm font-semibold text-slate-900">
+                          {groupFormId ? '编辑分组' : '新建分组'}
+                        </div>
+                        <div className="space-y-4">
+                          <div>
+                            <label className="mb-2 block text-sm font-medium text-slate-900">分组名称</label>
+                            <input
+                              value={groupFormName}
+                              onChange={(event) => {
+                                setGroupFormName(event.target.value)
+                                setGroupFormError(null)
+                              }}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                              placeholder="例如：日常主推"
+                              disabled={savingGroup}
+                            />
+                          </div>
+
+                          <div>
+                            <div className="mb-2 text-sm font-medium text-slate-900">选择 SKU</div>
+                            <div className="max-h-72 overflow-auto rounded-lg border border-slate-200 p-3">
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                                {skuOptions.map((option) => (
+                                  <label key={option.sku} className="flex items-center gap-2 text-sm text-slate-700">
+                                    <input
+                                      type="checkbox"
+                                      checked={groupFormSkus.includes(option.sku)}
+                                      onChange={() => toggleGroupSku(option.sku)}
+                                      disabled={savingGroup}
+                                    />
+                                    <span>{option.sku}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          {groupFormError && (
+                            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                              {groupFormError}
+                            </div>
+                          )}
+
+                          <div className="flex justify-end gap-3">
+                            <button
+                              onClick={resetGroupForm}
+                              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                              disabled={savingGroup}
+                            >
+                              重置
+                            </button>
+                            <button
+                              onClick={() => void handleSaveGroup()}
+                              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+                              disabled={savingGroup}
+                            >
+                              {savingGroup ? '保存中...' : '保存分组'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {summary && (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-500">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-slate-600 text-sm font-medium">今日销量</p>
+                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.todaySales}</p>
+                        </div>
+                        <div className="text-4xl text-blue-500 opacity-20">📊</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-green-500">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-slate-600 text-sm font-medium">昨日销量</p>
+                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.yesterdaySales}</p>
+                        </div>
+                        <div className="text-4xl text-green-500 opacity-20">📈</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-purple-500">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-slate-600 text-sm font-medium">近7天销量</p>
+                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.weekSales}</p>
+                        </div>
+                        <div className="text-4xl text-purple-500 opacity-20">📅</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-orange-500">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-slate-600 text-sm font-medium">近30天销量</p>
+                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.monthSales}</p>
+                        </div>
+                        <div className="text-4xl text-orange-500 opacity-20">📊</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-indigo-500">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-slate-600 text-sm font-medium">当前总库存</p>
+                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.totalStock}</p>
+                        </div>
+                        <div className="text-4xl text-indigo-500 opacity-20">📦</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-yellow-500">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-slate-600 text-sm font-medium">低库存产品数</p>
+                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.lowStockCount}</p>
+                        </div>
+                        <div className="text-4xl text-yellow-500 opacity-20">⚠️</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-red-500">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-slate-600 text-sm font-medium">断货产品数</p>
+                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.outOfStockCount}</p>
+                        </div>
+                        <div className="text-4xl text-red-500 opacity-20">❌</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200">
+                            <th className="px-6 py-3 text-left">
+                              <button
+                                onClick={() => handleSort('sku')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
+                              >
+                                SKU <SortIcon columnKey="sku" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('todaySales')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                今日销量 <SortIcon columnKey="todaySales" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('yesterdaySales')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                昨日销量 <SortIcon columnKey="yesterdaySales" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('weekSales')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                近7天销量 <SortIcon columnKey="weekSales" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('monthSales')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                近30天销量 <SortIcon columnKey="monthSales" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('stock')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                当前库存 <SortIcon columnKey="stock" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('stockStatus')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                库存状态 <SortIcon columnKey="stockStatus" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-left">
+                              <button
+                                onClick={() => handleSort('updatedAt')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
+                              >
+                                更新时间 <SortIcon columnKey="updatedAt" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-center font-semibold text-slate-900">
+                              操作
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedProducts.length === 0 ? (
+                            <tr>
+                              <td colSpan={9} className="px-6 py-8 text-center text-slate-500">
+                                暂无产品数据
+                              </td>
+                            </tr>
+                          ) : (
+                            sortedProducts.map((product) => (
+                              <tr key={product.id} className="border-b border-slate-200 hover:bg-slate-50 transition-colors">
+                                <td className="px-6 py-4 text-sm font-medium text-slate-900">{product.sku}</td>
+                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.todaySales}</td>
+                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.yesterdaySales}</td>
+                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.weekSales}</td>
+                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.monthSales}</td>
+                                <td className="px-6 py-4 text-sm text-center font-medium text-slate-900">{product.stock}</td>
+                                <td className="px-6 py-4 text-sm text-center">
+                                  <span
+                                    className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
+                                      product.stockStatus === '断货'
+                                        ? 'bg-red-100 text-red-700'
+                                        : product.stockStatus === '低库存'
+                                          ? 'bg-yellow-100 text-yellow-700'
+                                          : 'bg-green-100 text-green-700'
+                                    }`}
+                                  >
+                                    {product.stockStatus}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 text-sm text-slate-600">
+                                  {new Date(product.updatedAt).toLocaleString('zh-CN')}
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                  <div className="flex items-center justify-center gap-2">
+                                    <button
+                                      onClick={() => handleEditStock(product)}
+                                      className="inline-flex items-center justify-center rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                      disabled={editingStockSku === product.sku || deletingStockSku === product.sku || product.sku === '-'}
+                                    >
+                                      {editingStockSku === product.sku ? '保存中...' : '编辑库存'}
+                                    </button>
+                                    <button
+                                      onClick={() => void handleDeleteInventory(product)}
+                                      className="inline-flex items-center justify-center rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                      disabled={deletingStockSku === product.sku || editingStockSku === product.sku || product.sku === '-'}
+                                    >
+                                      {deletingStockSku === product.sku ? '删除中...' : '删除库存'}
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
             </>
-          ) : null}
+          )}
         </div>
       </div>
     </PageGuard>
