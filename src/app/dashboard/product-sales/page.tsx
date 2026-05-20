@@ -68,6 +68,8 @@ interface SkuOption {
   name: string
 }
 
+type StockEditMode = 'set' | 'increase' | 'decrease'
+
 export default function ProductSalesPage() {
   const router = useRouter()
   const { data: session } = useSession()
@@ -83,6 +85,10 @@ export default function ProductSalesPage() {
   const [importingInventory, setImportingInventory] = useState(false)
   const [importingOrders, setImportingOrders] = useState(false)
   const [editingStockSku, setEditingStockSku] = useState<string | null>(null)
+  const [stockEditTarget, setStockEditTarget] = useState<ProductData | null>(null)
+  const [stockEditMode, setStockEditMode] = useState<StockEditMode>('set')
+  const [stockEditValue, setStockEditValue] = useState('')
+  const [stockEditError, setStockEditError] = useState<string | null>(null)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [ordersImportResult, setOrdersImportResult] = useState<ImportResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -217,23 +223,35 @@ export default function ProductSalesPage() {
       return
     }
 
-    const nextValue = window.prompt(`请输入 ${product.sku} 的最新库存`, String(product.stock))
-    if (nextValue === null) return
+    setStockEditTarget(product)
+    setStockEditMode('set')
+    setStockEditValue(String(product.stock))
+    setStockEditError(null)
+  }
 
-    const trimmed = nextValue.trim()
+  const handleSaveStock = async () => {
+    if (!stockEditTarget) return
+
+    const trimmed = stockEditValue.trim()
     if (!trimmed) {
-      setError('库存不能为空')
+      setStockEditError(stockEditMode === 'set' ? '库存不能为空' : '调整数量不能为空')
       return
     }
 
-    const stock = Number(trimmed)
-    if (!Number.isInteger(stock) || stock < 0) {
-      setError('库存必须是大于等于 0 的整数')
+    const parsedValue = Number(trimmed)
+    if (!Number.isInteger(parsedValue) || parsedValue < 0) {
+      setStockEditError(stockEditMode === 'set' ? '库存必须是大于等于 0 的整数' : '调整数量必须是大于等于 0 的整数')
+      return
+    }
+
+    if (stockEditMode === 'decrease' && parsedValue > stockEditTarget.stock) {
+      setStockEditError('库存不能小于 0')
       return
     }
 
     try {
-      setEditingStockSku(product.sku)
+      setEditingStockSku(stockEditTarget.sku)
+      setStockEditError(null)
       setError(null)
 
       const response = await fetch('/api/product-sales/update-stock', {
@@ -242,8 +260,10 @@ export default function ProductSalesPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          sku: product.sku,
-          stock,
+          sku: stockEditTarget.sku,
+          mode: stockEditMode,
+          stock: stockEditMode === 'set' ? parsedValue : undefined,
+          quantity: stockEditMode === 'set' ? undefined : parsedValue,
         }),
       })
       const data = await response.json()
@@ -254,8 +274,11 @@ export default function ProductSalesPage() {
 
       await loadData(selectedSku, trendRange)
       router.refresh()
+      setStockEditTarget(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '修改库存失败')
+      const message = err instanceof Error ? err.message : '修改库存失败'
+      setStockEditError(message)
+      setError(message)
     } finally {
       setEditingStockSku(null)
     }
@@ -528,6 +551,113 @@ export default function ProductSalesPage() {
             </div>
           )}
 
+          {stockEditTarget && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+              <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">编辑库存</h3>
+                    <p className="mt-1 text-sm text-slate-600">
+                      SKU：{stockEditTarget.sku}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-600">
+                      当前库存：{stockEditTarget.stock}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (editingStockSku) return
+                      setStockEditTarget(null)
+                      setStockEditError(null)
+                    }}
+                    className="text-sm text-slate-500 hover:text-slate-700"
+                    disabled={Boolean(editingStockSku)}
+                  >
+                    关闭
+                  </button>
+                </div>
+
+                <div className="mt-5 space-y-4">
+                  <div>
+                    <div className="mb-2 text-sm font-medium text-slate-900">修改方式</div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      {[
+                        { value: 'set', label: '设置为指定库存' },
+                        { value: 'increase', label: '增加库存' },
+                        { value: 'decrease', label: '减少库存' },
+                      ].map((option) => (
+                        <button
+                          key={option.value}
+                          onClick={() => {
+                            const nextMode = option.value as StockEditMode
+                            setStockEditMode(nextMode)
+                            setStockEditValue(nextMode === 'set' ? String(stockEditTarget.stock) : '')
+                            setStockEditError(null)
+                          }}
+                          className={`rounded-lg border px-3 py-2 text-sm ${
+                            stockEditMode === option.value
+                              ? 'border-slate-900 bg-slate-900 text-white'
+                              : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+                          }`}
+                          disabled={Boolean(editingStockSku)}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-slate-900">
+                      {stockEditMode === 'set' ? '新的库存数值' : '调整数量'}
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      inputMode="numeric"
+                      value={stockEditValue}
+                      onChange={(event) => {
+                        setStockEditValue(event.target.value)
+                        setStockEditError(null)
+                      }}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                      placeholder={stockEditMode === 'set' ? '请输入新的库存数值' : '请输入调整数量'}
+                      disabled={Boolean(editingStockSku)}
+                    />
+                  </div>
+
+                  {stockEditError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {stockEditError}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-3">
+                    <button
+                      onClick={() => {
+                        if (editingStockSku) return
+                        setStockEditTarget(null)
+                        setStockEditError(null)
+                      }}
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                      disabled={Boolean(editingStockSku)}
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={handleSaveStock}
+                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+                      disabled={Boolean(editingStockSku)}
+                    >
+                      {editingStockSku ? '保存中...' : '保存'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 加载状态 */}
           {loading ? (
             <div className="flex items-center justify-center h-96">
@@ -621,7 +751,7 @@ export default function ProductSalesPage() {
               {/* 产品表格 */}
               <div className="bg-white rounded-lg shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
-                  <table className="w-full">
+                  <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200">
                         <th className="px-6 py-3 text-left">
@@ -630,30 +760,6 @@ export default function ProductSalesPage() {
                             className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
                           >
                             SKU <SortIcon columnKey="sku" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-3 text-left">
-                          <button
-                            onClick={() => handleSort('name')}
-                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
-                          >
-                             产品名称 <SortIcon columnKey="name" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-3 text-left">
-                          <button
-                            onClick={() => handleSort('color')}
-                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
-                          >
-                            颜色 <SortIcon columnKey="color" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-3 text-left">
-                          <button
-                            onClick={() => handleSort('length')}
-                            className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
-                          >
-                            长度 <SortIcon columnKey="length" />
                           </button>
                         </th>
                         <th className="px-6 py-3 text-center">
@@ -720,7 +826,7 @@ export default function ProductSalesPage() {
                     <tbody>
                       {sortedProducts.length === 0 ? (
                         <tr>
-                          <td colSpan={12} className="px-6 py-8 text-center text-slate-500">
+                          <td colSpan={9} className="px-6 py-8 text-center text-slate-500">
                             暂无产品数据
                           </td>
                         </tr>
@@ -728,9 +834,6 @@ export default function ProductSalesPage() {
                         sortedProducts.map((product) => (
                           <tr key={product.id} className="border-b border-slate-200 hover:bg-slate-50 transition-colors">
                             <td className="px-6 py-4 text-sm font-medium text-slate-900">{product.sku}</td>
-                            <td className="px-6 py-4 text-sm text-slate-700">{product.name}</td>
-                            <td className="px-6 py-4 text-sm text-slate-700">{product.color}</td>
-                            <td className="px-6 py-4 text-sm text-slate-700">{product.length}</td>
                             <td className="px-6 py-4 text-sm text-center text-slate-700">{product.todaySales}</td>
                             <td className="px-6 py-4 text-sm text-center text-slate-700">{product.yesterdaySales}</td>
                             <td className="px-6 py-4 text-sm text-center text-slate-700">{product.weekSales}</td>
