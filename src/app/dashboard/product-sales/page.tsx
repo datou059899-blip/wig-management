@@ -48,6 +48,9 @@ interface ImportFailure {
 
 interface ImportResult {
   successCount: number
+  updatedExistingCount?: number
+  autoFilledSkuCount?: number
+  autoCreatedCount?: number
   failureCount: number
   failures: ImportFailure[]
   hint?: string | null
@@ -152,6 +155,9 @@ export default function ProductSalesPage() {
 
       setImportResult({
         successCount: data.successCount || 0,
+        updatedExistingCount: data.updatedExistingCount || 0,
+        autoFilledSkuCount: data.autoFilledSkuCount || 0,
+        autoCreatedCount: data.autoCreatedCount || 0,
         failureCount: data.failureCount || 0,
         failures: Array.isArray(data.failures) ? data.failures : [],
         hint: data.hint || null,
@@ -343,6 +349,9 @@ export default function ProductSalesPage() {
                   库存导入完成
                 </span>
                 <span>成功 {importResult.successCount} 条</span>
+                <span>更新已有产品 {importResult.updatedExistingCount || 0} 条</span>
+                <span>自动补齐 SKU {importResult.autoFilledSkuCount || 0} 条</span>
+                <span>自动创建产品 {importResult.autoCreatedCount || 0} 条</span>
                 <span>失败 {importResult.failureCount} 条</span>
               </div>
               {importResult.hint && (

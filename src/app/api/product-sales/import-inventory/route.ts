@@ -10,6 +10,12 @@ type InventoryFailure = {
   reason: string
 }
 
+type ProductLookup = {
+  id: string
+  sku: string | null
+  name: string
+}
+
 type QtyParseResult = {
   value: number
   invalid: boolean
@@ -104,6 +110,7 @@ export async function POST(request: NextRequest) {
       }, {})
 
       const excelRowNumber = index + 4
+      const productName = String(getCell(record, '商品名称') || '').trim()
       const sku = String(getCell(record, '商家 SKU') || '').trim()
       if (!sku) {
         failures.push({
@@ -165,6 +172,7 @@ export async function POST(request: NextRequest) {
       return {
         row: excelRowNumber,
         sku,
+        productName,
         availableQty,
         lockedQty,
         sunnymayHairQty,
@@ -176,6 +184,7 @@ export async function POST(request: NextRequest) {
     }).filter(Boolean) as Array<{
       row: number
       sku: string
+      productName: string
       availableQty: number
       lockedQty: number
       sunnymayHairQty: number
@@ -189,12 +198,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: false,
         successCount: 0,
+        updatedExistingCount: 0,
+        autoFilledSkuCount: 0,
+        autoCreatedCount: 0,
         failureCount: failures.length,
         failures,
       }, { status: 400 })
     }
 
     const skuList = Array.from(new Set(candidates.map((item) => item.sku)))
+    const productNames = Array.from(
+      new Set(
+        candidates
+          .map((item) => item.productName)
+          .filter((name) => Boolean(name)),
+      ),
+    )
+
     const products = await prisma.product.findMany({
       where: {
         sku: {
@@ -204,32 +224,99 @@ export async function POST(request: NextRequest) {
       select: {
         id: true,
         sku: true,
+        name: true,
       },
     })
 
-    const productMap = new Map(
+    const productsByName = productNames.length
+      ? await prisma.product.findMany({
+          where: {
+            name: {
+              in: productNames,
+            },
+          },
+          select: {
+            id: true,
+            sku: true,
+            name: true,
+          },
+          orderBy: {
+            updatedAt: 'desc',
+          },
+        })
+      : []
+
+    const productMap = new Map<string, ProductLookup>(
       products
-        .filter((product): product is { id: string; sku: string } => Boolean(product.sku))
-        .map((product) => [product.sku, product]),
+        .filter((product): product is ProductLookup => Boolean(product.name))
+        .map((product) => [product.sku || '', product]),
     )
+
+    const productNameMap = new Map<string, ProductLookup>()
+    for (const product of productsByName) {
+      const existing = productNameMap.get(product.name)
+      if (!existing || (existing.sku && !product.sku)) {
+        productNameMap.set(product.name, product)
+      }
+    }
 
     const snapshotDate = new Date()
     snapshotDate.setHours(0, 0, 0, 0)
 
     let successCount = 0
+    let updatedExistingCount = 0
+    let autoFilledSkuCount = 0
+    let autoCreatedCount = 0
 
     for (const item of candidates) {
-      const product = productMap.get(item.sku)
-      if (!product) {
-        failures.push({
-          row: item.row,
-          sku: item.sku,
-          reason: '未找到匹配的 Product.sku',
-        })
-        continue
-      }
-
       try {
+        let product = productMap.get(item.sku) || null
+        let importMode: 'existing' | 'filled' | 'created' = 'existing'
+
+        if (!product && item.productName) {
+          const matchedByName = productNameMap.get(item.productName) || null
+          if (matchedByName?.sku) {
+            product = null
+          } else if (matchedByName) {
+            const updatedProduct = await prisma.product.update({
+              where: { id: matchedByName.id },
+              data: {
+                sku: item.sku,
+              },
+              select: {
+                id: true,
+                sku: true,
+                name: true,
+              },
+            })
+
+            product = updatedProduct
+            importMode = 'filled'
+            productMap.set(item.sku, updatedProduct)
+            productNameMap.set(updatedProduct.name, updatedProduct)
+          }
+        }
+
+        if (!product) {
+          const createdProduct = await prisma.product.create({
+            data: {
+              sku: item.sku,
+              name: item.productName || item.sku,
+              stock: item.totalQty,
+            },
+            select: {
+              id: true,
+              sku: true,
+              name: true,
+            },
+          })
+
+          product = createdProduct
+          importMode = 'created'
+          productMap.set(item.sku, createdProduct)
+          productNameMap.set(createdProduct.name, createdProduct)
+        }
+
         await prisma.$transaction([
           prisma.productInventorySnapshot.upsert({
             where: {
@@ -269,6 +356,14 @@ export async function POST(request: NextRequest) {
           }),
         ])
 
+        if (importMode === 'existing') {
+          updatedExistingCount += 1
+        } else if (importMode === 'filled') {
+          autoFilledSkuCount += 1
+        } else if (importMode === 'created') {
+          autoCreatedCount += 1
+        }
+
         successCount += 1
       } catch (error) {
         console.error('导入库存行失败:', error)
@@ -283,12 +378,15 @@ export async function POST(request: NextRequest) {
     const unmatchedSkuCount = failures.filter((item) => item.reason === '未找到匹配的 Product.sku').length
     const hint =
       failures.length > 0 && unmatchedSkuCount > failures.length / 2
-        ? '请确认产品库中的 Product.sku 是否与库存表的商家 SKU 一致。'
+        ? '库存表里的商家 SKU 和产品库 Product.sku 不一致，需要补齐或同步产品库 SKU。'
         : null
 
     return NextResponse.json({
       success: true,
       successCount,
+      updatedExistingCount,
+      autoFilledSkuCount,
+      autoCreatedCount,
       failureCount: failures.length,
       failures,
       hint,
