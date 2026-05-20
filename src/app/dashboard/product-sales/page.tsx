@@ -57,6 +57,47 @@ interface ImportResult {
   hint?: string | null
 }
 
+interface OrderImportFailure {
+  row: number
+  sku: string
+  paidTime: string
+  quantity: number
+  returnQty: number
+  reason: string
+}
+
+interface OrderImportSummaryByDate {
+  date: string
+  grossOrders: number
+  returnQty: number
+  netOrders: number
+  canceledQty: number
+  refundAmount: number
+}
+
+interface OrderImportSummaryBySku {
+  sku: string
+  grossOrders: number
+  returnQty: number
+  netOrders: number
+  canceledQty: number
+  refundAmount: number
+}
+
+interface OrderImportResult {
+  totalOrderRows: number
+  successCount: number
+  failedCount: number
+  failedRows: OrderImportFailure[]
+  summaryByDate: OrderImportSummaryByDate[]
+  summaryBySku: OrderImportSummaryBySku[]
+  totalGrossOrders: number
+  totalReturnQty: number
+  totalNetOrders: number
+  totalCanceledQty: number
+  totalRefundAmount: number
+}
+
 interface TrendPoint {
   date: string
   label: string
@@ -110,7 +151,7 @@ export default function ProductSalesPage() {
   const [savingGroup, setSavingGroup] = useState(false)
   const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
-  const [ordersImportResult, setOrdersImportResult] = useState<ImportResult | null>(null)
+  const [ordersImportResult, setOrdersImportResult] = useState<OrderImportResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
     key: 'sku',
@@ -279,9 +320,17 @@ export default function ProductSalesPage() {
       }
 
       setOrdersImportResult({
+        totalOrderRows: data.totalOrderRows || 0,
         successCount: data.successCount || 0,
-        failureCount: data.failureCount || 0,
-        failures: Array.isArray(data.failures) ? data.failures : [],
+        failedCount: data.failedCount || 0,
+        failedRows: Array.isArray(data.failedRows) ? data.failedRows : [],
+        summaryByDate: Array.isArray(data.summaryByDate) ? data.summaryByDate : [],
+        summaryBySku: Array.isArray(data.summaryBySku) ? data.summaryBySku : [],
+        totalGrossOrders: data.totalGrossOrders || 0,
+        totalReturnQty: data.totalReturnQty || 0,
+        totalNetOrders: data.totalNetOrders || 0,
+        totalCanceledQty: data.totalCanceledQty || 0,
+        totalRefundAmount: data.totalRefundAmount || 0,
       })
 
       await refreshAfterMutation()
@@ -607,24 +656,95 @@ export default function ProductSalesPage() {
             <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-center gap-4 text-sm text-slate-700">
                 <span className="font-semibold text-slate-900">订单导入完成</span>
-                <span>成功 {ordersImportResult.successCount} 条</span>
-                <span>失败 {ordersImportResult.failureCount} 条</span>
+                <span>读取订单行数 {ordersImportResult.totalOrderRows} 行</span>
+                <span>成功写入 SKU+日期 {ordersImportResult.successCount} 条</span>
+                <span>毛销量 {ordersImportResult.totalGrossOrders}</span>
+                <span>退货量 {ordersImportResult.totalReturnQty}</span>
+                <span>净销量 {ordersImportResult.totalNetOrders}</span>
+                <span>取消数量 {ordersImportResult.totalCanceledQty}</span>
+                <span>退款金额 {ordersImportResult.totalRefundAmount.toFixed(2)}</span>
+                <span>失败 {ordersImportResult.failedCount} 条</span>
               </div>
-              {ordersImportResult.failures.length > 0 && (
+              {ordersImportResult.summaryByDate.length > 0 && (
+                <div className="mt-4 overflow-x-auto">
+                  <div className="mb-2 text-sm font-medium text-slate-900">按日期汇总</div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                        <th className="px-3 py-2">日期</th>
+                        <th className="px-3 py-2">毛销量</th>
+                        <th className="px-3 py-2">退货量</th>
+                        <th className="px-3 py-2">净销量</th>
+                        <th className="px-3 py-2">取消数量</th>
+                        <th className="px-3 py-2">退款金额</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ordersImportResult.summaryByDate.map((item) => (
+                        <tr key={item.date} className="border-b border-slate-100">
+                          <td className="px-3 py-2 text-slate-700">{item.date}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.grossOrders}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.returnQty}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.netOrders}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.canceledQty}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.refundAmount.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {ordersImportResult.summaryBySku.length > 0 && (
+                <div className="mt-4 overflow-x-auto">
+                  <div className="mb-2 text-sm font-medium text-slate-900">按 SKU 汇总</div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                        <th className="px-3 py-2">SKU</th>
+                        <th className="px-3 py-2">毛销量</th>
+                        <th className="px-3 py-2">退货量</th>
+                        <th className="px-3 py-2">净销量</th>
+                        <th className="px-3 py-2">取消数量</th>
+                        <th className="px-3 py-2">退款金额</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ordersImportResult.summaryBySku.map((item) => (
+                        <tr key={item.sku} className="border-b border-slate-100">
+                          <td className="px-3 py-2 text-slate-700">{item.sku}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.grossOrders}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.returnQty}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.netOrders}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.canceledQty}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.refundAmount.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {ordersImportResult.failedRows.length > 0 && (
                 <div className="mt-3 overflow-x-auto">
+                  <div className="mb-2 text-sm font-medium text-slate-900">失败明细</div>
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 text-left text-slate-500">
                         <th className="px-3 py-2">行号</th>
                         <th className="px-3 py-2">SKU</th>
+                        <th className="px-3 py-2">Paid Time</th>
+                        <th className="px-3 py-2">Quantity</th>
+                        <th className="px-3 py-2">退货量</th>
                         <th className="px-3 py-2">失败原因</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {ordersImportResult.failures.map((item, index) => (
+                      {ordersImportResult.failedRows.map((item, index) => (
                         <tr key={`${item.row}-${item.sku}-${index}`} className="border-b border-slate-100">
                           <td className="px-3 py-2 text-slate-700">{item.row || '-'}</td>
                           <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.paidTime || '-'}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.quantity}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.returnQty}</td>
                           <td className="px-3 py-2 text-red-600">{item.reason}</td>
                         </tr>
                       ))}

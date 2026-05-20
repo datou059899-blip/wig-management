@@ -7,43 +7,147 @@ import { prisma } from '@/lib/prisma'
 type OrderFailure = {
   row: number
   sku: string
+  paidTime: string
+  quantity: number
+  returnQty: number
   reason: string
+}
+
+type ParsedOrderRow = {
+  row: number
+  sku: string
+  productName: string
+  quantity: number
+  returnQty: number
+  paidTime: string
+  dateStr: string
+  isCanceled: boolean
+  refundAmount: number
+}
+
+type AggregatedOrderStat = {
+  sku: string
+  dateStr: string
+  productName: string | null
+  grossOrders: number
+  returnQty: number
+  netOrders: number
+  canceledQty: number
+  refundAmount: number
+}
+
+function normalizeHeader(value: unknown) {
+  return String(value ?? '').trim()
+}
+
+function normalizeCell(value: unknown) {
+  if (value === null || value === undefined) return ''
+  return typeof value === 'string' ? value.trim() : String(value).trim()
 }
 
 function parseNumber(value: unknown): number {
   if (value === null || value === undefined) return 0
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0
+  }
 
-  const text = String(value).trim()
-  if (!text) return 0
+  const text = normalizeCell(value)
+  if (!text || text === '/' || text.toLowerCase() === 'null' || text.toLowerCase() === 'undefined') {
+    return 0
+  }
 
   const parsed = Number(text.replace(/,/g, ''))
   return Number.isFinite(parsed) ? parsed : 0
 }
 
 function parseDateString(value: unknown): string | null {
-  if (!value) return null
-  if (value instanceof Date) return value.toISOString().slice(0, 10)
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null
+    const year = value.getFullYear()
+    const month = String(value.getMonth() + 1).padStart(2, '0')
+    const day = String(value.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
 
   if (typeof value === 'number') {
     const code = XLSX.SSF?.parse_date_code ? XLSX.SSF.parse_date_code(value) : null
     if (code) {
-      const date = new Date(code.y, code.m - 1, code.d)
-      return date.toISOString().slice(0, 10)
+      const month = String(code.m).padStart(2, '0')
+      const day = String(code.d).padStart(2, '0')
+      return `${code.y}-${month}-${day}`
     }
   }
 
-  const text = String(value).trim()
+  const text = normalizeCell(value)
   if (!text) return null
 
-  const date = new Date(text)
-  if (Number.isNaN(date.getTime())) return null
-  return date.toISOString().slice(0, 10)
+  const normalizedText = text.replace(/\t/g, '').trim()
+  if (!normalizedText) return null
+
+  const slashMatched = normalizedText.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+  if (slashMatched) {
+    const [, month, day, year] = slashMatched
+    return `${year}-${month}-${day}`
+  }
+
+  const dashMatched = normalizedText.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (dashMatched) {
+    const [, year, month, day] = dashMatched
+    return `${year}-${month}-${day}`
+  }
+
+  const parsed = new Date(normalizedText)
+  if (!Number.isNaN(parsed.getTime())) {
+    const year = parsed.getFullYear()
+    const month = String(parsed.getMonth() + 1).padStart(2, '0')
+    const day = String(parsed.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  return null
 }
 
 function createDate(dateStr: string): Date {
   const [year, month, day] = dateStr.split('-').map((part) => Number(part))
   return new Date(year, month - 1, day)
+}
+
+function isCanceledOrder(orderStatus: string, cancelReturnType: string) {
+  const status = normalizeCell(orderStatus).toLowerCase()
+  const cancelType = normalizeCell(cancelReturnType).toLowerCase()
+
+  return (
+    status === '已取消' ||
+    status === 'cancelled' ||
+    status === 'canceled' ||
+    cancelType === 'cancel'
+  )
+}
+
+function getNormalizedRowsFromSheet(sheet: XLSX.WorkSheet) {
+  const rawRows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
+    header: 1,
+    defval: '',
+  })
+
+  if (!rawRows.length) return []
+
+  const headerRow = Array.isArray(rawRows[0]) ? rawRows[0] : []
+  const headers = headerRow.map((cell) => normalizeHeader(cell))
+
+  return rawRows.slice(1).map((row, index) => {
+    const record = headers.reduce<Record<string, unknown>>((acc, header, headerIndex) => {
+      if (header) {
+        acc[header] = Array.isArray(row) ? row[headerIndex] : ''
+      }
+      return acc
+    }, {})
+
+    return {
+      rowNumber: index + 2,
+      record,
+    }
+  })
 }
 
 export async function POST(request: NextRequest) {
@@ -63,76 +167,113 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file')
 
     if (!file || typeof file === 'string') {
-      return NextResponse.json({ error: '请上传订单 Excel 文件' }, { status: 400 })
+      return NextResponse.json({ error: '请上传订单文件' }, { status: 400 })
     }
 
     const bytes = await file.arrayBuffer()
-    const workbook = XLSX.read(bytes, { type: 'array' })
+    const fileName = String(file.name || '').toLowerCase()
+
+    let workbook: XLSX.WorkBook
+    if (fileName.endsWith('.csv')) {
+      const text = new TextDecoder('utf-8').decode(bytes)
+      workbook = XLSX.read(text, { type: 'string' })
+    } else {
+      workbook = XLSX.read(bytes, { type: 'array' })
+    }
+
     const targetSheetName = workbook.SheetNames.includes('OrderSKUList')
       ? 'OrderSKUList'
       : workbook.SheetNames[0]
 
     if (!targetSheetName) {
-      return NextResponse.json({ error: 'Excel 文件没有可读取的工作表' }, { status: 400 })
+      return NextResponse.json({ error: '订单文件没有可读取的工作表' }, { status: 400 })
     }
 
     const sheet = workbook.Sheets[targetSheetName]
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+    const rows = getNormalizedRowsFromSheet(sheet)
 
     if (!rows.length) {
       return NextResponse.json({ error: '订单文件中没有可导入的数据' }, { status: 400 })
     }
 
     const failures: OrderFailure[] = []
-    const parsedRows = rows.map((row, index) => {
-      const sku = String(row['Seller SKU'] || '').trim()
+    const parsedRows: ParsedOrderRow[] = []
+
+    rows.forEach(({ rowNumber, record }) => {
+      const sku = normalizeCell(record['Seller SKU'])
+      const paidTime = normalizeCell(record['Paid Time'])
+      const quantity = Math.max(0, Math.round(parseNumber(record['Quantity'])))
+      const returnQty = Math.max(0, Math.round(parseNumber(record['Sku Quantity of return'])))
+      const dateStr = parseDateString(record['Paid Time'])
+
       if (!sku) {
         failures.push({
-          row: index + 2,
+          row: rowNumber,
           sku: '',
+          paidTime,
+          quantity,
+          returnQty,
           reason: 'Seller SKU 为空',
         })
-        return null
+        return
       }
 
-      const dateStr =
-        parseDateString(row['Paid Time']) ??
-        parseDateString(row['Created Time'])
+      if (!paidTime) {
+        failures.push({
+          row: rowNumber,
+          sku,
+          paidTime: '',
+          quantity,
+          returnQty,
+          reason: 'Paid Time 为空',
+        })
+        return
+      }
 
       if (!dateStr) {
         failures.push({
-          row: index + 2,
+          row: rowNumber,
           sku,
-          reason: 'Paid Time 和 Created Time 都无法解析',
+          paidTime,
+          quantity,
+          returnQty,
+          reason: 'Paid Time 无法解析',
         })
-        return null
+        return
       }
 
-      const quantity = parseNumber(row['Quantity'])
-      const returnQty = parseNumber(row['Sku Quantity of return'])
-      const orders = quantity - returnQty
-
-      return {
-        row: index + 2,
+      parsedRows.push({
+        row: rowNumber,
         sku,
+        productName: normalizeCell(record['Product Name']),
+        quantity,
+        returnQty,
+        paidTime,
         dateStr,
-        productName: String(row['Product Name'] || '').trim(),
-        orders,
-      }
-    }).filter(Boolean) as Array<{
-      row: number
-      sku: string
-      dateStr: string
-      productName: string
-      orders: number
-    }>
+        isCanceled: isCanceledOrder(
+          normalizeCell(record['Order Status']),
+          normalizeCell(record['Cancelation/Return Type']),
+        ),
+        refundAmount: parseNumber(record['Order Refund Amount']),
+      })
+    })
+
+    const totalOrderRows = rows.length
 
     if (!parsedRows.length) {
       return NextResponse.json({
         success: false,
+        totalOrderRows,
         successCount: 0,
-        failureCount: failures.length,
-        failures,
+        failedCount: failures.length,
+        failedRows: failures,
+        summaryByDate: [],
+        summaryBySku: [],
+        totalGrossOrders: 0,
+        totalReturnQty: 0,
+        totalNetOrders: 0,
+        totalCanceledQty: 0,
+        totalRefundAmount: 0,
       }, { status: 400 })
     }
 
@@ -149,39 +290,70 @@ export async function POST(request: NextRequest) {
     })
 
     const productSkuSet = new Set(
-      products
-        .map((product) => product.sku)
-        .filter((sku): sku is string => Boolean(sku)),
+      products.map((product) => product.sku).filter((sku): sku is string => Boolean(sku)),
     )
 
-    const aggregated = new Map<string, { sku: string; dateStr: string; productName: string | null; orders: number }>()
+    const aggregated = new Map<string, AggregatedOrderStat>()
 
     for (const item of parsedRows) {
       if (!productSkuSet.has(item.sku)) {
         failures.push({
           row: item.row,
           sku: item.sku,
+          paidTime: item.paidTime,
+          quantity: item.quantity,
+          returnQty: item.returnQty,
           reason: '未找到匹配的 Product.sku',
         })
         continue
       }
 
       const key = `${item.sku}__${item.dateStr}`
-      const current = aggregated.get(key)
-      if (current) {
-        current.orders += item.orders
-        if (!current.productName && item.productName) {
-          current.productName = item.productName
-        }
-      } else {
-        aggregated.set(key, {
-          sku: item.sku,
-          dateStr: item.dateStr,
-          productName: item.productName || null,
-          orders: item.orders,
-        })
+      const current = aggregated.get(key) || {
+        sku: item.sku,
+        dateStr: item.dateStr,
+        productName: item.productName || null,
+        grossOrders: 0,
+        returnQty: 0,
+        netOrders: 0,
+        canceledQty: 0,
+        refundAmount: 0,
       }
+
+      const safeReturnQty = Math.max(0, item.returnQty)
+      const canceledQty = item.isCanceled ? item.quantity : 0
+      const netOrders = item.isCanceled ? 0 : Math.max(item.quantity - safeReturnQty, 0)
+
+      current.grossOrders += item.quantity
+      current.returnQty += safeReturnQty
+      current.netOrders += netOrders
+      current.canceledQty += canceledQty
+      current.refundAmount += item.refundAmount
+
+      if (!current.productName && item.productName) {
+        current.productName = item.productName
+      }
+
+      aggregated.set(key, current)
     }
+
+    const summaryByDateMap = new Map<string, {
+      date: string
+      grossOrders: number
+      returnQty: number
+      netOrders: number
+      canceledQty: number
+      refundAmount: number
+    }>()
+
+    const summaryBySkuMap = new Map<string, {
+      sku: string
+      grossOrders: number
+      returnQty: number
+      netOrders: number
+      canceledQty: number
+      refundAmount: number
+    }>()
 
     let successCount = 0
 
@@ -198,13 +370,53 @@ export async function POST(request: NextRequest) {
             sku: item.sku,
             date: createDate(item.dateStr),
             productName: item.productName,
-            orders: item.orders,
+            orders: item.netOrders,
+            grossOrders: item.grossOrders,
+            returnQty: item.returnQty,
+            netOrders: item.netOrders,
+            canceledQty: item.canceledQty,
+            refundAmount: item.refundAmount,
           },
           update: {
             productName: item.productName ?? undefined,
-            orders: item.orders,
+            orders: item.netOrders,
+            grossOrders: item.grossOrders,
+            returnQty: item.returnQty,
+            netOrders: item.netOrders,
+            canceledQty: item.canceledQty,
+            refundAmount: item.refundAmount,
           },
         })
+
+        const byDate = summaryByDateMap.get(item.dateStr) || {
+          date: item.dateStr,
+          grossOrders: 0,
+          returnQty: 0,
+          netOrders: 0,
+          canceledQty: 0,
+          refundAmount: 0,
+        }
+        byDate.grossOrders += item.grossOrders
+        byDate.returnQty += item.returnQty
+        byDate.netOrders += item.netOrders
+        byDate.canceledQty += item.canceledQty
+        byDate.refundAmount += item.refundAmount
+        summaryByDateMap.set(item.dateStr, byDate)
+
+        const bySku = summaryBySkuMap.get(item.sku) || {
+          sku: item.sku,
+          grossOrders: 0,
+          returnQty: 0,
+          netOrders: 0,
+          canceledQty: 0,
+          refundAmount: 0,
+        }
+        bySku.grossOrders += item.grossOrders
+        bySku.returnQty += item.returnQty
+        bySku.netOrders += item.netOrders
+        bySku.canceledQty += item.canceledQty
+        bySku.refundAmount += item.refundAmount
+        summaryBySkuMap.set(item.sku, bySku)
 
         successCount += 1
       } catch (error) {
@@ -212,16 +424,38 @@ export async function POST(request: NextRequest) {
         failures.push({
           row: 0,
           sku: item.sku,
+          paidTime: item.dateStr,
+          quantity: item.grossOrders,
+          returnQty: item.returnQty,
           reason: `${item.dateStr} 写入 PerformanceDaily 失败`,
         })
       }
     }
 
+    const summaryByDate = Array.from(summaryByDateMap.values()).sort((a, b) => a.date.localeCompare(b.date))
+    const summaryBySku = Array.from(summaryBySkuMap.values()).sort((a, b) => a.sku.localeCompare(b.sku))
+
+    const totalGrossOrders = summaryBySku.reduce((sum, item) => sum + item.grossOrders, 0)
+    const totalReturnQty = summaryBySku.reduce((sum, item) => sum + item.returnQty, 0)
+    const totalNetOrders = summaryBySku.reduce((sum, item) => sum + item.netOrders, 0)
+    const totalCanceledQty = summaryBySku.reduce((sum, item) => sum + item.canceledQty, 0)
+    const totalRefundAmount = Number(
+      summaryBySku.reduce((sum, item) => sum + item.refundAmount, 0).toFixed(2),
+    )
+
     return NextResponse.json({
       success: true,
+      totalOrderRows,
       successCount,
-      failureCount: failures.length,
-      failures,
+      failedCount: failures.length,
+      failedRows: failures,
+      summaryByDate,
+      summaryBySku,
+      totalGrossOrders,
+      totalReturnQty,
+      totalNetOrders,
+      totalCanceledQty,
+      totalRefundAmount,
     })
   } catch (error) {
     console.error('导入订单数据失败:', error)
