@@ -85,6 +85,7 @@ export default function ProductSalesPage() {
   const [importingInventory, setImportingInventory] = useState(false)
   const [importingOrders, setImportingOrders] = useState(false)
   const [editingStockSku, setEditingStockSku] = useState<string | null>(null)
+  const [deletingStockSku, setDeletingStockSku] = useState<string | null>(null)
   const [stockEditTarget, setStockEditTarget] = useState<ProductData | null>(null)
   const [stockEditMode, setStockEditMode] = useState<StockEditMode>('set')
   const [stockEditValue, setStockEditValue] = useState('')
@@ -284,6 +285,45 @@ export default function ProductSalesPage() {
     }
   }
 
+  const handleDeleteInventory = async (product: ProductData) => {
+    if (!product.sku || product.sku === '-') {
+      setError('该产品缺少 SKU，无法删除库存')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `确认将 SKU ${product.sku} 的当前库存清零吗？不会删除产品和销量数据。`,
+    )
+    if (!confirmed) return
+
+    try {
+      setDeletingStockSku(product.sku)
+      setError(null)
+
+      const response = await fetch('/api/product-sales/delete-inventory', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sku: product.sku,
+        }),
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '删除库存失败')
+      }
+
+      await loadData(selectedSku, trendRange)
+      router.refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除库存失败')
+    } finally {
+      setDeletingStockSku(null)
+    }
+  }
+
   const handleSort = (key: string) => {
     setSortConfig((prev) => ({
       key,
@@ -312,8 +352,6 @@ export default function ProductSalesPage() {
     }
     return <span className="text-pink-500 text-xs">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
   }
-
-  const selectedProduct = products.find((product) => product.sku === selectedSku)
 
   return (
     <PageGuard>
@@ -460,7 +498,7 @@ export default function ProductSalesPage() {
                   >
                     {skuOptions.map((option) => (
                       <option key={option.sku} value={option.sku}>
-                        {option.sku} - {option.name}
+                        {option.sku}
                       </option>
                     ))}
                   </select>
@@ -495,9 +533,7 @@ export default function ProductSalesPage() {
                 <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
                   <div className="mb-3">
                     <div className="text-sm font-medium text-slate-900">每日销量曲线</div>
-                    <div className="text-xs text-slate-500">
-                      {selectedProduct ? `${selectedProduct.name} / ${selectedProduct.sku}` : '当前 SKU'}
-                    </div>
+                    <div className="text-xs text-slate-500">SKU：{selectedSku || '-'}</div>
                   </div>
                   <div className="h-64">
                     <ResponsiveContainer width="100%" height="100%">
@@ -856,13 +892,22 @@ export default function ProductSalesPage() {
                               {new Date(product.updatedAt).toLocaleString('zh-CN')}
                             </td>
                             <td className="px-6 py-4 text-center">
-                              <button
-                                onClick={() => handleEditStock(product)}
-                                className="inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                disabled={editingStockSku === product.sku || product.sku === '-'}
-                              >
-                                {editingStockSku === product.sku ? '保存中...' : '编辑库存'}
-                              </button>
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => handleEditStock(product)}
+                                  className="inline-flex items-center justify-center rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  disabled={editingStockSku === product.sku || deletingStockSku === product.sku || product.sku === '-'}
+                                >
+                                  {editingStockSku === product.sku ? '保存中...' : '编辑库存'}
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteInventory(product)}
+                                  className="inline-flex items-center justify-center rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  disabled={deletingStockSku === product.sku || editingStockSku === product.sku || product.sku === '-'}
+                                >
+                                  {deletingStockSku === product.sku ? '删除中...' : '删除库存'}
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))
