@@ -10,18 +10,26 @@ type InventoryFailure = {
   reason: string
 }
 
-function parseQty(value: unknown): number | null {
-  if (value === null || value === undefined) return null
+function parseQty(value: unknown): number {
+  if (value === null || value === undefined) return 0
   if (typeof value === 'number') {
-    return Number.isFinite(value) ? Math.round(value) : null
+    return Number.isFinite(value) ? Math.round(value) : 0
   }
 
   const text = String(value).trim()
-  if (!text) return null
+  if (!text || text === '/') return 0
 
   const normalized = text.replace(/,/g, '')
   const parsed = Number(normalized)
-  return Number.isFinite(parsed) ? Math.round(parsed) : null
+  return Number.isFinite(parsed) ? Math.round(parsed) : 0
+}
+
+function normalizeHeader(value: unknown) {
+  return String(value ?? '').trim()
+}
+
+function getCell(row: Record<string, unknown>, fieldName: string) {
+  return row[fieldName]
 }
 
 export async function POST(request: NextRequest) {
@@ -53,36 +61,70 @@ export async function POST(request: NextRequest) {
     }
 
     const sheet = workbook.Sheets[firstSheetName]
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+    const rawRows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
+      header: 1,
+      defval: '',
+    })
 
-    if (!rows.length) {
+    if (rawRows.length < 4) {
+      return NextResponse.json({ error: '库存文件中没有可导入的数据' }, { status: 400 })
+    }
+
+    const headerRow = Array.isArray(rawRows[0]) ? rawRows[0] : []
+    const headers = headerRow.map((cell) => normalizeHeader(cell))
+    const dataRows = rawRows.slice(3)
+
+    if (!headers.length || !dataRows.length) {
       return NextResponse.json({ error: '库存文件中没有可导入的数据' }, { status: 400 })
     }
 
     const failures: InventoryFailure[] = []
-    const candidates = rows.map((row, index) => {
-      const sku = String(row['商家 SKU'] || '').trim()
+    const candidates = dataRows.map((row, index) => {
+      const record = headers.reduce<Record<string, unknown>>((acc, header, headerIndex) => {
+        if (header) {
+          acc[header] = Array.isArray(row) ? row[headerIndex] : ''
+        }
+        return acc
+      }, {})
+
+      const excelRowNumber = index + 4
+      const sku = String(getCell(record, '商家 SKU') || '').trim()
       if (!sku) {
         failures.push({
-          row: index + 2,
+          row: excelRowNumber,
           sku: '',
           reason: '商家 SKU 为空',
         })
         return null
       }
 
-      const availableQty = parseQty(row['可售数量']) ?? 0
-      const lockedQty = parseQty(row['锁定数量']) ?? 0
-      const sunnymayHairQtyRaw = parseQty(row['Sunnymay Hair 总数量'])
-      const fc03Atl1Qty = parseQty(row['FC03_ATL1 总数量']) ?? 0
-      const fc14Ewr4Qty = parseQty(row['FC14_EWR4 总数量']) ?? 0
-      const fc09Atl2Qty = parseQty(row['FC09_ATL2 总数量']) ?? 0
-      const sunnymayHairQty = sunnymayHairQtyRaw ?? 0
-      const totalQty =
-        sunnymayHairQtyRaw ?? (fc03Atl1Qty + fc14Ewr4Qty + fc09Atl2Qty)
+      if (sku === '-' || sku === '不可编辑') {
+        failures.push({
+          row: excelRowNumber,
+          sku,
+          reason: '商家 SKU 无效',
+        })
+        return null
+      }
+
+      const availableQty = parseQty(getCell(record, '可售数量'))
+      const lockedQty = parseQty(getCell(record, '锁定数量'))
+      const rawSunnymayHairQty = getCell(record, 'Sunnymay Hair 总数量')
+      const sunnymayHairQty = parseQty(rawSunnymayHairQty)
+      const fc03Atl1Qty = parseQty(getCell(record, 'FC03_ATL1 总数量'))
+      const fc14Ewr4Qty = parseQty(getCell(record, 'FC14_EWR4 总数量'))
+      const fc09Atl2Qty = parseQty(getCell(record, 'FC09_ATL2 总数量'))
+      const hasSunnymayHairQty =
+        rawSunnymayHairQty !== null &&
+        rawSunnymayHairQty !== undefined &&
+        String(rawSunnymayHairQty).trim() !== '' &&
+        String(rawSunnymayHairQty).trim() !== '/'
+      const totalQty = hasSunnymayHairQty
+        ? sunnymayHairQty
+        : (fc03Atl1Qty + fc14Ewr4Qty + fc09Atl2Qty)
 
       return {
-        row: index + 2,
+        row: excelRowNumber,
         sku,
         availableQty,
         lockedQty,
@@ -199,11 +241,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const unmatchedSkuCount = failures.filter((item) => item.reason === '未找到匹配的 Product.sku').length
+    const hint =
+      failures.length > 0 && unmatchedSkuCount > failures.length / 2
+        ? '请确认产品库中的 Product.sku 是否与库存表的商家 SKU 一致。'
+        : null
+
     return NextResponse.json({
       success: true,
       successCount,
       failureCount: failures.length,
       failures,
+      hint,
     })
   } catch (error) {
     console.error('导入库存数据失败:', error)

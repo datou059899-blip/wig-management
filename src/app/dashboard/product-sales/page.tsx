@@ -50,6 +50,7 @@ interface ImportResult {
   successCount: number
   failureCount: number
   failures: ImportFailure[]
+  hint?: string | null
 }
 
 interface TrendPoint {
@@ -153,6 +154,7 @@ export default function ProductSalesPage() {
         successCount: data.successCount || 0,
         failureCount: data.failureCount || 0,
         failures: Array.isArray(data.failures) ? data.failures : [],
+        hint: data.hint || null,
       })
 
       await loadData(selectedSku, trendRange)
@@ -343,6 +345,11 @@ export default function ProductSalesPage() {
                 <span>成功 {importResult.successCount} 条</span>
                 <span>失败 {importResult.failureCount} 条</span>
               </div>
+              {importResult.hint && (
+                <div className="mt-2 text-sm text-amber-700">
+                  {importResult.hint}
+                </div>
+              )}
               {importResult.failures.length > 0 && (
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full text-sm">
