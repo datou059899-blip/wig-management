@@ -140,6 +140,14 @@ model ProductInventorySnapshot {
   @@index([date])
 }
 
+model ProductSalesGroup {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  skus      Json     @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model PerformanceMeta {
   id                 String    @id @default(cuid())
   lastOrdersImportAt DateTime?
