@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma'
 type InventoryFailure = {
   row: number
   sku: string
+  productName?: string
   reason: string
 }
 
@@ -14,6 +15,7 @@ type ProductLookup = {
   id: string
   sku: string | null
   name: string
+  skuId: string | null
 }
 
 type QtyParseResult = {
@@ -52,6 +54,38 @@ function normalizeHeader(value: unknown) {
 
 function getCell(row: Record<string, unknown>, fieldName: string) {
   return row[fieldName]
+}
+
+function normalizeSku(value: string) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+}
+
+function updateProductLookupMaps(
+  product: ProductLookup,
+  productBySkuMap: Map<string, ProductLookup>,
+  productByNameMap: Map<string, ProductLookup>,
+  productBySkuIdMap: Map<string, ProductLookup>,
+  productByNormalizedSkuMap: Map<string, ProductLookup>,
+) {
+  if (product.sku) {
+    productBySkuMap.set(product.sku, product)
+
+    const normalized = normalizeSku(product.sku)
+    if (normalized && !productByNormalizedSkuMap.has(normalized)) {
+      productByNormalizedSkuMap.set(normalized, product)
+    }
+  }
+
+  if (product.name && !productByNameMap.has(product.name)) {
+    productByNameMap.set(product.name, product)
+  }
+
+  if (product.skuId) {
+    productBySkuIdMap.set(product.skuId, product)
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -111,11 +145,15 @@ export async function POST(request: NextRequest) {
 
       const excelRowNumber = index + 4
       const productName = String(getCell(record, '商品名称') || '').trim()
+      const platformSku = String(getCell(record, 'SKU') || '').trim()
       const sku = String(getCell(record, '商家 SKU') || '').trim()
+      const itemId = String(getCell(record, '商品 ID') || '').trim()
+      const skuId = String(getCell(record, 'SKU ID') || '').trim()
       if (!sku) {
         failures.push({
           row: excelRowNumber,
           sku: '',
+          productName,
           reason: '商家 SKU 为空',
         })
         return null
@@ -125,6 +163,7 @@ export async function POST(request: NextRequest) {
         failures.push({
           row: excelRowNumber,
           sku,
+          productName,
           reason: '商家 SKU 无效',
         })
         return null
@@ -149,6 +188,7 @@ export async function POST(request: NextRequest) {
         failures.push({
           row: excelRowNumber,
           sku,
+          productName,
           reason: '数量字段格式错误',
         })
         return null
@@ -173,6 +213,9 @@ export async function POST(request: NextRequest) {
         row: excelRowNumber,
         sku,
         productName,
+        platformSku,
+        itemId,
+        skuId,
         availableQty,
         lockedQty,
         sunnymayHairQty,
@@ -185,6 +228,9 @@ export async function POST(request: NextRequest) {
       row: number
       sku: string
       productName: string
+      platformSku: string
+      itemId: string
+      skuId: string
       availableQty: number
       lockedQty: number
       sunnymayHairQty: number
@@ -206,58 +252,28 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    const skuList = Array.from(new Set(candidates.map((item) => item.sku)))
-    const productNames = Array.from(
-      new Set(
-        candidates
-          .map((item) => item.productName)
-          .filter((name) => Boolean(name)),
-      ),
-    )
-
     const products = await prisma.product.findMany({
-      where: {
-        sku: {
-          in: skuList,
-        },
-      },
       select: {
         id: true,
         sku: true,
         name: true,
+        skuId: true,
       },
     })
 
-    const productsByName = productNames.length
-      ? await prisma.product.findMany({
-          where: {
-            name: {
-              in: productNames,
-            },
-          },
-          select: {
-            id: true,
-            sku: true,
-            name: true,
-          },
-          orderBy: {
-            updatedAt: 'desc',
-          },
-        })
-      : []
+    const productBySkuMap = new Map<string, ProductLookup>()
+    const productByNameMap = new Map<string, ProductLookup>()
+    const productBySkuIdMap = new Map<string, ProductLookup>()
+    const productByNormalizedSkuMap = new Map<string, ProductLookup>()
 
-    const productMap = new Map<string, ProductLookup>(
-      products
-        .filter((product): product is ProductLookup => Boolean(product.name))
-        .map((product) => [product.sku || '', product]),
-    )
-
-    const productNameMap = new Map<string, ProductLookup>()
-    for (const product of productsByName) {
-      const existing = productNameMap.get(product.name)
-      if (!existing || (existing.sku && !product.sku)) {
-        productNameMap.set(product.name, product)
-      }
+    for (const product of products) {
+      updateProductLookupMaps(
+        product,
+        productBySkuMap,
+        productByNameMap,
+        productBySkuIdMap,
+        productByNormalizedSkuMap,
+      )
     }
 
     const snapshotDate = new Date()
@@ -267,34 +283,107 @@ export async function POST(request: NextRequest) {
     let updatedExistingCount = 0
     let autoFilledSkuCount = 0
     let autoCreatedCount = 0
+    let reviewCount = 0
 
     for (const item of candidates) {
       try {
-        let product = productMap.get(item.sku) || null
+        let product = productBySkuMap.get(item.sku) || null
         let importMode: 'existing' | 'filled' | 'created' = 'existing'
+        let shouldReview = false
+        let reviewReason = ''
+
+        if (!product && item.platformSku) {
+          product = productBySkuMap.get(item.platformSku) || null
+        }
+
+        if (!product) {
+          const matchedByExternalId =
+            (item.skuId ? productBySkuIdMap.get(item.skuId) : null) ||
+            (item.itemId ? productBySkuIdMap.get(item.itemId) : null) ||
+            null
+
+          if (matchedByExternalId) {
+            if (!matchedByExternalId.sku) {
+              const updatedProduct = await prisma.product.update({
+                where: { id: matchedByExternalId.id },
+                data: {
+                  sku: item.sku,
+                  skuId: matchedByExternalId.skuId || item.skuId || item.itemId || null,
+                },
+                select: {
+                  id: true,
+                  sku: true,
+                  name: true,
+                  skuId: true,
+                },
+              })
+
+              product = updatedProduct
+              importMode = 'filled'
+              updateProductLookupMaps(
+                updatedProduct,
+                productBySkuMap,
+                productByNameMap,
+                productBySkuIdMap,
+                productByNormalizedSkuMap,
+              )
+            } else {
+              product = matchedByExternalId
+            }
+          }
+        }
 
         if (!product && item.productName) {
-          const matchedByName = productNameMap.get(item.productName) || null
-          if (matchedByName?.sku) {
-            product = null
+          const matchedByName = productByNameMap.get(item.productName) || null
+          if (matchedByName?.sku && matchedByName.sku !== item.sku) {
+            shouldReview = true
+            reviewReason = '商品名称已存在但 SKU 不一致，请人工确认是否为同一商品'
           } else if (matchedByName) {
             const updatedProduct = await prisma.product.update({
               where: { id: matchedByName.id },
               data: {
                 sku: item.sku,
+                skuId: matchedByName.skuId || item.skuId || item.itemId || null,
               },
               select: {
                 id: true,
                 sku: true,
                 name: true,
+                skuId: true,
               },
             })
 
             product = updatedProduct
             importMode = 'filled'
-            productMap.set(item.sku, updatedProduct)
-            productNameMap.set(updatedProduct.name, updatedProduct)
+            updateProductLookupMaps(
+              updatedProduct,
+              productBySkuMap,
+              productByNameMap,
+              productBySkuIdMap,
+              productByNormalizedSkuMap,
+            )
           }
+        }
+
+        if (!product && !shouldReview) {
+          const normalizedSku = normalizeSku(item.sku)
+          const similarSku = normalizedSku ? productByNormalizedSkuMap.get(normalizedSku) || null : null
+
+          if (similarSku && similarSku.sku && similarSku.sku !== item.sku) {
+            shouldReview = true
+            reviewReason = '检测到 SKU 相似但不完全一致，请人工确认是否为同一商品'
+          }
+        }
+
+        if (shouldReview) {
+          reviewCount += 1
+          failures.push({
+            row: item.row,
+            sku: item.sku,
+            productName: item.productName,
+            reason: reviewReason,
+          })
+          continue
         }
 
         if (!product) {
@@ -302,31 +391,40 @@ export async function POST(request: NextRequest) {
             data: {
               sku: item.sku,
               name: item.productName || item.sku,
+              skuId: item.skuId || item.itemId || null,
               stock: item.totalQty,
             },
             select: {
               id: true,
               sku: true,
               name: true,
+              skuId: true,
             },
           })
 
           product = createdProduct
           importMode = 'created'
-          productMap.set(item.sku, createdProduct)
-          productNameMap.set(createdProduct.name, createdProduct)
+          updateProductLookupMaps(
+            createdProduct,
+            productBySkuMap,
+            productByNameMap,
+            productBySkuIdMap,
+            productByNormalizedSkuMap,
+          )
         }
+
+        const snapshotSku = product.sku || item.sku
 
         await prisma.$transaction([
           prisma.productInventorySnapshot.upsert({
             where: {
               sku_date: {
-                sku: item.sku,
+                sku: snapshotSku,
                 date: snapshotDate,
               },
             },
             create: {
-              sku: item.sku,
+              sku: snapshotSku,
               date: snapshotDate,
               availableQty: item.availableQty,
               lockedQty: item.lockedQty,
@@ -370,15 +468,15 @@ export async function POST(request: NextRequest) {
         failures.push({
           row: item.row,
           sku: item.sku,
+          productName: item.productName,
           reason: '写入库存数据失败',
         })
       }
     }
 
-    const unmatchedSkuCount = failures.filter((item) => item.reason === '未找到匹配的 Product.sku').length
     const hint =
-      failures.length > 0 && unmatchedSkuCount > failures.length / 2
-        ? '库存表里的商家 SKU 和产品库 Product.sku 不一致，需要补齐或同步产品库 SKU。'
+      reviewCount > 0
+        ? '检测到商品名称已存在但 SKU 不一致，为避免重复创建，请先人工确认产品库 SKU。'
         : null
 
     return NextResponse.json({
@@ -387,6 +485,7 @@ export async function POST(request: NextRequest) {
       updatedExistingCount,
       autoFilledSkuCount,
       autoCreatedCount,
+      reviewCount,
       failureCount: failures.length,
       failures,
       hint,
