@@ -78,8 +78,11 @@ export default function ProductSalesPage() {
   const [summary, setSummary] = useState<SummaryData | null>(null)
   const [products, setProducts] = useState<ProductData[]>([])
   const [skuOptions, setSkuOptions] = useState<SkuOption[]>([])
+  const [groupOptions, setGroupOptions] = useState<string[]>([])
   const [selectedSku, setSelectedSku] = useState('')
+  const [selectedGroup, setSelectedGroup] = useState('')
   const [trendRange, setTrendRange] = useState<7 | 30>(7)
+  const [trendTitle, setTrendTitle] = useState('销售库存趋势 - 全部 SKU')
   const [trends, setTrends] = useState<TrendPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [importingInventory, setImportingInventory] = useState(false)
@@ -98,12 +101,15 @@ export default function ProductSalesPage() {
     direction: 'asc',
   })
 
-  const loadData = async (sku = selectedSku, range = trendRange) => {
+  const loadData = async (sku = selectedSku, group = selectedGroup, range = trendRange) => {
     try {
       setLoading(true)
       const params = new URLSearchParams()
       if (sku) {
         params.set('sku', sku)
+      }
+      if (group) {
+        params.set('group', group)
       }
       params.set('range', String(range))
 
@@ -115,8 +121,11 @@ export default function ProductSalesPage() {
       setSummary(data.summary)
       setProducts(data.products)
       setSkuOptions(Array.isArray(data.skuOptions) ? data.skuOptions : [])
+      setGroupOptions(Array.isArray(data.groupOptions) ? data.groupOptions : [])
       setSelectedSku(data.selectedSku || '')
+      setSelectedGroup(data.selectedGroup || '')
       setTrendRange(data.trendRange === 30 ? 30 : 7)
+      setTrendTitle(data.trendTitle || '销售库存趋势 - 全部 SKU')
       setTrends(Array.isArray(data.trends) ? data.trends : [])
       setError(null)
     } catch (err) {
@@ -127,7 +136,7 @@ export default function ProductSalesPage() {
   }
 
   useEffect(() => {
-    void loadData('', 7)
+    void loadData('', '', 7)
   }, [])
 
   const handleImportInventory = () => {
@@ -170,7 +179,7 @@ export default function ProductSalesPage() {
         hint: data.hint || null,
       })
 
-      await loadData(selectedSku, trendRange)
+      await loadData(selectedSku, selectedGroup, trendRange)
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : '导入库存失败')
@@ -208,7 +217,7 @@ export default function ProductSalesPage() {
         failures: Array.isArray(data.failures) ? data.failures : [],
       })
 
-      await loadData(selectedSku, trendRange)
+      await loadData(selectedSku, selectedGroup, trendRange)
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : '导入订单失败')
@@ -273,7 +282,7 @@ export default function ProductSalesPage() {
         throw new Error(data.error || '修改库存失败')
       }
 
-      await loadData(selectedSku, trendRange)
+      await loadData(selectedSku, selectedGroup, trendRange)
       router.refresh()
       setStockEditTarget(null)
     } catch (err) {
@@ -315,7 +324,7 @@ export default function ProductSalesPage() {
         throw new Error(data.error || '删除库存失败')
       }
 
-      await loadData(selectedSku, trendRange)
+      await loadData(selectedSku, selectedGroup, trendRange)
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除库存失败')
@@ -484,18 +493,35 @@ export default function ProductSalesPage() {
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-slate-900">销售库存趋势</h2>
-                  <p className="mt-1 text-sm text-slate-600">查看所选 SKU 最近销量和库存变化</p>
+                  <p className="mt-1 text-sm text-slate-600">{trendTitle}</p>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <select
+                    value={selectedGroup}
+                    onChange={(event) => {
+                      const nextGroup = event.target.value
+                      setSelectedGroup(nextGroup)
+                      void loadData(selectedSku, nextGroup, trendRange)
+                    }}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                  >
+                    <option value="">全部分组</option>
+                    {groupOptions.map((group) => (
+                      <option key={group} value={group}>
+                        {group}
+                      </option>
+                    ))}
+                  </select>
                   <select
                     value={selectedSku}
                     onChange={(event) => {
                       const nextSku = event.target.value
                       setSelectedSku(nextSku)
-                      void loadData(nextSku, trendRange)
+                      void loadData(nextSku, selectedGroup, trendRange)
                     }}
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
                   >
+                    <option value="">全部 SKU</option>
                     {skuOptions.map((option) => (
                       <option key={option.sku} value={option.sku}>
                         {option.sku}
@@ -506,7 +532,7 @@ export default function ProductSalesPage() {
                     <button
                       onClick={() => {
                         setTrendRange(7)
-                        void loadData(selectedSku, 7)
+                        void loadData(selectedSku, selectedGroup, 7)
                       }}
                       className={`rounded-md px-3 py-1.5 text-sm font-medium ${
                         trendRange === 7 ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
@@ -517,7 +543,7 @@ export default function ProductSalesPage() {
                     <button
                       onClick={() => {
                         setTrendRange(30)
-                        void loadData(selectedSku, 30)
+                        void loadData(selectedSku, selectedGroup, 30)
                       }}
                       className={`rounded-md px-3 py-1.5 text-sm font-medium ${
                         trendRange === 30 ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
@@ -533,7 +559,7 @@ export default function ProductSalesPage() {
                 <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
                   <div className="mb-3">
                     <div className="text-sm font-medium text-slate-900">每日销量曲线</div>
-                    <div className="text-xs text-slate-500">SKU：{selectedSku || '-'}</div>
+                    <div className="text-xs text-slate-500">{trendTitle}</div>
                   </div>
                   <div className="h-64">
                     <ResponsiveContainer width="100%" height="100%">
