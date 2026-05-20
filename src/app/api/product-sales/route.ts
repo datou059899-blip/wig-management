@@ -3,6 +3,22 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
+function startOfDay(date: Date) {
+  const normalized = new Date(date)
+  normalized.setHours(0, 0, 0, 0)
+  return normalized
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
+function formatDateKey(date: Date) {
+  return date.toISOString().slice(0, 10)
+}
+
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
@@ -10,19 +26,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
     }
 
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    
-    const yesterday = new Date(today)
-    yesterday.setDate(yesterday.getDate() - 1)
-    
-    const sevenDaysAgo = new Date(today)
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-    
-    const thirtyDaysAgo = new Date(today)
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+    const { searchParams } = new URL(request.url)
+    const requestedSku = String(searchParams.get('sku') || '').trim()
+    const requestedRange = searchParams.get('range') === '30' ? 30 : 7
 
-    // 获取所有产品
+    const today = startOfDay(new Date())
+
+    const yesterday = addDays(today, -1)
+    const sevenDaysAgo = addDays(today, -7)
+    const thirtyDaysAgo = addDays(today, -30)
+
     const products = await prisma.product.findMany({
       where: { isActive: true },
       select: {
@@ -37,7 +50,15 @@ export async function GET(request: NextRequest) {
       orderBy: { updatedAt: 'desc' },
     })
 
-    // 获取销售数据
+    const skuOptions = products
+      .filter((product): product is typeof product & { sku: string } => Boolean(product.sku))
+      .map((product) => ({
+        sku: product.sku,
+        name: product.name,
+      }))
+
+    const selectedSku = skuOptions.find((item) => item.sku === requestedSku)?.sku || skuOptions[0]?.sku || null
+
     const performanceData = await prisma.performanceDaily.findMany({
       where: {
         date: {
@@ -51,9 +72,8 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    // 按 SKU 聚合销售数据
     const salesBySku: Record<string, { today: number; yesterday: number; week: number; month: number }> = {}
-    
+
     products.forEach((product) => {
       if (product.sku) {
         salesBySku[product.sku] = { today: 0, yesterday: 0, week: 0, month: 0 }
@@ -66,8 +86,7 @@ export async function GET(request: NextRequest) {
         salesBySku[perf.sku] = { today: 0, yesterday: 0, week: 0, month: 0 }
       }
 
-      const perfDate = new Date(perf.date)
-      perfDate.setHours(0, 0, 0, 0)
+      const perfDate = startOfDay(new Date(perf.date))
 
       if (perfDate.getTime() === today.getTime()) {
         salesBySku[perf.sku].today += perf.orders
@@ -83,11 +102,10 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // 构建产品表格数据
     const tableData = products.map((product) => {
       const sales = salesBySku[product.sku || ''] || { today: 0, yesterday: 0, week: 0, month: 0 }
       const stock = product.stock || 0
-      
+
       let stockStatus = '正常'
       if (stock === 0) {
         stockStatus = '断货'
@@ -111,7 +129,6 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    // 计算汇总数据
     const totalTodaySales = Object.values(salesBySku).reduce((sum, s) => sum + s.today, 0)
     const totalYesterdaySales = Object.values(salesBySku).reduce((sum, s) => sum + s.yesterday, 0)
     const totalWeekSales = Object.values(salesBySku).reduce((sum, s) => sum + s.week, 0)
@@ -119,6 +136,72 @@ export async function GET(request: NextRequest) {
     const totalStock = products.reduce((sum, p) => sum + (p.stock || 0), 0)
     const lowStockCount = products.filter((p) => (p.stock || 0) > 0 && (p.stock || 0) <= 10).length
     const outOfStockCount = products.filter((p) => (p.stock || 0) === 0).length
+
+    let trends: Array<{
+      date: string
+      label: string
+      orders: number
+      stock: number
+    }> = []
+
+    if (selectedSku) {
+      const trendStartDate = addDays(today, -(requestedRange - 1))
+
+      const snapshotRows = await prisma.productInventorySnapshot.findMany({
+        where: {
+          sku: selectedSku,
+          date: {
+            lte: today,
+          },
+        },
+        select: {
+          date: true,
+          totalQty: true,
+        },
+        orderBy: {
+          date: 'asc',
+        },
+      })
+
+      const salesMap = new Map<string, number>()
+      performanceData.forEach((perf) => {
+        if (perf.sku !== selectedSku) return
+
+        const perfDate = startOfDay(new Date(perf.date))
+        if (perfDate < trendStartDate || perfDate > today) return
+
+        const dateKey = formatDateKey(perfDate)
+        salesMap.set(dateKey, (salesMap.get(dateKey) || 0) + perf.orders)
+      })
+
+      const normalizedSnapshots = snapshotRows.map((item) => ({
+        date: startOfDay(new Date(item.date)),
+        totalQty: item.totalQty || 0,
+      }))
+
+      let snapshotIndex = 0
+      let currentStock = 0
+
+      for (let offset = 0; offset < requestedRange; offset += 1) {
+        const currentDate = addDays(trendStartDate, offset)
+
+        while (
+          snapshotIndex < normalizedSnapshots.length &&
+          normalizedSnapshots[snapshotIndex].date.getTime() <= currentDate.getTime()
+        ) {
+          currentStock = normalizedSnapshots[snapshotIndex].totalQty
+          snapshotIndex += 1
+        }
+
+        const dateKey = formatDateKey(currentDate)
+        trends.push({
+          date: dateKey,
+          label: dateKey.slice(5),
+          orders: salesMap.get(dateKey) || 0,
+          stock: currentStock,
+        })
+      }
+    }
 
     return NextResponse.json({
       summary: {
@@ -130,6 +213,10 @@ export async function GET(request: NextRequest) {
         lowStockCount,
         outOfStockCount,
       },
+      selectedSku,
+      trendRange: requestedRange,
+      skuOptions,
+      trends,
       products: tableData,
     })
   } catch (error) {

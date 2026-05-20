@@ -3,6 +3,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { PageGuard } from '@/components/PageGuard'
 
 interface SummaryData {
@@ -42,6 +52,18 @@ interface ImportResult {
   failures: ImportFailure[]
 }
 
+interface TrendPoint {
+  date: string
+  label: string
+  orders: number
+  stock: number
+}
+
+interface SkuOption {
+  sku: string
+  name: string
+}
+
 export default function ProductSalesPage() {
   const router = useRouter()
   const { data: session } = useSession()
@@ -49,6 +71,10 @@ export default function ProductSalesPage() {
   const ordersInputRef = useRef<HTMLInputElement>(null)
   const [summary, setSummary] = useState<SummaryData | null>(null)
   const [products, setProducts] = useState<ProductData[]>([])
+  const [skuOptions, setSkuOptions] = useState<SkuOption[]>([])
+  const [selectedSku, setSelectedSku] = useState('')
+  const [trendRange, setTrendRange] = useState<7 | 30>(7)
+  const [trends, setTrends] = useState<TrendPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [importingInventory, setImportingInventory] = useState(false)
   const [importingOrders, setImportingOrders] = useState(false)
@@ -61,16 +87,26 @@ export default function ProductSalesPage() {
     direction: 'asc',
   })
 
-  const loadData = async () => {
+  const loadData = async (sku = selectedSku, range = trendRange) => {
     try {
       setLoading(true)
-      const response = await fetch('/api/product-sales')
+      const params = new URLSearchParams()
+      if (sku) {
+        params.set('sku', sku)
+      }
+      params.set('range', String(range))
+
+      const response = await fetch(`/api/product-sales?${params.toString()}`)
       if (!response.ok) {
         throw new Error('获取数据失败')
       }
       const data = await response.json()
       setSummary(data.summary)
       setProducts(data.products)
+      setSkuOptions(Array.isArray(data.skuOptions) ? data.skuOptions : [])
+      setSelectedSku(data.selectedSku || '')
+      setTrendRange(data.trendRange === 30 ? 30 : 7)
+      setTrends(Array.isArray(data.trends) ? data.trends : [])
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : '获取数据失败')
@@ -80,7 +116,7 @@ export default function ProductSalesPage() {
   }
 
   useEffect(() => {
-    void loadData()
+    void loadData('', 7)
   }, [])
 
   const handleImportInventory = () => {
@@ -119,7 +155,7 @@ export default function ProductSalesPage() {
         failures: Array.isArray(data.failures) ? data.failures : [],
       })
 
-      await loadData()
+      await loadData(selectedSku, trendRange)
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : '导入库存失败')
@@ -157,7 +193,7 @@ export default function ProductSalesPage() {
         failures: Array.isArray(data.failures) ? data.failures : [],
       })
 
-      await loadData()
+      await loadData(selectedSku, trendRange)
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : '导入订单失败')
@@ -208,7 +244,7 @@ export default function ProductSalesPage() {
         throw new Error(data.error || '修改库存失败')
       }
 
-      await loadData()
+      await loadData(selectedSku, trendRange)
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : '修改库存失败')
@@ -245,6 +281,8 @@ export default function ProductSalesPage() {
     }
     return <span className="text-pink-500 text-xs">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
   }
+
+  const selectedProduct = products.find((product) => product.sku === selectedSku)
 
   return (
     <PageGuard>
@@ -361,6 +399,116 @@ export default function ProductSalesPage() {
                   </table>
                 </div>
               )}
+            </div>
+          )}
+
+          {skuOptions.length > 0 && (
+            <div className="mb-8 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">销售库存趋势</h2>
+                  <p className="mt-1 text-sm text-slate-600">查看所选 SKU 最近销量和库存变化</p>
+                </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <select
+                    value={selectedSku}
+                    onChange={(event) => {
+                      const nextSku = event.target.value
+                      setSelectedSku(nextSku)
+                      void loadData(nextSku, trendRange)
+                    }}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                  >
+                    {skuOptions.map((option) => (
+                      <option key={option.sku} value={option.sku}>
+                        {option.sku} - {option.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="inline-flex rounded-lg border border-slate-300 p-1">
+                    <button
+                      onClick={() => {
+                        setTrendRange(7)
+                        void loadData(selectedSku, 7)
+                      }}
+                      className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                        trendRange === 7 ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      最近 7 天
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTrendRange(30)
+                        void loadData(selectedSku, 30)
+                      }}
+                      className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                        trendRange === 30 ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      最近 30 天
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
+                  <div className="mb-3">
+                    <div className="text-sm font-medium text-slate-900">每日销量曲线</div>
+                    <div className="text-xs text-slate-500">
+                      {selectedProduct ? `${selectedProduct.name} / ${selectedProduct.sku}` : '当前 SKU'}
+                    </div>
+                  </div>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={trends} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                        <Tooltip />
+                        <Legend />
+                        <Line
+                          type="monotone"
+                          dataKey="orders"
+                          name="每日销量"
+                          stroke="#2563eb"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          activeDot={{ r: 5 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
+                  <div className="mb-3">
+                    <div className="text-sm font-medium text-slate-900">每日剩余库存曲线</div>
+                    <div className="text-xs text-slate-500">缺失快照时沿用最近一次库存</div>
+                  </div>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={trends} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                        <Tooltip />
+                        <Legend />
+                        <Line
+                          type="monotone"
+                          dataKey="stock"
+                          name="每日剩余库存"
+                          stroke="#db2777"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          activeDot={{ r: 5 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
