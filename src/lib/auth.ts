@@ -42,7 +42,7 @@ export const authOptions: NextAuthOptions = {
             where: { email: loginInput }
           })
         } else if (isPhone(loginInput)) {
-          user = await prisma.user.findUnique({
+          user = await prisma.user.findFirst({
             where: { phone: loginInput }
           })
         } else {
