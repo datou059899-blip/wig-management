@@ -46,11 +46,14 @@ export default function ProductSalesPage() {
   const router = useRouter()
   const { data: session } = useSession()
   const inventoryInputRef = useRef<HTMLInputElement>(null)
+  const ordersInputRef = useRef<HTMLInputElement>(null)
   const [summary, setSummary] = useState<SummaryData | null>(null)
   const [products, setProducts] = useState<ProductData[]>([])
   const [loading, setLoading] = useState(true)
   const [importingInventory, setImportingInventory] = useState(false)
+  const [importingOrders, setImportingOrders] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
+  const [ordersImportResult, setOrdersImportResult] = useState<ImportResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
     key: 'sku',
@@ -81,6 +84,10 @@ export default function ProductSalesPage() {
 
   const handleImportInventory = () => {
     inventoryInputRef.current?.click()
+  }
+
+  const handleImportOrders = () => {
+    ordersInputRef.current?.click()
   }
 
   const handleInventoryFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -118,6 +125,44 @@ export default function ProductSalesPage() {
     } finally {
       event.target.value = ''
       setImportingInventory(false)
+    }
+  }
+
+  const handleOrdersFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    setImportingOrders(true)
+    setOrdersImportResult(null)
+    setError(null)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await fetch('/api/product-sales/import-orders', {
+        method: 'POST',
+        body: formData,
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '导入订单失败')
+      }
+
+      setOrdersImportResult({
+        successCount: data.successCount || 0,
+        failureCount: data.failureCount || 0,
+        failures: Array.isArray(data.failures) ? data.failures : [],
+      })
+
+      await loadData()
+      router.refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导入订单失败')
+    } finally {
+      event.target.value = ''
+      setImportingOrders(false)
     }
   }
 
@@ -164,9 +209,16 @@ export default function ProductSalesPage() {
               <button
                 onClick={handleImportInventory}
                 className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
-                disabled={importingInventory || loading}
+                disabled={importingInventory || importingOrders || loading}
               >
                 {importingInventory ? '正在导入库存表...' : '导入库存表'}
+              </button>
+              <button
+                onClick={handleImportOrders}
+                className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                disabled={importingOrders || importingInventory || loading}
+              >
+                {importingOrders ? '正在导入订单表...' : '导入订单表'}
               </button>
             </div>
           </div>
@@ -177,6 +229,13 @@ export default function ProductSalesPage() {
             accept=".xlsx,.xls,.csv"
             className="hidden"
             onChange={handleInventoryFileChange}
+          />
+          <input
+            ref={ordersInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={handleOrdersFileChange}
           />
 
           {/* 错误提示 */}
@@ -209,6 +268,40 @@ export default function ProductSalesPage() {
                       {importResult.failures.map((item, index) => (
                         <tr key={`${item.row}-${item.sku}-${index}`} className="border-b border-slate-100">
                           <td className="px-3 py-2 text-slate-700">{item.row}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
+                          <td className="px-3 py-2 text-red-600">{item.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {ordersImportResult && (
+            <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-center gap-4 text-sm text-slate-700">
+                <span className="font-semibold text-slate-900">
+                  订单导入完成
+                </span>
+                <span>成功 {ordersImportResult.successCount} 条</span>
+                <span>失败 {ordersImportResult.failureCount} 条</span>
+              </div>
+              {ordersImportResult.failures.length > 0 && (
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                        <th className="px-3 py-2">行号</th>
+                        <th className="px-3 py-2">SKU</th>
+                        <th className="px-3 py-2">失败原因</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ordersImportResult.failures.map((item, index) => (
+                        <tr key={`${item.row}-${item.sku}-${index}`} className="border-b border-slate-100">
+                          <td className="px-3 py-2 text-slate-700">{item.row || '-'}</td>
                           <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
                           <td className="px-3 py-2 text-red-600">{item.reason}</td>
                         </tr>
