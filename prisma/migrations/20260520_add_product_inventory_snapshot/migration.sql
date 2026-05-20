@@ -1,6 +1,6 @@
 -- CreateTable
 CREATE TABLE "ProductInventorySnapshot" (
-    "id" TEXT NOT NULL,
+    "id" TEXT NOT NULL DEFAULT gen_random_uuid()::text,
     "sku" TEXT NOT NULL,
     "date" TIMESTAMP(3) NOT NULL,
     "availableQty" INTEGER NOT NULL DEFAULT 0,
@@ -12,7 +12,7 @@ CREATE TABLE "ProductInventorySnapshot" (
     "totalQty" INTEGER NOT NULL DEFAULT 0,
     "sourceFileName" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "ProductInventorySnapshot_pkey" PRIMARY KEY ("id")
 );
