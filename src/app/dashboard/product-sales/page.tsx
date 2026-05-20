@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { PageGuard } from '@/components/PageGuard'
@@ -30,39 +30,96 @@ interface ProductData {
   updatedAt: string
 }
 
+interface ImportFailure {
+  row: number
+  sku: string
+  reason: string
+}
+
+interface ImportResult {
+  successCount: number
+  failureCount: number
+  failures: ImportFailure[]
+}
+
 export default function ProductSalesPage() {
   const router = useRouter()
   const { data: session } = useSession()
+  const inventoryInputRef = useRef<HTMLInputElement>(null)
   const [summary, setSummary] = useState<SummaryData | null>(null)
   const [products, setProducts] = useState<ProductData[]>([])
   const [loading, setLoading] = useState(true)
+  const [importingInventory, setImportingInventory] = useState(false)
+  const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
     key: 'sku',
     direction: 'asc',
   })
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true)
-        const response = await fetch('/api/product-sales')
-        if (!response.ok) {
-          throw new Error('获取数据失败')
-        }
-        const data = await response.json()
-        setSummary(data.summary)
-        setProducts(data.products)
-        setError(null)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : '获取数据失败')
-      } finally {
-        setLoading(false)
+  const loadData = async () => {
+    try {
+      setLoading(true)
+      const response = await fetch('/api/product-sales')
+      if (!response.ok) {
+        throw new Error('获取数据失败')
       }
+      const data = await response.json()
+      setSummary(data.summary)
+      setProducts(data.products)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '获取数据失败')
+    } finally {
+      setLoading(false)
     }
+  }
 
-    fetchData()
+  useEffect(() => {
+    void loadData()
   }, [])
+
+  const handleImportInventory = () => {
+    inventoryInputRef.current?.click()
+  }
+
+  const handleInventoryFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    setImportingInventory(true)
+    setImportResult(null)
+    setError(null)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await fetch('/api/product-sales/import-inventory', {
+        method: 'POST',
+        body: formData,
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '导入库存失败')
+      }
+
+      setImportResult({
+        successCount: data.successCount || 0,
+        failureCount: data.failureCount || 0,
+        failures: Array.isArray(data.failures) ? data.failures : [],
+      })
+
+      await loadData()
+      router.refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导入库存失败')
+    } finally {
+      event.target.value = ''
+      setImportingInventory(false)
+    }
+  }
 
   const handleSort = (key: string) => {
     setSortConfig((prev) => ({
@@ -99,14 +156,67 @@ export default function ProductSalesPage() {
         <div className="max-w-7xl mx-auto">
           {/* 页面标题 */}
           <div className="mb-8">
-            <h1 className="text-3xl font-bold text-slate-900">产品销售库存</h1>
-            <p className="text-slate-600 mt-2">查看产品销售趋势和库存现状</p>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h1 className="text-3xl font-bold text-slate-900">产品销售库存</h1>
+                <p className="text-slate-600 mt-2">查看产品销售趋势和库存现状</p>
+              </div>
+              <button
+                onClick={handleImportInventory}
+                className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+                disabled={importingInventory || loading}
+              >
+                {importingInventory ? '正在导入库存表...' : '导入库存表'}
+              </button>
+            </div>
           </div>
+
+          <input
+            ref={inventoryInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={handleInventoryFileChange}
+          />
 
           {/* 错误提示 */}
           {error && (
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
               {error}
+            </div>
+          )}
+
+          {importResult && (
+            <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-center gap-4 text-sm text-slate-700">
+                <span className="font-semibold text-slate-900">
+                  库存导入完成
+                </span>
+                <span>成功 {importResult.successCount} 条</span>
+                <span>失败 {importResult.failureCount} 条</span>
+              </div>
+              {importResult.failures.length > 0 && (
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                        <th className="px-3 py-2">行号</th>
+                        <th className="px-3 py-2">SKU</th>
+                        <th className="px-3 py-2">失败原因</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importResult.failures.map((item, index) => (
+                        <tr key={`${item.row}-${item.sku}-${index}`} className="border-b border-slate-100">
+                          <td className="px-3 py-2 text-slate-700">{item.row}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
+                          <td className="px-3 py-2 text-red-600">{item.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
