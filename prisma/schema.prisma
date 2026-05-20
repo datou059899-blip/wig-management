@@ -111,6 +111,11 @@ model PerformanceDaily {
   owner       String?
   gmv         Float    @default(0)
   orders      Int      @default(0)
+  grossOrders Int      @default(0)
+  returnQty   Int      @default(0)
+  netOrders   Int      @default(0)
+  canceledQty Int      @default(0)
+  refundAmount Float   @default(0)
   adsCost     Float    @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
