@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     if (error) return error
 
     const body = await request.json()
-    const email = body.email ? String(body.email).trim() : null
+    const email = body.email ? String(body.email).trim() : ''
     const phone = body.phone ? String(body.phone).trim() : null
     const password = String(body.password || '').trim()
     const name = body.name ? String(body.name) : null
@@ -67,9 +67,8 @@ export async function POST(request: NextRequest) {
     const permissionMode = body.permissionMode === 'custom' ? 'custom' : 'role'
     const allowedPages = body.allowedPages ? String(body.allowedPages) : ''
 
-    // 校验：邮箱和手机号至少保留一个
-    if (!email && !phone) {
-      return NextResponse.json({ error: '邮箱和手机号至少填写一个' }, { status: 400 })
+    if (!email) {
+      return NextResponse.json({ error: '邮箱不能为空' }, { status: 400 })
     }
 
     if (!password) {
