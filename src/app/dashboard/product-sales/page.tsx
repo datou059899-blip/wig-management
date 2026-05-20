@@ -52,6 +52,7 @@ export default function ProductSalesPage() {
   const [loading, setLoading] = useState(true)
   const [importingInventory, setImportingInventory] = useState(false)
   const [importingOrders, setImportingOrders] = useState(false)
+  const [editingStockSku, setEditingStockSku] = useState<string | null>(null)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [ordersImportResult, setOrdersImportResult] = useState<ImportResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -163,6 +164,56 @@ export default function ProductSalesPage() {
     } finally {
       event.target.value = ''
       setImportingOrders(false)
+    }
+  }
+
+  const handleEditStock = async (product: ProductData) => {
+    if (!product.sku || product.sku === '-') {
+      setError('该产品缺少 SKU，无法修改库存')
+      return
+    }
+
+    const nextValue = window.prompt(`请输入 ${product.sku} 的最新库存`, String(product.stock))
+    if (nextValue === null) return
+
+    const trimmed = nextValue.trim()
+    if (!trimmed) {
+      setError('库存不能为空')
+      return
+    }
+
+    const stock = Number(trimmed)
+    if (!Number.isInteger(stock) || stock < 0) {
+      setError('库存必须是大于等于 0 的整数')
+      return
+    }
+
+    try {
+      setEditingStockSku(product.sku)
+      setError(null)
+
+      const response = await fetch('/api/product-sales/update-stock', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sku: product.sku,
+          stock,
+        }),
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '修改库存失败')
+      }
+
+      await loadData()
+      router.refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '修改库存失败')
+    } finally {
+      setEditingStockSku(null)
     }
   }
 
@@ -497,12 +548,15 @@ export default function ProductSalesPage() {
                             更新时间 <SortIcon columnKey="updatedAt" />
                           </button>
                         </th>
+                        <th className="px-6 py-3 text-center font-semibold text-slate-900">
+                          操作
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {sortedProducts.length === 0 ? (
                         <tr>
-                          <td colSpan={11} className="px-6 py-8 text-center text-slate-500">
+                          <td colSpan={12} className="px-6 py-8 text-center text-slate-500">
                             暂无产品数据
                           </td>
                         </tr>
@@ -533,6 +587,15 @@ export default function ProductSalesPage() {
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-600">
                               {new Date(product.updatedAt).toLocaleString('zh-CN')}
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              <button
+                                onClick={() => handleEditStock(product)}
+                                className="inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                disabled={editingStockSku === product.sku || product.sku === '-'}
+                              >
+                                {editingStockSku === product.sku ? '保存中...' : '编辑库存'}
+                              </button>
                             </td>
                           </tr>
                         ))
