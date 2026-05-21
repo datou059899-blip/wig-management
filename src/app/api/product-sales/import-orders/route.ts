@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
+import { Prisma } from '@prisma/client'
 import * as XLSX from 'xlsx'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -51,7 +52,7 @@ type AggregatedOrderStat = {
   refundAmount: number
 }
 
-const WRITE_BATCH_SIZE = 5
+const WRITE_BATCH_SIZE = 200
 const TIMEOUT_GUARD_MS = 45_000
 
 function normalizeHeader(value: unknown) {
@@ -327,6 +328,48 @@ function buildSummary(aggregatedItems: AggregatedOrderStat[]) {
     totalCanceledQty,
     totalRefundAmount,
   }
+}
+
+async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
+  if (!batch.length) return
+
+  const rows = batch.map((item) => Prisma.sql`(
+    ${item.sku},
+    ${createDate(item.dateStr)},
+    ${item.productName},
+    ${item.netOrders},
+    ${item.grossOrders},
+    ${item.returnQty},
+    ${item.netOrders},
+    ${item.canceledQty},
+    ${item.refundAmount},
+    CURRENT_TIMESTAMP
+  )`)
+
+  await prisma.$executeRaw(Prisma.sql`
+    INSERT INTO "PerformanceDaily" (
+      "sku",
+      "date",
+      "productName",
+      "orders",
+      "grossOrders",
+      "returnQty",
+      "netOrders",
+      "canceledQty",
+      "refundAmount",
+      "updatedAt"
+    )
+    VALUES ${Prisma.join(rows)}
+    ON CONFLICT ("date", "sku") DO UPDATE SET
+      "productName" = EXCLUDED."productName",
+      "orders" = EXCLUDED."orders",
+      "grossOrders" = EXCLUDED."grossOrders",
+      "returnQty" = EXCLUDED."returnQty",
+      "netOrders" = EXCLUDED."netOrders",
+      "canceledQty" = EXCLUDED."canceledQty",
+      "refundAmount" = EXCLUDED."refundAmount",
+      "updatedAt" = CURRENT_TIMESTAMP
+  `)
 }
 
 export async function POST(request: NextRequest) {
@@ -709,24 +752,8 @@ export async function POST(request: NextRequest) {
     }
 
     stage = 'write-performance'
-    const summaryByDateMap = new Map<string, {
-      date: string
-      grossOrders: number
-      returnQty: number
-      netOrders: number
-      canceledQty: number
-      refundAmount: number
-    }>()
-    const summaryBySkuMap = new Map<string, {
-      sku: string
-      grossOrders: number
-      returnQty: number
-      netOrders: number
-      canceledQty: number
-      refundAmount: number
-    }>()
-
     let successCount = 0
+    const successfulItems: AggregatedOrderStat[] = []
     const writeErrors: Array<{ sku: string; dateStr: string; reason: string }> = []
     const batches = chunkArray(matchedAggregatedItems, WRITE_BATCH_SIZE)
 
@@ -745,99 +772,34 @@ export async function POST(request: NextRequest) {
         return createTimeoutResponse(stage, processedCount, remainingCount)
       }
 
-      const results = await Promise.allSettled(
-        batch.map(async (item) => {
-          await prisma.performanceDaily.upsert({
-            where: {
-              date_sku: {
-                sku: item.sku,
-                date: createDate(item.dateStr),
-              },
-            },
-            create: {
-              sku: item.sku,
-              date: createDate(item.dateStr),
-              productName: item.productName,
-              orders: item.netOrders,
-              grossOrders: item.grossOrders,
-              returnQty: item.returnQty,
-              netOrders: item.netOrders,
-              canceledQty: item.canceledQty,
-              refundAmount: item.refundAmount,
-            },
-            update: {
-              productName: item.productName ?? undefined,
-              orders: item.netOrders,
-              grossOrders: item.grossOrders,
-              returnQty: item.returnQty,
-              netOrders: item.netOrders,
-              canceledQty: item.canceledQty,
-              refundAmount: item.refundAmount,
-            },
-          })
+      try {
+        await bulkUpsertPerformanceDaily(batch)
+        successfulItems.push(...batch)
+        successCount += batch.length
+      } catch (error) {
+        const reason = String((error as Error)?.message || error)
 
-          return item
-        }),
-      )
-
-      results.forEach((result, index) => {
-        const item = batch[index]
-
-        if (result.status === 'fulfilled') {
-          const byDate = summaryByDateMap.get(item.dateStr) || {
-            date: item.dateStr,
-            grossOrders: 0,
-            returnQty: 0,
-            netOrders: 0,
-            canceledQty: 0,
-            refundAmount: 0,
-          }
-          byDate.grossOrders += item.grossOrders
-          byDate.returnQty += item.returnQty
-          byDate.netOrders += item.netOrders
-          byDate.canceledQty += item.canceledQty
-          byDate.refundAmount += item.refundAmount
-          summaryByDateMap.set(item.dateStr, byDate)
-
-          const bySku = summaryBySkuMap.get(item.sku) || {
+        batch.forEach((item) => {
+          console.error('导入订单汇总失败:', {
             sku: item.sku,
-            grossOrders: 0,
-            returnQty: 0,
-            netOrders: 0,
-            canceledQty: 0,
-            refundAmount: 0,
-          }
-          bySku.grossOrders += item.grossOrders
-          bySku.returnQty += item.returnQty
-          bySku.netOrders += item.netOrders
-          bySku.canceledQty += item.canceledQty
-          bySku.refundAmount += item.refundAmount
-          summaryBySkuMap.set(item.sku, bySku)
-
-          successCount += 1
-          return
-        }
-
-        const reason = String((result.reason as Error)?.message || result.reason)
-        console.error('导入订单汇总失败:', {
-          sku: item.sku,
-          dateStr: item.dateStr,
-          error: reason,
+            dateStr: item.dateStr,
+            error: reason,
+          })
+          writeErrors.push({
+            sku: item.sku,
+            dateStr: item.dateStr,
+            reason,
+          })
+          failures.push({
+            row: 0,
+            sku: item.sku,
+            paidTime: item.dateStr,
+            quantity: item.grossOrders,
+            returnQty: item.returnQty,
+            reason: `${item.dateStr} 写入 PerformanceDaily 失败：${reason}`,
+          })
         })
-        writeErrors.push({
-          sku: item.sku,
-          dateStr: item.dateStr,
-          reason,
-        })
-        failures.push({
-          row: 0,
-          sku: item.sku,
-          paidTime: item.dateStr,
-          quantity: item.grossOrders,
-          returnQty: item.returnQty,
-          reason: `${item.dateStr} 写入 PerformanceDaily 失败：${reason}`,
-        })
-      })
+      }
     }
 
     console.log('[import-orders] write end', {
@@ -846,15 +808,7 @@ export async function POST(request: NextRequest) {
       totalFailureCount: failures.length,
     })
 
-    const summaryByDate = Array.from(summaryByDateMap.values()).sort((a, b) => a.date.localeCompare(b.date))
-    const summaryBySku = Array.from(summaryBySkuMap.values()).sort((a, b) => a.sku.localeCompare(b.sku))
-    const totalGrossOrders = summaryBySku.reduce((sum, item) => sum + item.grossOrders, 0)
-    const totalReturnQty = summaryBySku.reduce((sum, item) => sum + item.returnQty, 0)
-    const totalNetOrders = summaryBySku.reduce((sum, item) => sum + item.netOrders, 0)
-    const totalCanceledQty = summaryBySku.reduce((sum, item) => sum + item.canceledQty, 0)
-    const totalRefundAmount = Number(
-      summaryBySku.reduce((sum, item) => sum + item.refundAmount, 0).toFixed(2),
-    )
+    const writeSummary = buildSummary(successfulItems)
 
     if (successCount === 0 && matchedAggregatedItems.length > 0 && writeErrors.length > 0) {
       return NextResponse.json(
@@ -888,13 +842,13 @@ export async function POST(request: NextRequest) {
       successCount,
       failedCount: failures.length,
       failedRows: failures,
-      summaryByDate,
-      summaryBySku,
-      totalGrossOrders,
-      totalReturnQty,
-      totalNetOrders,
-      totalCanceledQty,
-      totalRefundAmount,
+      summaryByDate: writeSummary.summaryByDate,
+      summaryBySku: writeSummary.summaryBySku,
+      totalGrossOrders: writeSummary.totalGrossOrders,
+      totalReturnQty: writeSummary.totalReturnQty,
+      totalNetOrders: writeSummary.totalNetOrders,
+      totalCanceledQty: writeSummary.totalCanceledQty,
+      totalRefundAmount: writeSummary.totalRefundAmount,
       writeErrors,
     })
   } catch (error) {
