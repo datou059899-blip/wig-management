@@ -28,13 +28,23 @@ type InventoryTarget = {
   productSku: string | null
   fallbackStock: number
   requestedSkus: string[]
+  consumedSkus: string[]
   snapshotCandidateSkus: string[]
+  baselineCandidateSkus: string[]
 }
 
 type ResolvedSnapshotRow = {
   sku: string
   date: Date
   qty: number | null
+}
+
+type BaselineRow = {
+  id: string
+  sku: string
+  quantity: number
+  baselineDate: Date
+  note: string | null
 }
 
 function startOfDay(date: Date) {
@@ -120,7 +130,7 @@ function resolveSnapshotQty(snapshot: {
   return null
 }
 
-function buildProjectedStockSeries(params: {
+function buildFallbackStockSeries(params: {
   startDate: Date
   totalDays: number
   fallbackStock: number
@@ -193,6 +203,53 @@ function buildProjectedStockSeries(params: {
       }
       cursorDate = nextDate
     }
+  }
+
+  return series
+}
+
+function buildBaselineStockSeries(params: {
+  startDate: Date
+  totalDays: number
+  baselineDate: Date
+  baselineQty: number
+  consumedByDate: Map<string, number>
+}) {
+  const { startDate, totalDays, baselineDate, baselineQty, consumedByDate } = params
+  const series = new Map<string, number>()
+  const endDate = addDays(startDate, totalDays - 1)
+  const startDateMs = startDate.getTime()
+  const endDateMs = endDate.getTime()
+  const normalizedBaselineDate = startOfDay(baselineDate)
+  const baselineMs = normalizedBaselineDate.getTime()
+  const safeBaselineQty = Math.max(baselineQty, 0)
+
+  let forwardStartStock = safeBaselineQty
+  for (let currentDate = normalizedBaselineDate; currentDate.getTime() <= endDateMs; currentDate = addDays(currentDate, 1)) {
+    const dateKey = formatDateKey(currentDate)
+    const endStock = Math.max(forwardStartStock - (consumedByDate.get(dateKey) || 0), 0)
+    if (currentDate.getTime() >= startDateMs) {
+      series.set(dateKey, endStock)
+    }
+    forwardStartStock = endStock
+  }
+
+  let nextDayStartStock = safeBaselineQty
+  for (let currentDate = addDays(normalizedBaselineDate, -1); currentDate.getTime() >= startDateMs; currentDate = addDays(currentDate, -1)) {
+    const dateKey = formatDateKey(currentDate)
+    series.set(dateKey, Math.max(nextDayStartStock, 0))
+    nextDayStartStock = Math.max(nextDayStartStock + (consumedByDate.get(dateKey) || 0), 0)
+  }
+
+  for (let currentDate = startDate; currentDate.getTime() <= endDateMs; currentDate = addDays(currentDate, 1)) {
+    const dateKey = formatDateKey(currentDate)
+    if (!series.has(dateKey)) {
+      series.set(dateKey, 0)
+    }
+  }
+
+  if (baselineMs < startDateMs) {
+    return series
   }
 
   return series
@@ -309,6 +366,19 @@ export async function GET(request: NextRequest) {
     ])
 
     const productById = new Map(products.map((product) => [product.id, product]))
+    const relatedSkuSetByProductId = new Map<string, Set<string>>()
+    const ensureRelatedSkuSet = (productId: string) => {
+      if (!relatedSkuSetByProductId.has(productId)) {
+        relatedSkuSetByProductId.set(productId, new Set<string>())
+      }
+      return relatedSkuSetByProductId.get(productId)!
+    }
+    const registerRelatedSku = (productId: string, sku: string | null | undefined) => {
+      const value = normalizeCell(sku)
+      if (!value) return
+      ensureRelatedSkuSet(productId).add(value)
+    }
+
     const exactMainSkuMap = new Map<string, ProductLookup>()
     const normalizedMainSkuMap = new Map<string, ProductLookup>()
     const exactAliasSkuMap = new Map<string, ProductLookup>()
@@ -319,6 +389,7 @@ export async function GET(request: NextRequest) {
     const normalizedProductNameParentheticalMap = new Map<string, ProductLookup>()
 
     products.forEach((product) => {
+      registerRelatedSku(product.id, product.sku)
       if (product.sku) {
         setLookupIfMissing(exactMainSkuMap, normalizedMainSkuMap, product.sku, product)
       }
@@ -327,11 +398,13 @@ export async function GET(request: NextRequest) {
     aliases.forEach((alias) => {
       const product = productById.get(alias.productId)
       if (!product) return
+      registerRelatedSku(product.id, alias.aliasSku)
       setLookupIfMissing(exactAliasSkuMap, normalizedAliasSkuMap, alias.aliasSku, product)
     })
 
     products.forEach((product) => {
       extractAliasSkusFromText(product.sku).forEach((aliasSku) => {
+        registerRelatedSku(product.id, aliasSku)
         if (exactMainSkuMap.has(aliasSku) || exactAliasSkuMap.has(aliasSku)) return
         setLookupIfMissing(
           exactProductSkuParentheticalMap,
@@ -342,6 +415,7 @@ export async function GET(request: NextRequest) {
       })
 
       extractAliasSkusFromText(product.name).forEach((aliasSku) => {
+        registerRelatedSku(product.id, aliasSku)
         if (
           exactMainSkuMap.has(aliasSku) ||
           exactAliasSkuMap.has(aliasSku) ||
@@ -496,7 +570,6 @@ export async function GET(request: NextRequest) {
     })
 
     filterSummary.refundAmount = Number(filterSummary.refundAmount.toFixed(2))
-    const stockConsumedByTargetMap = new Map<string, Map<string, number>>()
 
     const inventoryTargets = (() => {
       if (selectedSku) {
@@ -508,15 +581,20 @@ export async function GET(request: NextRequest) {
             productSku: null,
             fallbackStock: 0,
             requestedSkus: [selectedSku],
+            consumedSkus: [selectedSku],
             snapshotCandidateSkus: [],
+            baselineCandidateSkus: [selectedSku],
           }] satisfies InventoryTarget[]
         }
 
+        const relatedSkus = Array.from(relatedSkuSetByProductId.get(match.product.id) || [])
         const snapshotCandidateSkus: string[] = []
         addUniqueSku(snapshotCandidateSkus, selectedSku)
-        if (match.matchType !== 'main') {
-          addUniqueSku(snapshotCandidateSkus, match.product.sku)
-        }
+        addUniqueSku(snapshotCandidateSkus, match.product.sku)
+
+        const baselineCandidateSkus: string[] = []
+        addUniqueSku(baselineCandidateSkus, selectedSku)
+        relatedSkus.forEach((sku) => addUniqueSku(baselineCandidateSkus, sku))
 
         return [{
           key: match.product.id,
@@ -524,23 +602,39 @@ export async function GET(request: NextRequest) {
           productSku: match.product.sku,
           fallbackStock: match.product.stock || 0,
           requestedSkus: [selectedSku],
+          consumedSkus: [selectedSku],
           snapshotCandidateSkus,
+          baselineCandidateSkus,
         }] satisfies InventoryTarget[]
       }
 
       if (selectedGroup) {
         const targetMap = new Map<string, InventoryTarget>()
+        const missingTargets: InventoryTarget[] = []
 
         selectedGroup.skus.forEach((groupSku) => {
           const sku = normalizeCell(groupSku)
           if (!sku) return
 
           const match = resolveProductBySku(sku)
-          if (!match) return
+          if (!match) {
+            missingTargets.push({
+              key: `missing:${sku}`,
+              productId: null,
+              productSku: null,
+              fallbackStock: 0,
+              requestedSkus: [sku],
+              consumedSkus: [sku],
+              snapshotCandidateSkus: [],
+              baselineCandidateSkus: [sku],
+            })
+            return
+          }
 
           const existing = targetMap.get(match.product.id)
           if (existing) {
             addUniqueSku(existing.requestedSkus, sku)
+            addUniqueSku(existing.consumedSkus, sku)
             return
           }
 
@@ -550,37 +644,102 @@ export async function GET(request: NextRequest) {
             productSku: match.product.sku,
             fallbackStock: match.product.stock || 0,
             requestedSkus: [sku],
+            consumedSkus: [sku],
             snapshotCandidateSkus: [],
+            baselineCandidateSkus: [],
           })
         })
 
-        return Array.from(targetMap.values()).map((target) => {
+        const matchedTargets = Array.from(targetMap.values()).map((target) => {
+          const relatedSkus = Array.from(relatedSkuSetByProductId.get(target.productId || '') || [])
           const snapshotCandidateSkus: string[] = []
-          if (target.productSku && target.requestedSkus.includes(target.productSku)) {
-            addUniqueSku(snapshotCandidateSkus, target.productSku)
-          }
           target.requestedSkus.forEach((sku) => addUniqueSku(snapshotCandidateSkus, sku))
           addUniqueSku(snapshotCandidateSkus, target.productSku)
+
+          const baselineCandidateSkus: string[] = []
+          target.requestedSkus.forEach((sku) => addUniqueSku(baselineCandidateSkus, sku))
+          relatedSkus.forEach((sku) => addUniqueSku(baselineCandidateSkus, sku))
+
           return {
             ...target,
             snapshotCandidateSkus,
+            baselineCandidateSkus,
           }
         })
+
+        return [...matchedTargets, ...missingTargets]
       }
 
       return products.map((product) => {
+        const relatedSkus = Array.from(relatedSkuSetByProductId.get(product.id) || [])
         const snapshotCandidateSkus: string[] = []
         addUniqueSku(snapshotCandidateSkus, product.sku)
+
+        const baselineCandidateSkus: string[] = []
+        relatedSkus.forEach((sku) => addUniqueSku(baselineCandidateSkus, sku))
+        addUniqueSku(baselineCandidateSkus, product.sku)
+
+        const consumedSkus = relatedSkus.length ? relatedSkus : (product.sku ? [product.sku] : [])
+
         return {
           key: product.id,
           productId: product.id,
           productSku: product.sku,
           fallbackStock: product.stock || 0,
           requestedSkus: product.sku ? [product.sku] : [],
+          consumedSkus,
           snapshotCandidateSkus,
+          baselineCandidateSkus,
         }
       })
     })()
+
+    const baselineSkuList = Array.from(new Set(
+      inventoryTargets.flatMap((target) => target.baselineCandidateSkus.map((sku) => normalizeCell(sku)).filter(Boolean)),
+    ))
+
+    const baselineRows = baselineSkuList.length
+      ? await prisma.productStockBaseline.findMany({
+          where: {
+            sku: {
+              in: baselineSkuList,
+            },
+            baselineDate: {
+              lt: selectedRange.endExclusive,
+            },
+          },
+          orderBy: [
+            { sku: 'asc' },
+            { baselineDate: 'asc' },
+          ],
+        })
+      : []
+
+    const exactBaselineMap = new Map<string, BaselineRow[]>()
+    const normalizedBaselineMap = new Map<string, BaselineRow[]>()
+    const registerBaseline = (key: string, row: BaselineRow) => {
+      if (!key) return
+      const bucket = exactBaselineMap.get(key) || []
+      bucket.push(row)
+      exactBaselineMap.set(key, bucket)
+
+      const normalizedKey = normalizeSkuForCompare(key)
+      if (!normalizedKey) return
+      const normalizedBucket = normalizedBaselineMap.get(normalizedKey) || []
+      normalizedBucket.push(row)
+      normalizedBaselineMap.set(normalizedKey, normalizedBucket)
+    }
+
+    baselineRows.forEach((baseline) => {
+      const row: BaselineRow = {
+        id: baseline.id,
+        sku: baseline.sku,
+        quantity: baseline.quantity,
+        baselineDate: startOfDay(new Date(baseline.baselineDate)),
+        note: baseline.note,
+      }
+      registerBaseline(baseline.sku, row)
+    })
 
     const snapshotSkuList = Array.from(new Set(
       inventoryTargets.flatMap((target) => target.snapshotCandidateSkus.map((sku) => normalizeCell(sku)).filter(Boolean)),
@@ -625,70 +784,102 @@ export async function GET(request: NextRequest) {
       snapshotsBySku.set(item.sku, bucket)
     })
 
-    const stockByDate = new Map<string, number>()
+    const stockConsumedByTargetMap = new Map<string, Map<string, number>>()
+    const exactConsumedSkuTargetMap = new Map<string, string>()
+    const normalizedConsumedSkuTargetMap = new Map<string, string>()
+    inventoryTargets.forEach((target) => {
+      target.consumedSkus.forEach((sku) => {
+        const value = normalizeCell(sku)
+        if (!value) return
+        exactConsumedSkuTargetMap.set(value, target.key)
+        const normalized = normalizeSkuForCompare(value)
+        if (normalized) {
+          normalizedConsumedSkuTargetMap.set(normalized, target.key)
+        }
+      })
+    })
+
+    performanceData.forEach((item) => {
+      const targetKey = exactConsumedSkuTargetMap.get(item.sku)
+        || normalizedConsumedSkuTargetMap.get(normalizeSkuForCompare(item.sku))
+      if (!targetKey) return
+
+      const dateKey = formatDateKey(startOfDay(new Date(item.date)))
+      const consumedByDate = stockConsumedByTargetMap.get(targetKey) || new Map<string, number>()
+      consumedByDate.set(dateKey, (consumedByDate.get(dateKey) || 0) + (item.stockConsumedQty || 0))
+      stockConsumedByTargetMap.set(targetKey, consumedByDate)
+    })
+
     const totalDays = Math.max(
       1,
       Math.round((selectedRange.endExclusive.getTime() - selectedRange.startDate.getTime()) / 86_400_000),
     )
 
+    const stockByDate = new Map<string, number>()
+
     const inventoryStates = inventoryTargets.map((target) => {
       const allSnapshots = target.snapshotCandidateSkus.flatMap((sku) => snapshotsBySku.get(sku) || [])
+      const resolvedSnapshotByDate = new Map<string, { date: Date; qty: number }>()
+      target.snapshotCandidateSkus.forEach((sku) => {
+        ;(snapshotsBySku.get(sku) || []).forEach((snapshot) => {
+          if (snapshot.qty === null) return
+          const dateKey = formatDateKey(snapshot.date)
+          if (!resolvedSnapshotByDate.has(dateKey)) {
+            resolvedSnapshotByDate.set(dateKey, {
+              date: snapshot.date,
+              qty: snapshot.qty,
+            })
+          }
+        })
+      })
+
+      const resolvedSnapshots = Array.from(resolvedSnapshotByDate.values()).sort((a, b) => a.date.getTime() - b.date.getTime())
+
+      const baselineCandidates = Array.from(new Map(
+        target.baselineCandidateSkus.flatMap((sku) => {
+          const normalizedSku = normalizeSkuForCompare(sku)
+          const rows = [
+            ...(exactBaselineMap.get(sku) || []),
+            ...(normalizedSku ? (normalizedBaselineMap.get(normalizedSku) || []) : []),
+          ]
+          return rows.map((row) => [`${row.sku}:${row.baselineDate.getTime()}`, row] as const)
+        }),
+      ).values()).sort((a, b) => a.baselineDate.getTime() - b.baselineDate.getTime())
+
+      const activeBaseline = baselineCandidates.length
+        ? baselineCandidates[baselineCandidates.length - 1]
+        : null
 
       return {
         target,
         fallbackStock: target.fallbackStock,
         firstSnapshot: allSnapshots[0] || null,
         lastSnapshot: allSnapshots[allSnapshots.length - 1] || null,
-        resolvedSnapshots: (() => {
-          const resolvedSnapshotByDate = new Map<string, { date: Date; qty: number }>()
-          target.snapshotCandidateSkus.forEach((sku) => {
-            ;(snapshotsBySku.get(sku) || []).forEach((snapshot) => {
-              if (snapshot.qty === null) return
-              const dateKey = formatDateKey(snapshot.date)
-              if (!resolvedSnapshotByDate.has(dateKey)) {
-                resolvedSnapshotByDate.set(dateKey, {
-                  date: snapshot.date,
-                  qty: snapshot.qty,
-                })
-              }
-            })
-          })
-
-          return Array.from(resolvedSnapshotByDate.values()).sort((a, b) => a.date.getTime() - b.date.getTime())
-        })(),
+        resolvedSnapshots,
+        activeBaseline,
       }
     })
 
-    const inventoryTargetByProductId = new Map(
-      inventoryTargets
-        .filter((target): target is InventoryTarget & { productId: string } => Boolean(target.productId))
-        .map((target) => [target.productId, target]),
-    )
-
-    performanceData.forEach((item) => {
-      const matchedProduct = resolveProductBySku(item.sku)
-      if (!matchedProduct?.product.id) return
-
-      const inventoryTarget = inventoryTargetByProductId.get(matchedProduct.product.id)
-      if (!inventoryTarget) return
-
-      const dateKey = formatDateKey(startOfDay(new Date(item.date)))
-      const consumedByDate = stockConsumedByTargetMap.get(inventoryTarget.key) || new Map<string, number>()
-      consumedByDate.set(dateKey, (consumedByDate.get(dateKey) || 0) + (item.stockConsumedQty || 0))
-      stockConsumedByTargetMap.set(inventoryTarget.key, consumedByDate)
-    })
-
     inventoryStates.forEach((targetState) => {
-      const targetSeries = buildProjectedStockSeries({
-        startDate: selectedRange.startDate,
-        totalDays,
-        fallbackStock: targetState.fallbackStock,
-        snapshots: targetState.resolvedSnapshots,
-        consumedByDate: stockConsumedByTargetMap.get(targetState.target.key) || new Map<string, number>(),
-      })
+      const consumedByDate = stockConsumedByTargetMap.get(targetState.target.key) || new Map<string, number>()
+      const targetSeries = targetState.activeBaseline
+        ? buildBaselineStockSeries({
+            startDate: selectedRange.startDate,
+            totalDays,
+            baselineDate: targetState.activeBaseline.baselineDate,
+            baselineQty: targetState.activeBaseline.quantity,
+            consumedByDate,
+          })
+        : buildFallbackStockSeries({
+            startDate: selectedRange.startDate,
+            totalDays,
+            fallbackStock: targetState.fallbackStock,
+            snapshots: targetState.resolvedSnapshots,
+            consumedByDate,
+          })
 
       targetSeries.forEach((stock, dateKey) => {
-        stockByDate.set(dateKey, (stockByDate.get(dateKey) || 0) + stock)
+        stockByDate.set(dateKey, (stockByDate.get(dateKey) || 0) + Math.max(stock, 0))
       })
     })
 
@@ -700,7 +891,7 @@ export async function GET(request: NextRequest) {
         date: dateKey,
         label: dateKey.slice(5),
         orders: salesMap.get(dateKey) || 0,
-        stock: stockByDate.get(dateKey) || 0,
+        stock: Math.max(stockByDate.get(dateKey) || 0, 0),
       }
     })
 
@@ -711,6 +902,9 @@ export async function GET(request: NextRequest) {
         resolvedProductSku: debugTarget?.target.productSku || null,
         resolvedProductId: debugTarget?.target.productId || null,
         productStock: debugTarget?.fallbackStock ?? 0,
+        baselineSku: debugTarget?.activeBaseline?.sku || null,
+        baselineDate: debugTarget?.activeBaseline ? formatDateKey(debugTarget.activeBaseline.baselineDate) : null,
+        baselineQty: debugTarget?.activeBaseline?.quantity ?? null,
         snapshotCount: debugTarget?.resolvedSnapshots.length || 0,
         firstSnapshot: debugTarget?.firstSnapshot
           ? {

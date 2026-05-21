@@ -37,7 +37,18 @@ interface ProductData {
   monthSales: number
   selectedRangeSales: number
   stock: number
+  estimatedStock: number
   stockStatus: string
+  updatedAt: string
+}
+
+interface ProductStockBaseline {
+  id: string
+  sku: string
+  quantity: number
+  baselineDate: string
+  note: string
+  createdAt: string
   updatedAt: string
 }
 
@@ -288,6 +299,14 @@ export default function ProductSalesPage() {
   const [stockEditMode, setStockEditMode] = useState<StockEditMode>('set')
   const [stockEditValue, setStockEditValue] = useState('')
   const [stockEditError, setStockEditError] = useState<string | null>(null)
+  const [stockBaselineOpen, setStockBaselineOpen] = useState(false)
+  const [stockBaselines, setStockBaselines] = useState<ProductStockBaseline[]>([])
+  const [baselineFormSku, setBaselineFormSku] = useState('')
+  const [baselineFormQuantity, setBaselineFormQuantity] = useState('')
+  const [baselineFormDate, setBaselineFormDate] = useState(getTodayInputValue())
+  const [baselineFormNote, setBaselineFormNote] = useState('')
+  const [baselineError, setBaselineError] = useState<string | null>(null)
+  const [savingBaseline, setSavingBaseline] = useState(false)
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [groupFormId, setGroupFormId] = useState<string | null>(null)
   const [groupFormName, setGroupFormName] = useState('')
@@ -354,6 +373,21 @@ export default function ProductSalesPage() {
     }
 
     setGroups(Array.isArray(data.groups) ? data.groups : [])
+  }
+
+  const loadBaselines = async (sku = '') => {
+    const params = new URLSearchParams()
+    if (sku) {
+      params.set('sku', sku)
+    }
+
+    const response = await fetch(`/api/product-sales/stock-baselines${params.toString() ? `?${params.toString()}` : ''}`)
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.error || '获取初始库存失败')
+    }
+
+    setStockBaselines(Array.isArray(data.baselines) ? data.baselines : [])
   }
 
   const loadTrendData = async (
@@ -425,6 +459,7 @@ export default function ProductSalesPage() {
         setLoading(true)
         await Promise.all([
           loadPageData('7', '', '', false),
+          loadBaselines(),
           loadGroups(),
           loadTrendData('', '', '7', '', '', false),
         ])
@@ -442,6 +477,7 @@ export default function ProductSalesPage() {
   const refreshAfterMutation = async () => {
     await Promise.all([
       loadPageData(trendRange, trendStartDate, trendEndDate),
+      loadBaselines(baselineFormSku),
       loadGroups(),
       loadTrendData(selectedSku, selectedGroupId, trendRange, trendStartDate, trendEndDate, false),
     ])
@@ -753,6 +789,73 @@ export default function ProductSalesPage() {
     }
   }
 
+  const resetBaselineForm = (sku = '') => {
+    setBaselineFormSku(sku)
+    setBaselineFormQuantity('')
+    setBaselineFormDate(getTodayInputValue())
+    setBaselineFormNote('')
+    setBaselineError(null)
+  }
+
+  const openStockBaselineModal = () => {
+    const nextSku = selectedSku || skuOptions[0]?.sku || ''
+    resetBaselineForm(nextSku)
+    setStockBaselineOpen(true)
+  }
+
+  const handleSaveBaseline = async () => {
+    const sku = baselineFormSku.trim()
+    if (!sku) {
+      setBaselineError('请选择 SKU')
+      return
+    }
+
+    const quantity = Number(baselineFormQuantity.trim())
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      setBaselineError('初始库存必须是大于等于 0 的整数')
+      return
+    }
+
+    if (!baselineFormDate) {
+      setBaselineError('请选择基准日期')
+      return
+    }
+
+    try {
+      setSavingBaseline(true)
+      setBaselineError(null)
+      setError(null)
+
+      const response = await fetch('/api/product-sales/stock-baselines', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sku,
+          quantity,
+          baselineDate: baselineFormDate,
+          note: baselineFormNote,
+        }),
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '保存初始库存失败')
+      }
+
+      await refreshAfterMutation()
+      setStockBaselineOpen(false)
+      resetBaselineForm(sku)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '保存初始库存失败'
+      setBaselineError(message)
+      setError(message)
+    } finally {
+      setSavingBaseline(false)
+    }
+  }
+
   const handleEditStock = (product: ProductData) => {
     if (!product.sku || product.sku === '-') {
       setError('该产品缺少 SKU，无法修改库存')
@@ -974,6 +1077,8 @@ export default function ProductSalesPage() {
     return <span className="text-pink-500 text-xs">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
   }
 
+  const filteredBaselines = stockBaselines.filter((item) => !baselineFormSku || item.sku === baselineFormSku)
+
   return (
     <PageGuard>
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6 lg:p-8">
@@ -991,6 +1096,13 @@ export default function ProductSalesPage() {
                   disabled={importingInventory || importingOrders || loading}
                 >
                   {importingInventory ? '正在导入库存表...' : '导入库存表'}
+                </button>
+                <button
+                  onClick={openStockBaselineModal}
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                  disabled={loading || savingBaseline}
+                >
+                  设置初始库存
                 </button>
                 <button
                   onClick={handleImportSkus}
@@ -1640,8 +1752,8 @@ export default function ProductSalesPage() {
 
                   <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
                     <div className="mb-3">
-                      <div className="text-sm font-medium text-slate-900">每日剩余库存曲线</div>
-                      <div className="text-xs text-slate-500">库存预计按库存消耗量扣减。未发货取消不扣库存；已发货退货/退款默认仍计入库存消耗。</div>
+                      <div className="text-sm font-medium text-slate-900">每日预计剩余库存曲线</div>
+                      <div className="text-xs text-slate-500">优先使用手动初始库存，并按库存消耗量扣减；未设置初始库存时回退库存快照或当前库存。</div>
                     </div>
                     <div className="h-64">
                       {trendLoading ? (
@@ -1659,7 +1771,7 @@ export default function ProductSalesPage() {
                             <Line
                               type="monotone"
                               dataKey="stock"
-                              name="每日剩余库存"
+                              name="每日预计剩余库存"
                               stroke="#db2777"
                               strokeWidth={2}
                               dot={{ r: 3 }}
@@ -1672,6 +1784,163 @@ export default function ProductSalesPage() {
                   </div>
                 </div>
               </div>
+
+              {stockBaselineOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+                  <div className="w-full max-w-3xl rounded-xl bg-white p-6 shadow-xl">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900">设置初始库存</h3>
+                        <p className="mt-1 text-sm text-slate-600">手动设置某个 SKU 的理论库存起点，趋势图会优先按这个基准减去库存消耗量。</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (savingBaseline) return
+                          setStockBaselineOpen(false)
+                          setBaselineError(null)
+                        }}
+                        className="text-sm text-slate-500 hover:text-slate-700"
+                        disabled={savingBaseline}
+                      >
+                        关闭
+                      </button>
+                    </div>
+
+                    <div className="mt-5 grid gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
+                      <div className="rounded-lg border border-slate-200 p-4">
+                        <div className="space-y-4">
+                          <div>
+                            <label className="mb-2 block text-sm font-medium text-slate-900">SKU</label>
+                            <select
+                              value={baselineFormSku}
+                              onChange={(event) => {
+                                setBaselineFormSku(event.target.value)
+                                setBaselineError(null)
+                              }}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                              disabled={savingBaseline}
+                            >
+                              <option value="">请选择 SKU</option>
+                              {skuOptions.map((option) => (
+                                <option key={option.sku} value={option.sku}>
+                                  {option.sku}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="mb-2 block text-sm font-medium text-slate-900">初始库存</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              inputMode="numeric"
+                              value={baselineFormQuantity}
+                              onChange={(event) => {
+                                setBaselineFormQuantity(event.target.value)
+                                setBaselineError(null)
+                              }}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                              placeholder="请输入初始库存"
+                              disabled={savingBaseline}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="mb-2 block text-sm font-medium text-slate-900">基准日期</label>
+                            <input
+                              type="date"
+                              value={baselineFormDate}
+                              onChange={(event) => {
+                                setBaselineFormDate(event.target.value)
+                                setBaselineError(null)
+                              }}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                              disabled={savingBaseline}
+                            />
+                            <p className="mt-1 text-xs text-slate-500">基准日期表示当天开始时的库存。</p>
+                          </div>
+
+                          <div>
+                            <label className="mb-2 block text-sm font-medium text-slate-900">备注</label>
+                            <textarea
+                              value={baselineFormNote}
+                              onChange={(event) => {
+                                setBaselineFormNote(event.target.value)
+                                setBaselineError(null)
+                              }}
+                              rows={3}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                              placeholder="可选，例如：5 月活动前盘点"
+                              disabled={savingBaseline}
+                            />
+                          </div>
+
+                          {baselineError && (
+                            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                              {baselineError}
+                            </div>
+                          )}
+
+                          <div className="flex justify-end gap-3">
+                            <button
+                              onClick={() => resetBaselineForm(baselineFormSku)}
+                              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                              disabled={savingBaseline}
+                            >
+                              重置
+                            </button>
+                            <button
+                              onClick={handleSaveBaseline}
+                              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+                              disabled={savingBaseline}
+                            >
+                              {savingBaseline ? '保存中...' : '保存'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-slate-200 p-4">
+                        <div className="mb-3">
+                          <div className="text-sm font-semibold text-slate-900">当前 SKU 已设置的库存基准</div>
+                          <div className="mt-1 text-xs text-slate-500">同一 SKU + 基准日期 重复保存时，会直接更新初始库存和备注。</div>
+                        </div>
+
+                        {filteredBaselines.length === 0 ? (
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                            {baselineFormSku ? '这个 SKU 还没有手动初始库存基准。' : '请先选择 SKU。'}
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-slate-200 text-left text-slate-500">
+                                  <th className="px-3 py-2">SKU</th>
+                                  <th className="px-3 py-2">基准日期</th>
+                                  <th className="px-3 py-2">初始库存</th>
+                                  <th className="px-3 py-2">备注</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filteredBaselines.map((baseline) => (
+                                  <tr key={baseline.id} className="border-b border-slate-100">
+                                    <td className="px-3 py-2 text-slate-700">{baseline.sku}</td>
+                                    <td className="px-3 py-2 text-slate-700">{baseline.baselineDate}</td>
+                                    <td className="px-3 py-2 text-slate-700">{baseline.quantity}</td>
+                                    <td className="px-3 py-2 text-slate-500">{baseline.note || '-'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {stockEditTarget && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
@@ -2043,6 +2312,14 @@ export default function ProductSalesPage() {
                             </th>
                             <th className="px-6 py-3 text-center">
                               <button
+                                onClick={() => handleSort('estimatedStock')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                预计库存 <SortIcon columnKey="estimatedStock" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-center">
+                              <button
                                 onClick={() => handleSort('stock')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
@@ -2073,7 +2350,7 @@ export default function ProductSalesPage() {
                         <tbody>
                           {sortedProducts.length === 0 ? (
                             <tr>
-                              <td colSpan={10} className="px-6 py-8 text-center text-slate-500">
+                              <td colSpan={11} className="px-6 py-8 text-center text-slate-500">
                                 暂无产品数据
                               </td>
                             </tr>
@@ -2086,6 +2363,7 @@ export default function ProductSalesPage() {
                                 <td className="px-6 py-4 text-sm text-center text-slate-700">{product.weekSales}</td>
                                 <td className="px-6 py-4 text-sm text-center text-slate-700">{product.monthSales}</td>
                                 <td className="px-6 py-4 text-sm text-center text-slate-700">{product.selectedRangeSales}</td>
+                                <td className="px-6 py-4 text-sm text-center font-medium text-pink-700">{product.estimatedStock}</td>
                                 <td className="px-6 py-4 text-sm text-center font-medium text-slate-900">{product.stock}</td>
                                 <td className="px-6 py-4 text-sm text-center">
                                   <span

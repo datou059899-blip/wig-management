@@ -5,6 +5,12 @@ import { prisma } from '@/lib/prisma'
 
 type RangeKey = 'today' | '7' | '30' | 'custom'
 
+type BaselineRow = {
+  sku: string
+  quantity: number
+  baselineDate: Date
+}
+
 function startOfDay(date: Date) {
   const normalized = new Date(date)
   normalized.setHours(0, 0, 0, 0)
@@ -27,6 +33,10 @@ function formatDateKey(date: Date) {
 function normalizeCell(value: unknown) {
   if (value === null || value === undefined) return ''
   return typeof value === 'string' ? value.trim() : String(value).trim()
+}
+
+function normalizeSkuForCompare(value: string) {
+  return normalizeCell(value).replace(/\s+/g, '').toUpperCase()
 }
 
 function extractAliasSkusFromText(value: string | null | undefined) {
@@ -147,13 +157,14 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const selectedRange = resolveRange(searchParams)
     const today = startOfDay(new Date())
+    const tomorrow = addDays(today, 1)
     const yesterday = addDays(today, -1)
     const sevenDaysAgo = addDays(today, -6)
     const thirtyDaysAgo = addDays(today, -29)
     const queryStartDate = selectedRange.startDate < thirtyDaysAgo ? selectedRange.startDate : thirtyDaysAgo
-    const queryEndExclusive = selectedRange.endExclusive > addDays(today, 1)
+    const queryEndExclusive = selectedRange.endExclusive > tomorrow
       ? selectedRange.endExclusive
-      : addDays(today, 1)
+      : tomorrow
 
     const [products, aliases] = await Promise.all([
       prisma.product.findMany({
@@ -177,9 +188,44 @@ export async function GET(request: NextRequest) {
         },
         select: {
           aliasSku: true,
+          productId: true,
         },
       }),
     ])
+
+    const relatedSkuSetByProductId = new Map<string, Set<string>>()
+    const ensureRelatedSkuSet = (productId: string) => {
+      if (!relatedSkuSetByProductId.has(productId)) {
+        relatedSkuSetByProductId.set(productId, new Set<string>())
+      }
+      return relatedSkuSetByProductId.get(productId)!
+    }
+    const registerRelatedSku = (productId: string, sku: string | null | undefined) => {
+      const value = normalizeCell(sku)
+      if (!value) return
+      ensureRelatedSkuSet(productId).add(value)
+    }
+
+    products.forEach((product) => {
+      registerRelatedSku(product.id, product.sku)
+      extractAliasSkusFromText(product.sku).forEach((aliasSku) => registerRelatedSku(product.id, aliasSku))
+      extractAliasSkusFromText(product.name).forEach((aliasSku) => registerRelatedSku(product.id, aliasSku))
+    })
+    aliases.forEach((alias) => {
+      registerRelatedSku(alias.productId, alias.aliasSku)
+    })
+
+    const relatedSkuToProductIdExact = new Map<string, string>()
+    const relatedSkuToProductIdNormalized = new Map<string, string>()
+    relatedSkuSetByProductId.forEach((skuSet, productId) => {
+      skuSet.forEach((sku) => {
+        relatedSkuToProductIdExact.set(sku, productId)
+        const normalized = normalizeSkuForCompare(sku)
+        if (normalized) {
+          relatedSkuToProductIdNormalized.set(normalized, productId)
+        }
+      })
+    })
 
     const performanceData = await prisma.performanceDaily.findMany({
       where: {
@@ -191,6 +237,7 @@ export async function GET(request: NextRequest) {
       select: {
         sku: true,
         orders: true,
+        stockConsumedQty: true,
         date: true,
       },
     })
@@ -234,6 +281,48 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    const baselineSkuList = Array.from(new Set(
+      Array.from(relatedSkuSetByProductId.values()).flatMap((skuSet) => Array.from(skuSet.values())),
+    ))
+    const baselines = baselineSkuList.length
+      ? await prisma.productStockBaseline.findMany({
+          where: {
+            sku: {
+              in: baselineSkuList,
+            },
+            baselineDate: {
+              lt: tomorrow,
+            },
+          },
+          orderBy: [
+            { sku: 'asc' },
+            { baselineDate: 'asc' },
+          ],
+        })
+      : []
+
+    const exactBaselineMap = new Map<string, BaselineRow[]>()
+    const normalizedBaselineMap = new Map<string, BaselineRow[]>()
+    const registerBaseline = (sku: string, row: BaselineRow) => {
+      const exactBucket = exactBaselineMap.get(sku) || []
+      exactBucket.push(row)
+      exactBaselineMap.set(sku, exactBucket)
+
+      const normalizedSku = normalizeSkuForCompare(sku)
+      if (!normalizedSku) return
+      const normalizedBucket = normalizedBaselineMap.get(normalizedSku) || []
+      normalizedBucket.push(row)
+      normalizedBaselineMap.set(normalizedSku, normalizedBucket)
+    }
+
+    baselines.forEach((baseline) => {
+      registerBaseline(baseline.sku, {
+        sku: baseline.sku,
+        quantity: baseline.quantity,
+        baselineDate: startOfDay(new Date(baseline.baselineDate)),
+      })
+    })
+
     const salesBySku: Record<string, {
       today: number
       yesterday: number
@@ -248,8 +337,11 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    const consumedRowsByProductId = new Map<string, Array<{ date: Date; qty: number }>>()
+
     performanceData.forEach((perf) => {
       if (!perf.sku) return
+
       if (!salesBySku[perf.sku]) {
         salesBySku[perf.sku] = { today: 0, yesterday: 0, week: 0, month: 0, selectedRange: 0 }
       }
@@ -270,6 +362,17 @@ export async function GET(request: NextRequest) {
       if (perfDate >= selectedRange.startDate && perfDate < selectedRange.endExclusive) {
         salesBySku[perf.sku].selectedRange += perf.orders
       }
+
+      const productId = relatedSkuToProductIdExact.get(perf.sku)
+        || relatedSkuToProductIdNormalized.get(normalizeSkuForCompare(perf.sku))
+      if (!productId) return
+
+      const bucket = consumedRowsByProductId.get(productId) || []
+      bucket.push({
+        date: perfDate,
+        qty: perf.stockConsumedQty || 0,
+      })
+      consumedRowsByProductId.set(productId, bucket)
     })
 
     const tableData = products.map((product) => {
@@ -280,15 +383,39 @@ export async function GET(request: NextRequest) {
         month: 0,
         selectedRange: 0,
       }
-      const stock = resolveEffectiveStock(
+      const currentStock = resolveEffectiveStock(
         product.sku ? latestSnapshotBySku.get(product.sku) : null,
         product.stock || 0,
       )
 
+      const baselineCandidates = Array.from(new Map(
+        Array.from(relatedSkuSetByProductId.get(product.id) || []).flatMap((sku) => {
+          const normalizedSku = normalizeSkuForCompare(sku)
+          const rows = [
+            ...(exactBaselineMap.get(sku) || []),
+            ...(normalizedSku ? (normalizedBaselineMap.get(normalizedSku) || []) : []),
+          ]
+          return rows.map((row) => [`${row.sku}:${row.baselineDate.getTime()}`, row] as const)
+        }),
+      ).values()).sort((a, b) => a.baselineDate.getTime() - b.baselineDate.getTime())
+
+      const activeBaseline = baselineCandidates.length
+        ? baselineCandidates[baselineCandidates.length - 1]
+        : null
+
+      const estimatedStock = activeBaseline
+        ? Math.max(
+            activeBaseline.quantity - (consumedRowsByProductId.get(product.id) || []).reduce((sum, row) => (
+              row.date >= activeBaseline.baselineDate && row.date < tomorrow ? sum + row.qty : sum
+            ), 0),
+            0,
+          )
+        : currentStock
+
       let stockStatus = '正常'
-      if (stock === 0) {
+      if (currentStock === 0) {
         stockStatus = '断货'
-      } else if (stock <= 10) {
+      } else if (currentStock <= 10) {
         stockStatus = '低库存'
       }
 
@@ -303,7 +430,8 @@ export async function GET(request: NextRequest) {
         weekSales: sales.week,
         monthSales: sales.month,
         selectedRangeSales: sales.selectedRange,
-        stock,
+        stock: currentStock,
+        estimatedStock,
         stockStatus,
         updatedAt: product.updatedAt.toISOString(),
       }
