@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
+import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { Prisma } from '@prisma/client'
 import * as XLSX from 'xlsx'
@@ -16,6 +16,8 @@ type Stage =
   | 'parse-file'
   | 'aggregate'
   | 'match-products'
+  | 'upsert-order-items'
+  | 'rebuild-performance'
   | 'write-performance'
   | 'done'
 
@@ -30,16 +32,42 @@ type OrderFailure = {
   reason: string
 }
 
-type ParsedOrderRow = {
+type ParsedOrderItem = {
   row: number
-  sku: string
-  productName: string
+  dedupeKey: string
+  orderId: string
+  skuId: string | null
+  sellerSku: string
+  paidDate: Date
+  paidDateStr: string
+  paidTime: Date | null
+  rawPaidTime: string
   quantity: number
   returnQty: number
-  paidTime: string
-  dateStr: string
-  isCanceled: boolean
+  netQty: number
+  canceledQty: number
   refundAmount: number
+  orderStatus: string
+  cancelationReturnType: string
+}
+
+type ProductOrderItemWriteRow = {
+  dedupeKey: string
+  orderId: string
+  skuId: string | null
+  sellerSku: string
+  paidDate: Date
+  paidTime: Date | null
+  quantity: number
+  returnQty: number
+  netQty: number
+  canceledQty: number
+  refundAmount: number
+  orderStatus: string | null
+  cancelationReturnType: string | null
+  productMatched: boolean
+  sourceFileName: string | null
+  rawPaidTime: string | null
 }
 
 type AggregatedOrderStat = {
@@ -53,7 +81,13 @@ type AggregatedOrderStat = {
   refundAmount: number
 }
 
+type AffectedPair = {
+  sku: string
+  dateStr: string
+}
+
 const WRITE_BATCH_SIZE = 200
+const LOOKUP_BATCH_SIZE = 500
 const TIMEOUT_GUARD_MS = 45_000
 
 function normalizeHeader(value: unknown) {
@@ -80,56 +114,123 @@ function parseNumber(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-function parseDateString(value: unknown): string | null {
+function formatDateKey(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function createDate(dateStr: string): Date {
+  const [year, month, day] = dateStr.split('-').map((part) => Number(part))
+  return new Date(year, month - 1, day, 0, 0, 0, 0)
+}
+
+function parseDateValue(value: unknown): { paidDate: Date; paidTime: Date | null; dateStr: string } | null {
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return null
-    const year = value.getFullYear()
-    const month = String(value.getMonth() + 1).padStart(2, '0')
-    const day = String(value.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
+    const paidTime = new Date(value)
+    const dateStr = formatDateKey(paidTime)
+    return {
+      paidDate: createDate(dateStr),
+      paidTime,
+      dateStr,
+    }
   }
 
   if (typeof value === 'number') {
     const code = XLSX.SSF?.parse_date_code ? XLSX.SSF.parse_date_code(value) : null
     if (code) {
-      const month = String(code.m).padStart(2, '0')
-      const day = String(code.d).padStart(2, '0')
-      return `${code.y}-${month}-${day}`
+      const paidTime = new Date(
+        code.y,
+        (code.m || 1) - 1,
+        code.d || 1,
+        code.H || 0,
+        code.M || 0,
+        Math.floor(code.S || 0),
+        0,
+      )
+      const dateStr = formatDateKey(paidTime)
+      return {
+        paidDate: createDate(dateStr),
+        paidTime,
+        dateStr,
+      }
     }
   }
 
-  const text = normalizeCell(value)
+  const text = normalizeCell(value).replace(/\t/g, '').trim()
   if (!text) return null
 
-  const normalizedText = text.replace(/\t/g, '').trim()
-  if (!normalizedText) return null
-
-  const slashMatched = normalizedText.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+  const slashMatched = text.match(
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM))?)?/i,
+  )
   if (slashMatched) {
-    const [, month, day, year] = slashMatched
-    return `${year}-${month}-${day}`
+    const [, monthText, dayText, yearText, hourText, minuteText, secondText, meridiem] = slashMatched
+    let hour = Number(hourText || 0)
+    const minute = Number(minuteText || 0)
+    const second = Number(secondText || 0)
+
+    if (meridiem) {
+      const normalizedMeridiem = meridiem.toLowerCase()
+      if (normalizedMeridiem === 'pm' && hour < 12) hour += 12
+      if (normalizedMeridiem === 'am' && hour === 12) hour = 0
+    }
+
+    const paidTime = new Date(
+      Number(yearText),
+      Number(monthText) - 1,
+      Number(dayText),
+      hour,
+      minute,
+      second,
+      0,
+    )
+    if (!Number.isNaN(paidTime.getTime())) {
+      const dateStr = formatDateKey(paidTime)
+      return {
+        paidDate: createDate(dateStr),
+        paidTime,
+        dateStr,
+      }
+    }
   }
 
-  const dashMatched = normalizedText.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  const dashMatched = text.match(
+    /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/,
+  )
   if (dashMatched) {
-    const [, year, month, day] = dashMatched
-    return `${year}-${month}-${day}`
+    const [, yearText, monthText, dayText, hourText, minuteText, secondText] = dashMatched
+    const paidTime = new Date(
+      Number(yearText),
+      Number(monthText) - 1,
+      Number(dayText),
+      Number(hourText || 0),
+      Number(minuteText || 0),
+      Number(secondText || 0),
+      0,
+    )
+    if (!Number.isNaN(paidTime.getTime())) {
+      const dateStr = formatDateKey(paidTime)
+      return {
+        paidDate: createDate(dateStr),
+        paidTime,
+        dateStr,
+      }
+    }
   }
 
-  const parsed = new Date(normalizedText)
+  const parsed = new Date(text)
   if (!Number.isNaN(parsed.getTime())) {
-    const year = parsed.getFullYear()
-    const month = String(parsed.getMonth() + 1).padStart(2, '0')
-    const day = String(parsed.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
+    const dateStr = formatDateKey(parsed)
+    return {
+      paidDate: createDate(dateStr),
+      paidTime: parsed,
+      dateStr,
+    }
   }
 
   return null
-}
-
-function createDate(dateStr: string): Date {
-  const [year, month, day] = dateStr.split('-').map((part) => Number(part))
-  return new Date(year, month - 1, day)
 }
 
 function isCanceledOrder(orderStatus: string, cancelReturnType: string) {
@@ -142,6 +243,13 @@ function isCanceledOrder(orderStatus: string, cancelReturnType: string) {
     status === 'canceled' ||
     cancelType === 'cancel'
   )
+}
+
+function buildDedupeKey(orderId: string, skuId: string | null, sellerSku: string) {
+  if (!orderId) return null
+  if (skuId) return `${orderId}::${skuId}`
+  if (sellerSku) return `${orderId}::${sellerSku}`
+  return null
 }
 
 function getNormalizedRowsFromSheet(sheet: XLSX.WorkSheet) {
@@ -241,11 +349,7 @@ function chunkArray<T>(items: T[], size: number) {
   return chunks
 }
 
-function createTimeoutResponse(
-  stage: Stage,
-  processedCount: number,
-  remainingCount: number,
-) {
+function createTimeoutResponse(stage: Stage, processedCount: number, remainingCount: number) {
   return NextResponse.json(
     {
       error: '导入订单表超时保护',
@@ -258,7 +362,15 @@ function createTimeoutResponse(
   )
 }
 
-function buildSummary(aggregatedItems: AggregatedOrderStat[]) {
+function buildSummary(orderItems: Array<{
+  sellerSku: string
+  paidDateStr: string
+  quantity: number
+  returnQty: number
+  netQty: number
+  canceledQty: number
+  refundAmount: number
+}>) {
   const summaryByDateMap = new Map<string, {
     date: string
     grossOrders: number
@@ -277,41 +389,40 @@ function buildSummary(aggregatedItems: AggregatedOrderStat[]) {
     refundAmount: number
   }>()
 
-  aggregatedItems.forEach((item) => {
-    const byDate = summaryByDateMap.get(item.dateStr) || {
-      date: item.dateStr,
+  orderItems.forEach((item) => {
+    const byDate = summaryByDateMap.get(item.paidDateStr) || {
+      date: item.paidDateStr,
       grossOrders: 0,
       returnQty: 0,
       netOrders: 0,
       canceledQty: 0,
       refundAmount: 0,
     }
-    byDate.grossOrders += item.grossOrders
+    byDate.grossOrders += item.quantity
     byDate.returnQty += item.returnQty
-    byDate.netOrders += item.netOrders
+    byDate.netOrders += item.netQty
     byDate.canceledQty += item.canceledQty
     byDate.refundAmount += item.refundAmount
-    summaryByDateMap.set(item.dateStr, byDate)
+    summaryByDateMap.set(item.paidDateStr, byDate)
 
-    const bySku = summaryBySkuMap.get(item.sku) || {
-      sku: item.sku,
+    const bySku = summaryBySkuMap.get(item.sellerSku) || {
+      sku: item.sellerSku,
       grossOrders: 0,
       returnQty: 0,
       netOrders: 0,
       canceledQty: 0,
       refundAmount: 0,
     }
-    bySku.grossOrders += item.grossOrders
+    bySku.grossOrders += item.quantity
     bySku.returnQty += item.returnQty
-    bySku.netOrders += item.netOrders
+    bySku.netOrders += item.netQty
     bySku.canceledQty += item.canceledQty
     bySku.refundAmount += item.refundAmount
-    summaryBySkuMap.set(item.sku, bySku)
+    summaryBySkuMap.set(item.sellerSku, bySku)
   })
 
   const summaryByDate = Array.from(summaryByDateMap.values()).sort((a, b) => a.date.localeCompare(b.date))
   const summaryBySku = Array.from(summaryBySkuMap.values()).sort((a, b) => a.sku.localeCompare(b.sku))
-
   const totalGrossOrders = summaryBySku.reduce((sum, item) => sum + item.grossOrders, 0)
   const totalReturnQty = summaryBySku.reduce((sum, item) => sum + item.returnQty, 0)
   const totalNetOrders = summaryBySku.reduce((sum, item) => sum + item.netOrders, 0)
@@ -329,6 +440,75 @@ function buildSummary(aggregatedItems: AggregatedOrderStat[]) {
     totalCanceledQty,
     totalRefundAmount,
   }
+}
+
+async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
+  if (!batch.length) return
+
+  const now = new Date()
+  const rows = batch.map((item) => Prisma.sql`(
+    ${randomUUID()},
+    ${item.dedupeKey},
+    ${item.orderId},
+    ${item.skuId},
+    ${item.sellerSku},
+    ${item.paidDate},
+    ${item.paidTime},
+    ${item.quantity},
+    ${item.returnQty},
+    ${item.netQty},
+    ${item.canceledQty},
+    ${item.refundAmount},
+    ${item.orderStatus},
+    ${item.cancelationReturnType},
+    ${item.productMatched},
+    ${item.sourceFileName},
+    ${item.rawPaidTime},
+    ${now},
+    ${now}
+  )`)
+
+  await prisma.$executeRaw(Prisma.sql`
+    INSERT INTO "ProductOrderItem" (
+      "id",
+      "dedupeKey",
+      "orderId",
+      "skuId",
+      "sellerSku",
+      "paidDate",
+      "paidTime",
+      "quantity",
+      "returnQty",
+      "netQty",
+      "canceledQty",
+      "refundAmount",
+      "orderStatus",
+      "cancelationReturnType",
+      "productMatched",
+      "sourceFileName",
+      "rawPaidTime",
+      "createdAt",
+      "updatedAt"
+    )
+    VALUES ${Prisma.join(rows)}
+    ON CONFLICT ("dedupeKey") DO UPDATE SET
+      "orderId" = EXCLUDED."orderId",
+      "skuId" = EXCLUDED."skuId",
+      "sellerSku" = EXCLUDED."sellerSku",
+      "paidDate" = EXCLUDED."paidDate",
+      "paidTime" = EXCLUDED."paidTime",
+      "quantity" = EXCLUDED."quantity",
+      "returnQty" = EXCLUDED."returnQty",
+      "netQty" = EXCLUDED."netQty",
+      "canceledQty" = EXCLUDED."canceledQty",
+      "refundAmount" = EXCLUDED."refundAmount",
+      "orderStatus" = EXCLUDED."orderStatus",
+      "cancelationReturnType" = EXCLUDED."cancelationReturnType",
+      "productMatched" = EXCLUDED."productMatched",
+      "sourceFileName" = EXCLUDED."sourceFileName",
+      "rawPaidTime" = EXCLUDED."rawPaidTime",
+      "updatedAt" = CURRENT_TIMESTAMP
+  `)
 }
 
 async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
@@ -376,6 +556,93 @@ async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
       "refundAmount" = EXCLUDED."refundAmount",
       "updatedAt" = CURRENT_TIMESTAMP
   `)
+}
+
+async function deletePerformanceDailyPairs(pairs: AffectedPair[]) {
+  if (!pairs.length) return
+
+  const rows = pairs.map((item) => Prisma.sql`(${item.sku}, ${createDate(item.dateStr)})`)
+  await prisma.$executeRaw(Prisma.sql`
+    DELETE FROM "PerformanceDaily" AS pd
+    USING (
+      VALUES ${Prisma.join(rows)}
+    ) AS stale("sku", "date")
+    WHERE pd."sku" = stale."sku"
+      AND pd."date" = stale."date"
+  `)
+}
+
+async function loadExistingOrderItems(dedupeKeys: string[]) {
+  const existing = await Promise.all(
+    chunkArray(dedupeKeys, LOOKUP_BATCH_SIZE).map((batch) =>
+      prisma.productOrderItem.findMany({
+        where: {
+          dedupeKey: {
+            in: batch,
+          },
+        },
+        select: {
+          dedupeKey: true,
+          sellerSku: true,
+          paidDate: true,
+        },
+      }),
+    ),
+  )
+
+  return existing.flat()
+}
+
+async function loadAggregatedMatchedOrderItems(
+  pairs: AffectedPair[],
+  productNameMap: Map<string, string>,
+) {
+  if (!pairs.length) return [] as AggregatedOrderStat[]
+
+  const rows = pairs.map((item) => Prisma.sql`(${item.sku}, ${createDate(item.dateStr)})`)
+  const result = await prisma.$queryRaw<Array<{
+    sku: string
+    date: Date
+    grossOrders: number | bigint | null
+    returnQty: number | bigint | null
+    netOrders: number | bigint | null
+    canceledQty: number | bigint | null
+    refundAmount: number | string | null
+  }>>(Prisma.sql`
+    WITH "affected"("sellerSku", "paidDate") AS (
+      VALUES ${Prisma.join(rows)}
+    )
+    SELECT
+      poi."sellerSku" AS "sku",
+      poi."paidDate" AS "date",
+      SUM(poi."quantity") AS "grossOrders",
+      SUM(poi."returnQty") AS "returnQty",
+      SUM(poi."netQty") AS "netOrders",
+      SUM(poi."canceledQty") AS "canceledQty",
+      SUM(poi."refundAmount") AS "refundAmount"
+    FROM "ProductOrderItem" AS poi
+    INNER JOIN "affected" AS a
+      ON a."sellerSku" = poi."sellerSku"
+     AND a."paidDate" = poi."paidDate"
+    WHERE poi."productMatched" = true
+    GROUP BY poi."sellerSku", poi."paidDate"
+  `)
+
+  return result
+    .map((item) => {
+      const dateStr = formatDateKey(new Date(item.date))
+      return {
+        sku: item.sku,
+        dateStr,
+        productName: productNameMap.get(item.sku) || null,
+        grossOrders: Number(item.grossOrders || 0),
+        returnQty: Number(item.returnQty || 0),
+        netOrders: Number(item.netOrders || 0),
+        canceledQty: Number(item.canceledQty || 0),
+        refundAmount: Number(item.refundAmount || 0),
+      }
+    })
+    .sort((a, b) => a.dateStr.localeCompare(b.dateStr) || a.sku.localeCompare(b.sku))
 }
 
 export async function POST(request: NextRequest) {
@@ -428,12 +695,13 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const sourceFileName = String(file.name || '').trim()
+    const normalizedFileName = sourceFileName.toLowerCase()
     const bytes = await file.arrayBuffer()
-    const fileName = String(file.name || '').toLowerCase()
     const fileSize = bytes.byteLength
 
     console.log('[import-orders] start', {
-      fileName,
+      fileName: sourceFileName,
       fileSize,
       mode,
     })
@@ -446,7 +714,7 @@ export async function POST(request: NextRequest) {
     let rows: Array<{ rowNumber: number; record: Record<string, unknown> }> = []
 
     try {
-      if (fileName.endsWith('.csv')) {
+      if (normalizedFileName.endsWith('.csv')) {
         const text = new TextDecoder('utf-8').decode(bytes)
         rows = parseCsvText(text)
       } else {
@@ -489,31 +757,27 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log('[import-orders] parsed rows', {
-      rowCount: rows.length,
-    })
-
-    if (isTimedOut()) {
-      return createTimeoutResponse(stage, rows.length, 0)
-    }
-
     const failures: OrderFailure[] = []
     const skippedRows: OrderFailure[] = []
-    const parsedRows: ParsedOrderRow[] = []
+    const parsedRows: ParsedOrderItem[] = []
 
     rows.forEach(({ rowNumber, record }) => {
       try {
-        const sku = normalizeCell(record['Seller SKU'])
-        const paidTime = normalizeCell(record['Paid Time'])
+        const orderId = normalizeCell(record['Order ID'])
+        const skuId = normalizeCell(record['SKU ID']) || null
+        const sellerSku = normalizeCell(record['Seller SKU'])
+        const rawPaidTime = normalizeCell(record['Paid Time'])
         const quantity = Math.max(0, Math.round(parseNumber(record['Quantity'])))
         const returnQty = Math.max(0, Math.round(parseNumber(record['Sku Quantity of return'])))
-        const dateStr = parseDateString(record['Paid Time'])
+        const orderStatus = normalizeCell(record['Order Status'])
+        const cancelationReturnType = normalizeCell(record['Cancelation/Return Type'])
+        const refundAmount = parseNumber(record['Order Refund Amount'])
 
-        if (!sku) {
+        if (!sellerSku) {
           skippedRows.push({
             row: rowNumber,
             sku: '',
-            paidTime,
+            paidTime: rawPaidTime,
             quantity,
             returnQty,
             reason: 'Seller SKU 为空，已跳过',
@@ -521,10 +785,22 @@ export async function POST(request: NextRequest) {
           return
         }
 
-        if (!paidTime) {
+        if (!orderId) {
           failures.push({
             row: rowNumber,
-            sku,
+            sku: sellerSku,
+            paidTime: rawPaidTime,
+            quantity,
+            returnQty,
+            reason: 'Order ID 为空，无法生成订单去重键',
+          })
+          return
+        }
+
+        if (!rawPaidTime) {
+          failures.push({
+            row: rowNumber,
+            sku: sellerSku,
             paidTime: '',
             quantity,
             returnQty,
@@ -533,11 +809,12 @@ export async function POST(request: NextRequest) {
           return
         }
 
-        if (!dateStr) {
+        const parsedDate = parseDateValue(record['Paid Time'])
+        if (!parsedDate) {
           failures.push({
             row: rowNumber,
-            sku,
-            paidTime,
+            sku: sellerSku,
+            paidTime: rawPaidTime,
             quantity,
             returnQty,
             reason: 'Paid Time 无法解析',
@@ -545,19 +822,40 @@ export async function POST(request: NextRequest) {
           return
         }
 
+        const dedupeKey = buildDedupeKey(orderId, skuId, sellerSku)
+        if (!dedupeKey) {
+          failures.push({
+            row: rowNumber,
+            sku: sellerSku,
+            paidTime: rawPaidTime,
+            quantity,
+            returnQty,
+            reason: '缺少可用的订单去重键',
+          })
+          return
+        }
+
+        const canceled = isCanceledOrder(orderStatus, cancelationReturnType)
+        const canceledQty = canceled ? quantity : 0
+        const netQty = canceled ? 0 : Math.max(quantity - returnQty, 0)
+
         parsedRows.push({
           row: rowNumber,
-          sku,
-          productName: normalizeCell(record['Product Name']),
+          dedupeKey,
+          orderId,
+          skuId,
+          sellerSku,
+          paidDate: parsedDate.paidDate,
+          paidDateStr: parsedDate.dateStr,
+          paidTime: parsedDate.paidTime,
+          rawPaidTime,
           quantity,
           returnQty,
-          paidTime,
-          dateStr,
-          isCanceled: isCanceledOrder(
-            normalizeCell(record['Order Status']),
-            normalizeCell(record['Cancelation/Return Type']),
-          ),
-          refundAmount: parseNumber(record['Order Refund Amount']),
+          netQty,
+          canceledQty,
+          refundAmount,
+          orderStatus,
+          cancelationReturnType,
         })
       } catch (rowError) {
         console.error(`解析订单行失败: row ${rowNumber}`, rowError)
@@ -573,116 +871,106 @@ export async function POST(request: NextRequest) {
     })
 
     const totalOrderRows = rows.length
-    const uniqueSkus = Array.from(new Set(parsedRows.map((item) => item.sku).filter(Boolean)))
+    const validRows = parsedRows.length
 
-    console.log('[import-orders] parsed valid rows', {
-      parsedRowCount: parsedRows.length,
-      uniqueSkuCount: uniqueSkus.length,
-      parseFailureCount: failures.length,
-      skippedRowCount: skippedRows.length,
+    const latestItemsByDedupeKey = new Map<string, ParsedOrderItem>()
+    let duplicateInFileCount = 0
+
+    parsedRows.forEach((item) => {
+      if (latestItemsByDedupeKey.has(item.dedupeKey)) {
+        duplicateInFileCount += 1
+      }
+      latestItemsByDedupeKey.set(item.dedupeKey, item)
     })
 
-    if (!parsedRows.length) {
-      return NextResponse.json({
-        success: false,
-        mode,
-        stage: 'parse-file',
-        fileName,
-        fileSize,
-        parsedRows: totalOrderRows,
-        validRows: 0,
-        skippedRows: skippedRows.slice(0, 20),
-        failedRows: failures.slice(0, 20),
-        skippedCount: skippedRows.length,
-        missingSkuRows: 0,
-        missingSkus: [],
-        uniqueSkuCount: 0,
-        aggregatedRecordCount: 0,
-        summaryByDate: [],
-        summaryBySku: [],
-        totalGrossOrders: 0,
-        totalReturnQty: 0,
-        totalNetOrders: 0,
-        totalCanceledQty: 0,
-        totalRefundAmount: 0,
-      }, { status: 400 })
+    const dedupedItems = Array.from(latestItemsByDedupeKey.values())
+    const uniqueSkus = Array.from(new Set(dedupedItems.map((item) => item.sellerSku)))
+    const dedupeKeyCount = dedupedItems.length
+
+    if (!dedupedItems.length) {
+      return NextResponse.json(
+        {
+          success: false,
+          mode,
+          stage: 'parse-file',
+          fileName: sourceFileName,
+          fileSize,
+          totalOrderRows,
+          parsedRows: totalOrderRows,
+          validRows: 0,
+          orderItemCount: 0,
+          dedupeKeyCount: 0,
+          duplicateInFileCount,
+          uniqueSkuCount: 0,
+          matchedSkuCount: 0,
+          missingSkuCount: 0,
+          missingSkuRows: 0,
+          skippedCount: skippedRows.length,
+          missingSkus: [],
+          successCount: 0,
+          insertedOrderItemCount: 0,
+          updatedOrderItemCount: 0,
+          aggregatedRecordCount: 0,
+          skippedRows: skippedRows.slice(0, 20),
+          failedCount: failures.length,
+          failedRows: failures.slice(0, 20),
+          summaryByDate: [],
+          summaryBySku: [],
+          totalGrossOrders: 0,
+          totalReturnQty: 0,
+          totalNetOrders: 0,
+          totalCanceledQty: 0,
+          totalRefundAmount: 0,
+        },
+        { status: 400 },
+      )
     }
 
     if (isTimedOut()) {
-      return createTimeoutResponse('parse-file', parsedRows.length, 0)
+      return createTimeoutResponse('parse-file', dedupeKeyCount, 0)
     }
 
     stage = 'aggregate'
-    const aggregated = new Map<string, AggregatedOrderStat>()
-
-    for (const item of parsedRows) {
-      const key = `${item.sku}__${item.dateStr}`
-      const current = aggregated.get(key) || {
-        sku: item.sku,
-        dateStr: item.dateStr,
-        productName: item.productName || null,
-        grossOrders: 0,
-        returnQty: 0,
-        netOrders: 0,
-        canceledQty: 0,
-        refundAmount: 0,
-      }
-
-      const safeReturnQty = Math.max(0, item.returnQty)
-      const canceledQty = item.isCanceled ? item.quantity : 0
-      const netOrders = item.isCanceled ? 0 : Math.max(item.quantity - safeReturnQty, 0)
-
-      current.grossOrders += item.quantity
-      current.returnQty += safeReturnQty
-      current.netOrders += netOrders
-      current.canceledQty += canceledQty
-      current.refundAmount += item.refundAmount
-
-      if (!current.productName && item.productName) {
-        current.productName = item.productName
-      }
-
-      aggregated.set(key, current)
-    }
-
-    const aggregatedItems = Array.from(aggregated.values())
-    const aggregatedSummary = buildSummary(aggregatedItems)
-
-    console.log('[import-orders] aggregated records', {
-      aggregatedCount: aggregatedItems.length,
-    })
+    const fileSummary = buildSummary(dedupedItems)
 
     if (dryRun) {
       return NextResponse.json({
         success: true,
         mode,
         stage,
-        fileName,
+        fileName: sourceFileName,
         fileSize,
-        parsedRows: totalOrderRows,
-        validRows: parsedRows.length,
         totalOrderRows,
-        successCount: 0,
-        failedCount: failures.length,
-        skippedCount: skippedRows.length,
-        missingSkuRows: 0,
-        skippedRows: skippedRows.slice(0, 20),
-        failedRows: failures.slice(0, 20),
-        missingSkus: [],
+        parsedRows: totalOrderRows,
+        validRows,
+        orderItemCount: dedupeKeyCount,
+        dedupeKeyCount,
+        duplicateInFileCount,
         uniqueSkuCount: uniqueSkus.length,
-        aggregatedRecordCount: aggregatedItems.length,
-        summaryByDate: aggregatedSummary.summaryByDate,
-        summaryBySku: aggregatedSummary.summaryBySku.slice(0, 50),
-        totalGrossOrders: aggregatedSummary.totalGrossOrders,
-        totalReturnQty: aggregatedSummary.totalReturnQty,
-        totalNetOrders: aggregatedSummary.totalNetOrders,
-        totalCanceledQty: aggregatedSummary.totalCanceledQty,
-        totalRefundAmount: aggregatedSummary.totalRefundAmount,
+        matchedSkuCount: 0,
+        missingSkuCount: 0,
+        missingSkuRows: 0,
+        skippedCount: skippedRows.length,
+        missingSkus: [],
+        successCount: 0,
+        insertedOrderItemCount: 0,
+        updatedOrderItemCount: 0,
+        aggregatedRecordCount: fileSummary.summaryByDate.length,
+        skippedRows: skippedRows.slice(0, 20),
+        failedCount: failures.length,
+        failedRows: failures.slice(0, 20),
+        summaryByDate: fileSummary.summaryByDate,
+        summaryBySku: fileSummary.summaryBySku,
+        totalGrossOrders: fileSummary.totalGrossOrders,
+        totalReturnQty: fileSummary.totalReturnQty,
+        totalNetOrders: fileSummary.totalNetOrders,
+        totalCanceledQty: fileSummary.totalCanceledQty,
+        totalRefundAmount: fileSummary.totalRefundAmount,
       })
     }
 
     if (isTimedOut()) {
-      return createTimeoutResponse('aggregate', aggregatedItems.length, 0)
+      return createTimeoutResponse('aggregate', dedupeKeyCount, 0)
     }
 
     stage = 'match-products'
@@ -694,158 +982,191 @@ export async function POST(request: NextRequest) {
       },
       select: {
         sku: true,
+        name: true,
       },
     })
 
     const productSkuSet = new Set(
       products.map((product) => product.sku).filter((sku): sku is string => Boolean(sku)),
     )
-    const missingSkus: string[] = []
-    const matchedAggregatedItems: AggregatedOrderStat[] = []
-    let missingSkuRows = 0
-
-    for (const item of aggregatedItems) {
-      if (!productSkuSet.has(item.sku)) {
-        if (!missingSkus.includes(item.sku)) {
-          missingSkus.push(item.sku)
-        }
-        missingSkuRows += 1
-        continue
-      }
-
-      matchedAggregatedItems.push(item)
-    }
-
-    console.log('[import-orders] matched product sku', {
-      matchedSkuCount: productSkuSet.size,
-      missingSkuCount: missingSkus.length,
-      matchedAggregatedCount: matchedAggregatedItems.length,
-    })
+    const productNameMap = new Map(
+      products
+        .filter((product): product is { sku: string; name: string } => Boolean(product.sku))
+        .map((product) => [product.sku, product.name]),
+    )
+    const missingSkus = uniqueSkus.filter((sku) => !productSkuSet.has(sku))
+    const missingSkuRows = dedupedItems.filter((item) => !productSkuSet.has(item.sellerSku)).length
 
     if (checkOnly) {
       return NextResponse.json({
         success: true,
         mode,
         stage,
-        fileName,
+        fileName: sourceFileName,
         fileSize,
         totalOrderRows,
         parsedRows: totalOrderRows,
-        validRows: parsedRows.length,
-        successCount: 0,
-        failedCount: failures.length,
-        skippedCount: skippedRows.length,
+        validRows,
+        orderItemCount: dedupeKeyCount,
+        dedupeKeyCount,
+        duplicateInFileCount,
         uniqueSkuCount: uniqueSkus.length,
         matchedSkuCount: uniqueSkus.length - missingSkus.length,
         missingSkuCount: missingSkus.length,
         missingSkuRows,
-        missingSkus: missingSkus.slice(0, 100),
-        aggregatedRecordCount: aggregatedItems.length,
+        skippedCount: skippedRows.length,
+        missingSkus,
+        successCount: 0,
+        insertedOrderItemCount: 0,
+        updatedOrderItemCount: 0,
+        aggregatedRecordCount: fileSummary.summaryByDate.length,
         skippedRows: skippedRows.slice(0, 20),
+        failedCount: failures.length,
         failedRows: failures.slice(0, 20),
-        summaryByDate: aggregatedSummary.summaryByDate,
-        summaryBySku: aggregatedSummary.summaryBySku.slice(0, 50),
-        totalGrossOrders: aggregatedSummary.totalGrossOrders,
-        totalReturnQty: aggregatedSummary.totalReturnQty,
-        totalNetOrders: aggregatedSummary.totalNetOrders,
-        totalCanceledQty: aggregatedSummary.totalCanceledQty,
-        totalRefundAmount: aggregatedSummary.totalRefundAmount,
+        summaryByDate: fileSummary.summaryByDate,
+        summaryBySku: fileSummary.summaryBySku,
+        totalGrossOrders: fileSummary.totalGrossOrders,
+        totalReturnQty: fileSummary.totalReturnQty,
+        totalNetOrders: fileSummary.totalNetOrders,
+        totalCanceledQty: fileSummary.totalCanceledQty,
+        totalRefundAmount: fileSummary.totalRefundAmount,
       })
     }
 
     if (isTimedOut()) {
-      return createTimeoutResponse('match-products', matchedAggregatedItems.length, 0)
+      return createTimeoutResponse('match-products', dedupeKeyCount, 0)
     }
 
-    stage = 'write-performance'
-    let successCount = 0
-    const successfulItems: AggregatedOrderStat[] = []
-    const writeErrors: Array<{ sku: string; dateStr: string; reason: string }> = []
-    const batches = chunkArray(matchedAggregatedItems, WRITE_BATCH_SIZE)
+    stage = 'upsert-order-items'
+    const existingItems = await loadExistingOrderItems(dedupedItems.map((item) => item.dedupeKey))
+    const existingDedupeSet = new Set(existingItems.map((item) => item.dedupeKey))
+    const insertedOrderItemCount = dedupedItems.filter((item) => !existingDedupeSet.has(item.dedupeKey)).length
+    const updatedOrderItemCount = dedupedItems.length - insertedOrderItemCount
 
-    console.log('[import-orders] write start', {
-      batchSize: WRITE_BATCH_SIZE,
-      batchCount: batches.length,
-      writeRecordCount: matchedAggregatedItems.length,
+    const affectedPairMap = new Map<string, AffectedPair>()
+    existingItems.forEach((item) => {
+      const dateStr = formatDateKey(new Date(item.paidDate))
+      const key = `${item.sellerSku}__${dateStr}`
+      affectedPairMap.set(key, {
+        sku: item.sellerSku,
+        dateStr,
+      })
     })
 
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
-      const batch = batches[batchIndex]
+    const orderItemWrites: ProductOrderItemWriteRow[] = dedupedItems.map((item) => {
+      const pairKey = `${item.sellerSku}__${item.paidDateStr}`
+      affectedPairMap.set(pairKey, {
+        sku: item.sellerSku,
+        dateStr: item.paidDateStr,
+      })
 
+      return {
+        dedupeKey: item.dedupeKey,
+        orderId: item.orderId,
+        skuId: item.skuId,
+        sellerSku: item.sellerSku,
+        paidDate: item.paidDate,
+        paidTime: item.paidTime,
+        quantity: item.quantity,
+        returnQty: item.returnQty,
+        netQty: item.netQty,
+        canceledQty: item.canceledQty,
+        refundAmount: item.refundAmount,
+        orderStatus: item.orderStatus || null,
+        cancelationReturnType: item.cancelationReturnType || null,
+        productMatched: productSkuSet.has(item.sellerSku),
+        sourceFileName: sourceFileName || null,
+        rawPaidTime: item.rawPaidTime || null,
+      }
+    })
+
+    const orderItemBatches = chunkArray(orderItemWrites, WRITE_BATCH_SIZE)
+    for (let batchIndex = 0; batchIndex < orderItemBatches.length; batchIndex += 1) {
       if (isTimedOut()) {
         const processedCount = batchIndex * WRITE_BATCH_SIZE
-        const remainingCount = matchedAggregatedItems.length - processedCount
+        const remainingCount = orderItemWrites.length - processedCount
         return createTimeoutResponse(stage, processedCount, remainingCount)
       }
 
-      try {
-        await bulkUpsertPerformanceDaily(batch)
-        successfulItems.push(...batch)
-        successCount += batch.length
-      } catch (error) {
-        const reason = String((error as Error)?.message || error)
+      await bulkUpsertProductOrderItems(orderItemBatches[batchIndex])
+    }
 
-        batch.forEach((item) => {
-          console.error('导入订单汇总失败:', {
-            sku: item.sku,
-            dateStr: item.dateStr,
-            error: reason,
-          })
-          writeErrors.push({
-            sku: item.sku,
-            dateStr: item.dateStr,
-            reason,
-          })
-          failures.push({
-            row: 0,
-            sku: item.sku,
-            paidTime: item.dateStr,
-            quantity: item.grossOrders,
-            returnQty: item.returnQty,
-            reason: `${item.dateStr} 写入 PerformanceDaily 失败：${reason}`,
-          })
-        })
+    if (isTimedOut()) {
+      return createTimeoutResponse('upsert-order-items', orderItemWrites.length, 0)
+    }
+
+    stage = 'rebuild-performance'
+    const affectedPairs = Array.from(affectedPairMap.values())
+    const aggregatedItems = await loadAggregatedMatchedOrderItems(affectedPairs, productNameMap)
+    const aggregatedPairSet = new Set(aggregatedItems.map((item) => `${item.sku}__${item.dateStr}`))
+    const stalePairs = affectedPairs.filter((item) => !aggregatedPairSet.has(`${item.sku}__${item.dateStr}`))
+
+    if (isTimedOut()) {
+      return createTimeoutResponse(stage, aggregatedItems.length, stalePairs.length)
+    }
+
+    stage = 'write-performance'
+    const performanceBatches = chunkArray(aggregatedItems, WRITE_BATCH_SIZE)
+    let successCount = 0
+
+    for (let batchIndex = 0; batchIndex < performanceBatches.length; batchIndex += 1) {
+      if (isTimedOut()) {
+        const processedCount = batchIndex * WRITE_BATCH_SIZE
+        const remainingCount = aggregatedItems.length - processedCount
+        return createTimeoutResponse(stage, processedCount, remainingCount)
       }
+
+      await bulkUpsertPerformanceDaily(performanceBatches[batchIndex])
+      successCount += performanceBatches[batchIndex].length
     }
 
-    console.log('[import-orders] write end', {
-      successCount,
-      writeErrorCount: writeErrors.length,
-      totalFailureCount: failures.length,
-    })
+    const staleBatches = chunkArray(stalePairs, WRITE_BATCH_SIZE)
+    for (let batchIndex = 0; batchIndex < staleBatches.length; batchIndex += 1) {
+      if (isTimedOut()) {
+        const processedCount = successCount + batchIndex * WRITE_BATCH_SIZE
+        const remainingCount = stalePairs.length - batchIndex * WRITE_BATCH_SIZE
+        return createTimeoutResponse(stage, processedCount, remainingCount)
+      }
 
-    const writeSummary = buildSummary(successfulItems)
-
-    if (successCount === 0 && matchedAggregatedItems.length > 0 && writeErrors.length > 0) {
-      return NextResponse.json(
-        {
-          error: '导入订单表失败',
-          detail: writeErrors[0].reason,
-          stage,
-        },
-        { status: 500 },
-      )
+      await deletePerformanceDailyPairs(staleBatches[batchIndex])
     }
+
+    const writeSummary = buildSummary(
+      aggregatedItems.map((item) => ({
+        sellerSku: item.sku,
+        paidDateStr: item.dateStr,
+        quantity: item.grossOrders,
+        returnQty: item.returnQty,
+        netQty: item.netOrders,
+        canceledQty: item.canceledQty,
+        refundAmount: item.refundAmount,
+      })),
+    )
 
     stage = 'done'
     return NextResponse.json({
       success: true,
       mode,
       stage,
-      fileName,
+      fileName: sourceFileName,
       fileSize,
       totalOrderRows,
       parsedRows: totalOrderRows,
-      validRows: parsedRows.length,
+      validRows,
+      orderItemCount: dedupeKeyCount,
+      dedupeKeyCount,
+      duplicateInFileCount,
       uniqueSkuCount: uniqueSkus.length,
       matchedSkuCount: uniqueSkus.length - missingSkus.length,
       missingSkuCount: missingSkus.length,
       missingSkuRows,
       skippedCount: skippedRows.length,
-      missingSkus: missingSkus.slice(0, 100),
-      skippedRows: skippedRows.slice(0, 20),
-      aggregatedRecordCount: aggregatedItems.length,
+      missingSkus,
       successCount,
+      insertedOrderItemCount,
+      updatedOrderItemCount,
+      aggregatedRecordCount: aggregatedItems.length,
+      skippedRows: skippedRows.slice(0, 20),
       failedCount: failures.length,
       failedRows: failures,
       summaryByDate: writeSummary.summaryByDate,
@@ -855,7 +1176,7 @@ export async function POST(request: NextRequest) {
       totalNetOrders: writeSummary.totalNetOrders,
       totalCanceledQty: writeSummary.totalCanceledQty,
       totalRefundAmount: writeSummary.totalRefundAmount,
-      writeErrors,
+      staleRecordCount: stalePairs.length,
     })
   } catch (error) {
     console.error('导入订单数据失败:', error)
