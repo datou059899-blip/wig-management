@@ -4,6 +4,32 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
 type RangeKey = 'today' | '7' | '30' | 'custom'
+type ProductLookup = {
+  id: string
+  sku: string | null
+  name: string
+  stock: number
+}
+
+type ProductMatchType =
+  | 'main'
+  | 'alias'
+  | 'product-sku-parentheses'
+  | 'product-name-parentheses'
+
+type ProductMatch = {
+  product: ProductLookup
+  matchType: ProductMatchType
+}
+
+type InventoryTarget = {
+  key: string
+  productId: string | null
+  productSku: string | null
+  fallbackStock: number
+  requestedSkus: string[]
+  snapshotCandidateSkus: string[]
+}
 
 function startOfDay(date: Date) {
   const normalized = new Date(date)
@@ -22,6 +48,51 @@ function formatDateKey(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+function normalizeCell(value: unknown) {
+  if (value === null || value === undefined) return ''
+  return typeof value === 'string' ? value.trim() : String(value).trim()
+}
+
+function normalizeSkuForCompare(value: string) {
+  return normalizeCell(value).replace(/\s+/g, '').toUpperCase()
+}
+
+function extractAliasSkusFromText(value: string | null | undefined) {
+  const aliases = new Set<string>()
+  const text = normalizeCell(value)
+  if (!text) return []
+
+  const pattern = /[（(]\s*([^()（）]+?)\s*[)）]/g
+  let match = pattern.exec(text)
+  while (match) {
+    const alias = normalizeCell(match[1])
+    if (alias) {
+      aliases.add(alias)
+    }
+    match = pattern.exec(text)
+  }
+
+  return Array.from(aliases)
+}
+
+function setLookupIfMissing<T>(lookupMap: Map<string, T>, normalizedLookupMap: Map<string, T>, key: string, value: T) {
+  if (!key) return
+  if (!lookupMap.has(key)) {
+    lookupMap.set(key, value)
+  }
+
+  const normalizedKey = normalizeSkuForCompare(key)
+  if (normalizedKey && !normalizedLookupMap.has(normalizedKey)) {
+    normalizedLookupMap.set(normalizedKey, value)
+  }
+}
+
+function addUniqueSku(target: string[], sku: string | null | undefined) {
+  const value = normalizeCell(sku)
+  if (!value || target.includes(value)) return
+  target.push(value)
 }
 
 function parseDateInput(value: string) {
@@ -103,25 +174,134 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const requestedSku = String(searchParams.get('sku') || '').trim()
+    const requestedSku = normalizeCell(searchParams.get('sku'))
     const requestedGroupId = String(searchParams.get('groupId') || '').trim()
     const selectedRange = resolveRange(searchParams)
 
-    const products = await prisma.product.findMany({
-      where: { isActive: true },
-      select: {
-        sku: true,
-        stock: true,
-      },
-      orderBy: { updatedAt: 'desc' },
+    const [products, aliases, groups] = await Promise.all([
+      prisma.product.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          stock: true,
+        },
+        orderBy: { updatedAt: 'desc' },
+      }),
+      prisma.productSkuAlias.findMany({
+        where: {
+          product: {
+            isActive: true,
+          },
+        },
+        select: {
+          aliasSku: true,
+          productId: true,
+        },
+      }),
+      prisma.productSalesGroup.findMany({
+        orderBy: { createdAt: 'asc' },
+      }),
+    ])
+
+    const productById = new Map(products.map((product) => [product.id, product]))
+    const exactMainSkuMap = new Map<string, ProductLookup>()
+    const normalizedMainSkuMap = new Map<string, ProductLookup>()
+    const exactAliasSkuMap = new Map<string, ProductLookup>()
+    const normalizedAliasSkuMap = new Map<string, ProductLookup>()
+    const exactProductSkuParentheticalMap = new Map<string, ProductLookup>()
+    const normalizedProductSkuParentheticalMap = new Map<string, ProductLookup>()
+    const exactProductNameParentheticalMap = new Map<string, ProductLookup>()
+    const normalizedProductNameParentheticalMap = new Map<string, ProductLookup>()
+
+    products.forEach((product) => {
+      if (product.sku) {
+        setLookupIfMissing(exactMainSkuMap, normalizedMainSkuMap, product.sku, product)
+      }
     })
 
-    const skuProducts = products.filter((product): product is { sku: string; stock: number } => Boolean(product.sku))
-    const skuOptions = skuProducts.map((product) => ({ sku: product.sku }))
-    const skuSet = new Set(skuOptions.map((item) => item.sku))
+    aliases.forEach((alias) => {
+      const product = productById.get(alias.productId)
+      if (!product) return
+      setLookupIfMissing(exactAliasSkuMap, normalizedAliasSkuMap, alias.aliasSku, product)
+    })
 
-    const groups = await prisma.productSalesGroup.findMany({
-      orderBy: { createdAt: 'asc' },
+    products.forEach((product) => {
+      extractAliasSkusFromText(product.sku).forEach((aliasSku) => {
+        if (exactMainSkuMap.has(aliasSku) || exactAliasSkuMap.has(aliasSku)) return
+        setLookupIfMissing(
+          exactProductSkuParentheticalMap,
+          normalizedProductSkuParentheticalMap,
+          aliasSku,
+          product,
+        )
+      })
+
+      extractAliasSkusFromText(product.name).forEach((aliasSku) => {
+        if (
+          exactMainSkuMap.has(aliasSku) ||
+          exactAliasSkuMap.has(aliasSku) ||
+          exactProductSkuParentheticalMap.has(aliasSku)
+        ) {
+          return
+        }
+        setLookupIfMissing(
+          exactProductNameParentheticalMap,
+          normalizedProductNameParentheticalMap,
+          aliasSku,
+          product,
+        )
+      })
+    })
+
+    const resolveProductBySku = (sku: string): ProductMatch | null => {
+      const normalizedSku = normalizeSkuForCompare(sku)
+      if (!normalizedSku) return null
+
+      const mainProduct = exactMainSkuMap.get(sku) || normalizedMainSkuMap.get(normalizedSku)
+      if (mainProduct) {
+        return { product: mainProduct, matchType: 'main' }
+      }
+
+      const aliasProduct = exactAliasSkuMap.get(sku) || normalizedAliasSkuMap.get(normalizedSku)
+      if (aliasProduct) {
+        return { product: aliasProduct, matchType: 'alias' }
+      }
+
+      const skuParentheticalProduct = exactProductSkuParentheticalMap.get(sku)
+        || normalizedProductSkuParentheticalMap.get(normalizedSku)
+      if (skuParentheticalProduct) {
+        return { product: skuParentheticalProduct, matchType: 'product-sku-parentheses' }
+      }
+
+      const nameParentheticalProduct = exactProductNameParentheticalMap.get(sku)
+        || normalizedProductNameParentheticalMap.get(normalizedSku)
+      if (nameParentheticalProduct) {
+        return { product: nameParentheticalProduct, matchType: 'product-name-parentheses' }
+      }
+
+      return null
+    }
+
+    const skuOptionsSet = new Set<string>()
+    const skuOptions: Array<{ sku: string }> = []
+    const registerSkuOption = (sku: string | null | undefined) => {
+      const value = normalizeCell(sku)
+      if (!value || skuOptionsSet.has(value)) return
+      skuOptionsSet.add(value)
+      skuOptions.push({ sku: value })
+    }
+
+    products.forEach((product) => {
+      registerSkuOption(product.sku)
+    })
+    aliases.forEach((alias) => {
+      registerSkuOption(alias.aliasSku)
+    })
+    products.forEach((product) => {
+      extractAliasSkusFromText(product.sku).forEach((aliasSku) => registerSkuOption(aliasSku))
+      extractAliasSkusFromText(product.name).forEach((aliasSku) => registerSkuOption(aliasSku))
     })
 
     const groupOptions = groups.map((group) => ({
@@ -130,29 +310,51 @@ export async function GET(request: NextRequest) {
       skus: Array.isArray(group.skus) ? group.skus.map((item) => String(item || '').trim()).filter(Boolean) : [],
     }))
 
-    const selectedSku = skuSet.has(requestedSku) ? requestedSku : ''
-    const selectedGroup = groupOptions.find((group) => group.id === requestedGroupId) || null
+    const selectedSku = requestedSku
+    const selectedGroup = !selectedSku
+      ? groupOptions.find((group) => group.id === requestedGroupId) || null
+      : null
 
-    let trendSkuList = skuOptions.map((item) => item.sku)
+    let salesSkuList: string[] = []
     let trendTitle = '销售库存趋势 - 全部 SKU'
 
     if (selectedSku) {
-      trendSkuList = [selectedSku]
+      salesSkuList = [selectedSku]
       trendTitle = `销售库存趋势 - SKU ${selectedSku}`
     } else if (selectedGroup) {
-      trendSkuList = selectedGroup.skus.filter((sku) => skuSet.has(sku))
+      salesSkuList = Array.from(new Set(selectedGroup.skus.map((sku) => normalizeCell(sku)).filter(Boolean)))
       trendTitle = `销售库存趋势 - 分组 ${selectedGroup.name}`
     }
 
-    const performanceData = trendSkuList.length
-      ? await prisma.performanceDaily.findMany({
+    const performanceData = selectedSku || selectedGroup
+      ? (salesSkuList.length
+        ? await prisma.performanceDaily.findMany({
+            where: {
+              date: {
+                gte: selectedRange.startDate,
+                lt: selectedRange.endExclusive,
+              },
+              sku: {
+                in: salesSkuList,
+              },
+            },
+            select: {
+              sku: true,
+              orders: true,
+              grossOrders: true,
+              returnQty: true,
+              netOrders: true,
+              canceledQty: true,
+              refundAmount: true,
+              date: true,
+            },
+          })
+        : [])
+      : await prisma.performanceDaily.findMany({
           where: {
             date: {
               gte: selectedRange.startDate,
               lt: selectedRange.endExclusive,
-            },
-            sku: {
-              in: trendSkuList,
             },
           },
           select: {
@@ -166,29 +368,6 @@ export async function GET(request: NextRequest) {
             date: true,
           },
         })
-      : []
-
-    const snapshotRows = trendSkuList.length
-      ? await prisma.productInventorySnapshot.findMany({
-          where: {
-            sku: {
-              in: trendSkuList,
-            },
-            date: {
-              lt: selectedRange.endExclusive,
-            },
-          },
-          select: {
-            sku: true,
-            date: true,
-            totalQty: true,
-          },
-          orderBy: [
-            { sku: 'asc' },
-            { date: 'asc' },
-          ],
-        })
-      : []
 
     const salesMap = new Map<string, number>()
     const filterSummary = {
@@ -213,6 +392,116 @@ export async function GET(request: NextRequest) {
 
     filterSummary.refundAmount = Number(filterSummary.refundAmount.toFixed(2))
 
+    const inventoryTargets = (() => {
+      if (selectedSku) {
+        const match = resolveProductBySku(selectedSku)
+        if (!match) {
+          return [{
+            key: `missing:${selectedSku}`,
+            productId: null,
+            productSku: null,
+            fallbackStock: 0,
+            requestedSkus: [selectedSku],
+            snapshotCandidateSkus: [],
+          }] satisfies InventoryTarget[]
+        }
+
+        const snapshotCandidateSkus: string[] = []
+        addUniqueSku(snapshotCandidateSkus, selectedSku)
+        if (match.matchType !== 'main') {
+          addUniqueSku(snapshotCandidateSkus, match.product.sku)
+        }
+
+        return [{
+          key: match.product.id,
+          productId: match.product.id,
+          productSku: match.product.sku,
+          fallbackStock: match.product.stock || 0,
+          requestedSkus: [selectedSku],
+          snapshotCandidateSkus,
+        }] satisfies InventoryTarget[]
+      }
+
+      if (selectedGroup) {
+        const targetMap = new Map<string, InventoryTarget>()
+
+        selectedGroup.skus.forEach((groupSku) => {
+          const sku = normalizeCell(groupSku)
+          if (!sku) return
+
+          const match = resolveProductBySku(sku)
+          if (!match) return
+
+          const existing = targetMap.get(match.product.id)
+          if (existing) {
+            addUniqueSku(existing.requestedSkus, sku)
+            return
+          }
+
+          targetMap.set(match.product.id, {
+            key: match.product.id,
+            productId: match.product.id,
+            productSku: match.product.sku,
+            fallbackStock: match.product.stock || 0,
+            requestedSkus: [sku],
+            snapshotCandidateSkus: [],
+          })
+        })
+
+        return Array.from(targetMap.values()).map((target) => {
+          const snapshotCandidateSkus: string[] = []
+          if (target.productSku && target.requestedSkus.includes(target.productSku)) {
+            addUniqueSku(snapshotCandidateSkus, target.productSku)
+          }
+          target.requestedSkus.forEach((sku) => addUniqueSku(snapshotCandidateSkus, sku))
+          addUniqueSku(snapshotCandidateSkus, target.productSku)
+          return {
+            ...target,
+            snapshotCandidateSkus,
+          }
+        })
+      }
+
+      return products.map((product) => {
+        const snapshotCandidateSkus: string[] = []
+        addUniqueSku(snapshotCandidateSkus, product.sku)
+        return {
+          key: product.id,
+          productId: product.id,
+          productSku: product.sku,
+          fallbackStock: product.stock || 0,
+          requestedSkus: product.sku ? [product.sku] : [],
+          snapshotCandidateSkus,
+        }
+      })
+    })()
+
+    const snapshotSkuList = Array.from(new Set(
+      inventoryTargets.flatMap((target) => target.snapshotCandidateSkus.map((sku) => normalizeCell(sku)).filter(Boolean)),
+    ))
+
+    const snapshotRows = snapshotSkuList.length
+      ? await prisma.productInventorySnapshot.findMany({
+          where: {
+            sku: {
+              in: snapshotSkuList,
+            },
+            date: {
+              lt: selectedRange.endExclusive,
+            },
+          },
+          select: {
+            sku: true,
+            date: true,
+            totalQty: true,
+          },
+          orderBy: [
+            { sku: 'asc' },
+            { date: 'asc' },
+          ],
+        })
+      : []
+
     const snapshotsBySku = new Map<string, Array<{ date: Date; totalQty: number }>>()
     snapshotRows.forEach((item) => {
       const bucket = snapshotsBySku.get(item.sku) || []
@@ -223,32 +512,51 @@ export async function GET(request: NextRequest) {
       snapshotsBySku.set(item.sku, bucket)
     })
 
-    const stockFallbackMap = new Map(skuProducts.map((product) => [product.sku, product.stock || 0]))
     const stockByDate = new Map<string, number>()
     const totalDays = Math.max(
       1,
       Math.round((selectedRange.endExclusive.getTime() - selectedRange.startDate.getTime()) / 86_400_000),
     )
 
-    for (const sku of trendSkuList) {
-      const snapshots = snapshotsBySku.get(sku) || []
-      let snapshotIndex = 0
-      let currentStock = stockFallbackMap.get(sku) || 0
+    const inventoryStates = inventoryTargets.map((target) => ({
+      fallbackStock: target.fallbackStock,
+      snapshotStates: target.snapshotCandidateSkus.map((sku) => ({
+        snapshots: (snapshotsBySku.get(sku) || []).map((item) => ({
+          dateMs: item.date.getTime(),
+          totalQty: item.totalQty,
+        })),
+        index: 0,
+        currentQty: null as number | null,
+      })),
+    }))
 
-      for (let offset = 0; offset < totalDays; offset += 1) {
-        const currentDate = addDays(selectedRange.startDate, offset)
+    for (let offset = 0; offset < totalDays; offset += 1) {
+      const currentDate = addDays(selectedRange.startDate, offset)
+      const currentDateMs = currentDate.getTime()
+      const dateKey = formatDateKey(currentDate)
+      let totalStock = 0
 
-        while (
-          snapshotIndex < snapshots.length &&
-          snapshots[snapshotIndex].date.getTime() <= currentDate.getTime()
-        ) {
-          currentStock = snapshots[snapshotIndex].totalQty
-          snapshotIndex += 1
-        }
+      inventoryStates.forEach((targetState) => {
+        let resolvedStock: number | null = null
 
-        const dateKey = formatDateKey(currentDate)
-        stockByDate.set(dateKey, (stockByDate.get(dateKey) || 0) + currentStock)
-      }
+        targetState.snapshotStates.forEach((snapshotState) => {
+          while (
+            snapshotState.index < snapshotState.snapshots.length &&
+            snapshotState.snapshots[snapshotState.index].dateMs <= currentDateMs
+          ) {
+            snapshotState.currentQty = snapshotState.snapshots[snapshotState.index].totalQty
+            snapshotState.index += 1
+          }
+
+          if (resolvedStock === null && snapshotState.currentQty !== null) {
+            resolvedStock = snapshotState.currentQty
+          }
+        })
+
+        totalStock += resolvedStock ?? targetState.fallbackStock
+      })
+
+      stockByDate.set(dateKey, totalStock)
     }
 
     const trends = Array.from({ length: totalDays }, (_, offset) => {

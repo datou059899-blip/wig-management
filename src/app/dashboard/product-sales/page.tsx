@@ -1465,8 +1465,9 @@ export default function ProductSalesPage() {
                       value={selectedGroupId}
                       onChange={(event) => {
                         const nextGroupId = event.target.value
+                        setSelectedSku('')
                         setSelectedGroupId(nextGroupId)
-                        void loadTrendData(selectedSku, nextGroupId, trendRange, trendStartDate, trendEndDate)
+                        void loadTrendData('', nextGroupId, trendRange, trendStartDate, trendEndDate)
                       }}
                       className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
                     >
@@ -1481,8 +1482,9 @@ export default function ProductSalesPage() {
                       value={selectedSku}
                       onChange={(event) => {
                         const nextSku = event.target.value
+                        setSelectedGroupId('')
                         setSelectedSku(nextSku)
-                        void loadTrendData(nextSku, selectedGroupId, trendRange, trendStartDate, trendEndDate)
+                        void loadTrendData(nextSku, '', trendRange, trendStartDate, trendEndDate)
                       }}
                       className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
                     >
@@ -1590,7 +1592,7 @@ export default function ProductSalesPage() {
                 )}
 
                 <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                  当前筛选：毛销量 {trendSummary.grossOrders} ｜ 退货量 {trendSummary.returnQty} ｜ 净销量 {trendSummary.netOrders} ｜ 取消 {trendSummary.canceledQty} ｜ 退款金额 ${trendSummary.refundAmount.toFixed(2)}
+                  当前筛选汇总：毛销量 {trendSummary.grossOrders} ｜ 退货量 {trendSummary.returnQty} ｜ 净销量 {trendSummary.netOrders} ｜ 取消 {trendSummary.canceledQty} ｜ 退款金额 ${trendSummary.refundAmount.toFixed(2)}
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1630,7 +1632,7 @@ export default function ProductSalesPage() {
                   <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
                     <div className="mb-3">
                       <div className="text-sm font-medium text-slate-900">每日剩余库存曲线</div>
-                      <div className="text-xs text-slate-500">缺失快照时沿用最近一次库存；完全没有快照时使用当前库存</div>
+                      <div className="text-xs text-slate-500">优先使用当前筛选 SKU 的库存快照；别称 SKU 会回退到主 SKU 快照；都没有时使用当前库存</div>
                     </div>
                     <div className="h-64">
                       {trendLoading ? (

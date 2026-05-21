@@ -24,6 +24,29 @@ function formatDateKey(date: Date) {
   return `${year}-${month}-${day}`
 }
 
+function normalizeCell(value: unknown) {
+  if (value === null || value === undefined) return ''
+  return typeof value === 'string' ? value.trim() : String(value).trim()
+}
+
+function extractAliasSkusFromText(value: string | null | undefined) {
+  const aliases = new Set<string>()
+  const text = normalizeCell(value)
+  if (!text) return []
+
+  const pattern = /[（(]\s*([^()（）]+?)\s*[)）]/g
+  let match = pattern.exec(text)
+  while (match) {
+    const alias = normalizeCell(match[1])
+    if (alias) {
+      aliases.add(alias)
+    }
+    match = pattern.exec(text)
+  }
+
+  return Array.from(aliases)
+}
+
 function parseDateInput(value: string) {
   const matched = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (!matched) return null
@@ -113,19 +136,31 @@ export async function GET(request: NextRequest) {
       ? selectedRange.endExclusive
       : addDays(today, 1)
 
-    const products = await prisma.product.findMany({
-      where: { isActive: true },
-      select: {
-        id: true,
-        sku: true,
-        name: true,
-        color: true,
-        length: true,
-        stock: true,
-        updatedAt: true,
-      },
-      orderBy: { updatedAt: 'desc' },
-    })
+    const [products, aliases] = await Promise.all([
+      prisma.product.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          color: true,
+          length: true,
+          stock: true,
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: 'desc' },
+      }),
+      prisma.productSkuAlias.findMany({
+        where: {
+          product: {
+            isActive: true,
+          },
+        },
+        select: {
+          aliasSku: true,
+        },
+      }),
+    ])
 
     const performanceData = await prisma.performanceDaily.findMany({
       where: {
@@ -213,11 +248,25 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    const skuOptions = products
-      .filter((product): product is typeof product & { sku: string } => Boolean(product.sku))
-      .map((product) => ({
-        sku: product.sku,
-      }))
+    const skuOptionsSet = new Set<string>()
+    const skuOptions: Array<{ sku: string }> = []
+    const registerSkuOption = (sku: string | null | undefined) => {
+      const value = normalizeCell(sku)
+      if (!value || skuOptionsSet.has(value)) return
+      skuOptionsSet.add(value)
+      skuOptions.push({ sku: value })
+    }
+
+    products.forEach((product) => {
+      registerSkuOption(product.sku)
+    })
+    aliases.forEach((alias) => {
+      registerSkuOption(alias.aliasSku)
+    })
+    products.forEach((product) => {
+      extractAliasSkusFromText(product.sku).forEach((aliasSku) => registerSkuOption(aliasSku))
+      extractAliasSkusFromText(product.name).forEach((aliasSku) => registerSkuOption(aliasSku))
+    })
 
     const totalTodaySales = Object.values(salesBySku).reduce((sum, item) => sum + item.today, 0)
     const totalYesterdaySales = Object.values(salesBySku).reduce((sum, item) => sum + item.yesterday, 0)
