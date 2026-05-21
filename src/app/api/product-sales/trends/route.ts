@@ -120,6 +120,84 @@ function resolveSnapshotQty(snapshot: {
   return null
 }
 
+function buildProjectedStockSeries(params: {
+  startDate: Date
+  totalDays: number
+  fallbackStock: number
+  snapshots: Array<{ date: Date; qty: number }>
+  consumedByDate: Map<string, number>
+}) {
+  const { startDate, totalDays, fallbackStock, snapshots, consumedByDate } = params
+  const series = new Map<string, number>()
+  const endDate = addDays(startDate, totalDays - 1)
+  const startDateMs = startDate.getTime()
+  const endDateMs = endDate.getTime()
+  const inRangeSnapshots = snapshots
+    .filter((snapshot) => {
+      const snapshotDateMs = snapshot.date.getTime()
+      return snapshotDateMs >= startDateMs && snapshotDateMs <= endDateMs
+    })
+    .sort((a, b) => a.date.getTime() - b.date.getTime())
+
+  if (!inRangeSnapshots.length) {
+    let currentStock = Math.max(fallbackStock, 0)
+    for (let offset = totalDays - 1; offset >= 0; offset -= 1) {
+      const currentDate = addDays(startDate, offset)
+      const dateKey = formatDateKey(currentDate)
+      series.set(dateKey, currentStock)
+      currentStock = Math.max(currentStock + (consumedByDate.get(dateKey) || 0), 0)
+    }
+    return series
+  }
+
+  inRangeSnapshots.forEach((snapshot) => {
+    series.set(formatDateKey(snapshot.date), Math.max(snapshot.qty, 0))
+  })
+
+  for (let index = 0; index < inRangeSnapshots.length; index += 1) {
+    const currentSnapshot = inRangeSnapshots[index]
+    const previousSnapshot = index > 0 ? inRangeSnapshots[index - 1] : null
+    let cursorDate = currentSnapshot.date
+    let cursorStock = Math.max(currentSnapshot.qty, 0)
+
+    while (true) {
+      const previousDate = addDays(cursorDate, -1)
+      if (previousDate.getTime() < startDateMs) break
+      if (previousSnapshot && previousDate.getTime() <= previousSnapshot.date.getTime()) break
+
+      const cursorDateKey = formatDateKey(cursorDate)
+      const previousDateKey = formatDateKey(previousDate)
+      cursorStock = Math.max(cursorStock + (consumedByDate.get(cursorDateKey) || 0), 0)
+      if (!series.has(previousDateKey)) {
+        series.set(previousDateKey, cursorStock)
+      }
+      cursorDate = previousDate
+    }
+  }
+
+  for (let index = 0; index < inRangeSnapshots.length; index += 1) {
+    const currentSnapshot = inRangeSnapshots[index]
+    const nextSnapshot = index + 1 < inRangeSnapshots.length ? inRangeSnapshots[index + 1] : null
+    let cursorDate = currentSnapshot.date
+    let cursorStock = Math.max(currentSnapshot.qty, 0)
+
+    while (true) {
+      const nextDate = addDays(cursorDate, 1)
+      if (nextDate.getTime() > endDateMs) break
+      if (nextSnapshot && nextDate.getTime() >= nextSnapshot.date.getTime()) break
+
+      const nextDateKey = formatDateKey(nextDate)
+      cursorStock = Math.max(cursorStock - (consumedByDate.get(nextDateKey) || 0), 0)
+      if (!series.has(nextDateKey)) {
+        series.set(nextDateKey, cursorStock)
+      }
+      cursorDate = nextDate
+    }
+  }
+
+  return series
+}
+
 function parseDateInput(value: string) {
   const matched = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (!matched) return null
@@ -370,6 +448,7 @@ export async function GET(request: NextRequest) {
               returnQty: true,
               netOrders: true,
               canceledQty: true,
+              stockConsumedQty: true,
               refundAmount: true,
               date: true,
             },
@@ -389,6 +468,7 @@ export async function GET(request: NextRequest) {
             returnQty: true,
             netOrders: true,
             canceledQty: true,
+            stockConsumedQty: true,
             refundAmount: true,
             date: true,
           },
@@ -416,6 +496,7 @@ export async function GET(request: NextRequest) {
     })
 
     filterSummary.refundAmount = Number(filterSummary.refundAmount.toFixed(2))
+    const stockConsumedByTargetMap = new Map<string, Map<string, number>>()
 
     const inventoryTargets = (() => {
       if (selectedSku) {
@@ -552,62 +633,64 @@ export async function GET(request: NextRequest) {
 
     const inventoryStates = inventoryTargets.map((target) => {
       const allSnapshots = target.snapshotCandidateSkus.flatMap((sku) => snapshotsBySku.get(sku) || [])
-      const inRangeSnapshots = allSnapshots.filter((snapshot) => (
-        snapshot.date.getTime() >= selectedRange.startDate.getTime()
-        && snapshot.date.getTime() < selectedRange.endExclusive.getTime()
-      ))
 
       return {
         target,
         fallbackStock: target.fallbackStock,
-        hasInRangeSnapshots: inRangeSnapshots.length > 0,
         firstSnapshot: allSnapshots[0] || null,
         lastSnapshot: allSnapshots[allSnapshots.length - 1] || null,
-        snapshotStates: target.snapshotCandidateSkus.map((sku) => ({
-          sku,
-          snapshots: (snapshotsBySku.get(sku) || []).map((item) => ({
-            dateMs: item.date.getTime(),
-            qty: item.qty,
-          })),
-          index: 0,
-          currentQty: null as number | null,
-        })),
+        resolvedSnapshots: (() => {
+          const resolvedSnapshotByDate = new Map<string, { date: Date; qty: number }>()
+          target.snapshotCandidateSkus.forEach((sku) => {
+            ;(snapshotsBySku.get(sku) || []).forEach((snapshot) => {
+              if (snapshot.qty === null) return
+              const dateKey = formatDateKey(snapshot.date)
+              if (!resolvedSnapshotByDate.has(dateKey)) {
+                resolvedSnapshotByDate.set(dateKey, {
+                  date: snapshot.date,
+                  qty: snapshot.qty,
+                })
+              }
+            })
+          })
+
+          return Array.from(resolvedSnapshotByDate.values()).sort((a, b) => a.date.getTime() - b.date.getTime())
+        })(),
       }
     })
 
-    for (let offset = 0; offset < totalDays; offset += 1) {
-      const currentDate = addDays(selectedRange.startDate, offset)
-      const currentDateMs = currentDate.getTime()
-      const dateKey = formatDateKey(currentDate)
-      let totalStock = 0
+    const inventoryTargetByProductId = new Map(
+      inventoryTargets
+        .filter((target): target is InventoryTarget & { productId: string } => Boolean(target.productId))
+        .map((target) => [target.productId, target]),
+    )
 
-      inventoryStates.forEach((targetState) => {
-        if (!targetState.hasInRangeSnapshots) {
-          totalStock += targetState.fallbackStock
-          return
-        }
+    performanceData.forEach((item) => {
+      const matchedProduct = resolveProductBySku(item.sku)
+      if (!matchedProduct?.product.id) return
 
-        let resolvedStock: number | null = null
+      const inventoryTarget = inventoryTargetByProductId.get(matchedProduct.product.id)
+      if (!inventoryTarget) return
 
-        targetState.snapshotStates.forEach((snapshotState) => {
-          while (
-            snapshotState.index < snapshotState.snapshots.length &&
-            snapshotState.snapshots[snapshotState.index].dateMs <= currentDateMs
-          ) {
-            snapshotState.currentQty = snapshotState.snapshots[snapshotState.index].qty
-            snapshotState.index += 1
-          }
+      const dateKey = formatDateKey(startOfDay(new Date(item.date)))
+      const consumedByDate = stockConsumedByTargetMap.get(inventoryTarget.key) || new Map<string, number>()
+      consumedByDate.set(dateKey, (consumedByDate.get(dateKey) || 0) + (item.stockConsumedQty || 0))
+      stockConsumedByTargetMap.set(inventoryTarget.key, consumedByDate)
+    })
 
-          if (resolvedStock === null && snapshotState.currentQty !== null) {
-            resolvedStock = snapshotState.currentQty
-          }
-        })
-
-        totalStock += resolvedStock ?? targetState.fallbackStock
+    inventoryStates.forEach((targetState) => {
+      const targetSeries = buildProjectedStockSeries({
+        startDate: selectedRange.startDate,
+        totalDays,
+        fallbackStock: targetState.fallbackStock,
+        snapshots: targetState.resolvedSnapshots,
+        consumedByDate: stockConsumedByTargetMap.get(targetState.target.key) || new Map<string, number>(),
       })
 
-      stockByDate.set(dateKey, totalStock)
-    }
+      targetSeries.forEach((stock, dateKey) => {
+        stockByDate.set(dateKey, (stockByDate.get(dateKey) || 0) + stock)
+      })
+    })
 
     const trends = Array.from({ length: totalDays }, (_, offset) => {
       const currentDate = addDays(selectedRange.startDate, offset)
@@ -628,9 +711,7 @@ export async function GET(request: NextRequest) {
         resolvedProductSku: debugTarget?.target.productSku || null,
         resolvedProductId: debugTarget?.target.productId || null,
         productStock: debugTarget?.fallbackStock ?? 0,
-        snapshotCount: debugTarget
-          ? debugTarget.snapshotStates.reduce((sum, snapshotState) => sum + snapshotState.snapshots.length, 0)
-          : 0,
+        snapshotCount: debugTarget?.resolvedSnapshots.length || 0,
         firstSnapshot: debugTarget?.firstSnapshot
           ? {
               sku: debugTarget.firstSnapshot.sku,

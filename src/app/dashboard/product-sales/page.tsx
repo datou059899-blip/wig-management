@@ -73,6 +73,7 @@ interface OrderImportSummaryByDate {
   returnQty: number
   netOrders: number
   canceledQty: number
+  stockConsumedQty: number
   refundAmount: number
 }
 
@@ -82,6 +83,7 @@ interface OrderImportSummaryBySku {
   returnQty: number
   netOrders: number
   canceledQty: number
+  stockConsumedQty: number
   refundAmount: number
 }
 
@@ -115,6 +117,7 @@ interface OrderImportResult {
   totalReturnQty: number
   totalNetOrders: number
   totalCanceledQty: number
+  totalStockConsumedQty: number
   totalRefundAmount: number
   staleRecordCount?: number
   writeErrors?: Array<{ sku: string; dateStr: string; reason: string }>
@@ -592,6 +595,7 @@ export default function ProductSalesPage() {
         totalReturnQty: payload.totalReturnQty || 0,
         totalNetOrders: payload.totalNetOrders || 0,
         totalCanceledQty: payload.totalCanceledQty || 0,
+        totalStockConsumedQty: payload.totalStockConsumedQty || 0,
         totalRefundAmount: payload.totalRefundAmount || 0,
         staleRecordCount: payload.staleRecordCount || 0,
         writeErrors: Array.isArray(payload.writeErrors) ? payload.writeErrors : [],
@@ -1299,6 +1303,7 @@ export default function ProductSalesPage() {
                 <span>退货量 {ordersImportResult.totalReturnQty}</span>
                 <span>净销量 {ordersImportResult.totalNetOrders}</span>
                 <span>取消数量 {ordersImportResult.totalCanceledQty}</span>
+                <span>库存消耗量 {ordersImportResult.totalStockConsumedQty}</span>
                 <span>退款金额 {ordersImportResult.totalRefundAmount.toFixed(2)}</span>
                 <span>已跳过 {ordersImportResult.skippedCount || 0} 行</span>
                 <span>异常 {ordersImportResult.failedCount} 条</span>
@@ -1360,6 +1365,7 @@ export default function ProductSalesPage() {
                         <th className="px-3 py-2">退货量</th>
                         <th className="px-3 py-2">净销量</th>
                         <th className="px-3 py-2">取消数量</th>
+                        <th className="px-3 py-2">库存消耗量</th>
                         <th className="px-3 py-2">退款金额</th>
                       </tr>
                     </thead>
@@ -1371,6 +1377,7 @@ export default function ProductSalesPage() {
                           <td className="px-3 py-2 text-slate-700">{item.returnQty}</td>
                           <td className="px-3 py-2 text-slate-700">{item.netOrders}</td>
                           <td className="px-3 py-2 text-slate-700">{item.canceledQty}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.stockConsumedQty}</td>
                           <td className="px-3 py-2 text-slate-700">{item.refundAmount.toFixed(2)}</td>
                         </tr>
                       ))}
@@ -1389,6 +1396,7 @@ export default function ProductSalesPage() {
                         <th className="px-3 py-2">退货量</th>
                         <th className="px-3 py-2">净销量</th>
                         <th className="px-3 py-2">取消数量</th>
+                        <th className="px-3 py-2">库存消耗量</th>
                         <th className="px-3 py-2">退款金额</th>
                       </tr>
                     </thead>
@@ -1400,6 +1408,7 @@ export default function ProductSalesPage() {
                           <td className="px-3 py-2 text-slate-700">{item.returnQty}</td>
                           <td className="px-3 py-2 text-slate-700">{item.netOrders}</td>
                           <td className="px-3 py-2 text-slate-700">{item.canceledQty}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.stockConsumedQty}</td>
                           <td className="px-3 py-2 text-slate-700">{item.refundAmount.toFixed(2)}</td>
                         </tr>
                       ))}
@@ -1632,7 +1641,7 @@ export default function ProductSalesPage() {
                   <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
                     <div className="mb-3">
                       <div className="text-sm font-medium text-slate-900">每日剩余库存曲线</div>
-                      <div className="text-xs text-slate-500">优先使用当前筛选 SKU 的库存快照；别称 SKU 会回退到主 SKU 快照；都没有时使用当前库存</div>
+                      <div className="text-xs text-slate-500">库存预计按库存消耗量扣减。未发货取消不扣库存；已发货退货/退款默认仍计入库存消耗。</div>
                     </div>
                     <div className="h-64">
                       {trendLoading ? (

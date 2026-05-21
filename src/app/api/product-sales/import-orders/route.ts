@@ -46,6 +46,7 @@ type ParsedOrderItem = {
   returnQty: number
   netQty: number
   canceledQty: number
+  stockConsumedQty: number
   refundAmount: number
   orderStatus: string
   cancelationReturnType: string
@@ -62,6 +63,7 @@ type ProductOrderItemWriteRow = {
   returnQty: number
   netQty: number
   canceledQty: number
+  stockConsumedQty: number
   refundAmount: number
   orderStatus: string | null
   cancelationReturnType: string | null
@@ -78,6 +80,7 @@ type AggregatedOrderStat = {
   returnQty: number
   netOrders: number
   canceledQty: number
+  stockConsumedQty: number
   refundAmount: number
 }
 
@@ -267,6 +270,23 @@ function isCanceledOrder(orderStatus: string, cancelReturnType: string) {
   )
 }
 
+function isPreShipmentCancellation(orderStatus: string, cancelReturnType: string) {
+  const status = normalizeCell(orderStatus).toLowerCase()
+  const cancelType = normalizeCell(cancelReturnType).toLowerCase()
+
+  const canceledStatus = (
+    status === '已取消' ||
+    status === 'cancelled' ||
+    status === 'canceled'
+  )
+
+  return canceledStatus && cancelType === 'cancel'
+}
+
+function resolveStockConsumedQty(quantity: number, orderStatus: string, cancelReturnType: string) {
+  return isPreShipmentCancellation(orderStatus, cancelReturnType) ? 0 : quantity
+}
+
 function buildDedupeKey(orderId: string, skuId: string | null, sellerSku: string) {
   if (!orderId) return null
   if (skuId) return `${orderId}::${skuId}`
@@ -391,6 +411,7 @@ function buildSummary(orderItems: Array<{
   returnQty: number
   netQty: number
   canceledQty: number
+  stockConsumedQty: number
   refundAmount: number
 }>) {
   const summaryByDateMap = new Map<string, {
@@ -399,6 +420,7 @@ function buildSummary(orderItems: Array<{
     returnQty: number
     netOrders: number
     canceledQty: number
+    stockConsumedQty: number
     refundAmount: number
   }>()
 
@@ -408,6 +430,7 @@ function buildSummary(orderItems: Array<{
     returnQty: number
     netOrders: number
     canceledQty: number
+    stockConsumedQty: number
     refundAmount: number
   }>()
 
@@ -418,12 +441,14 @@ function buildSummary(orderItems: Array<{
       returnQty: 0,
       netOrders: 0,
       canceledQty: 0,
+      stockConsumedQty: 0,
       refundAmount: 0,
     }
     byDate.grossOrders += item.quantity
     byDate.returnQty += item.returnQty
     byDate.netOrders += item.netQty
     byDate.canceledQty += item.canceledQty
+    byDate.stockConsumedQty += item.stockConsumedQty
     byDate.refundAmount += item.refundAmount
     summaryByDateMap.set(item.paidDateStr, byDate)
 
@@ -433,12 +458,14 @@ function buildSummary(orderItems: Array<{
       returnQty: 0,
       netOrders: 0,
       canceledQty: 0,
+      stockConsumedQty: 0,
       refundAmount: 0,
     }
     bySku.grossOrders += item.quantity
     bySku.returnQty += item.returnQty
     bySku.netOrders += item.netQty
     bySku.canceledQty += item.canceledQty
+    bySku.stockConsumedQty += item.stockConsumedQty
     bySku.refundAmount += item.refundAmount
     summaryBySkuMap.set(item.sellerSku, bySku)
   })
@@ -449,6 +476,7 @@ function buildSummary(orderItems: Array<{
   const totalReturnQty = summaryBySku.reduce((sum, item) => sum + item.returnQty, 0)
   const totalNetOrders = summaryBySku.reduce((sum, item) => sum + item.netOrders, 0)
   const totalCanceledQty = summaryBySku.reduce((sum, item) => sum + item.canceledQty, 0)
+  const totalStockConsumedQty = summaryBySku.reduce((sum, item) => sum + item.stockConsumedQty, 0)
   const totalRefundAmount = Number(
     summaryBySku.reduce((sum, item) => sum + item.refundAmount, 0).toFixed(2),
   )
@@ -460,6 +488,7 @@ function buildSummary(orderItems: Array<{
     totalReturnQty,
     totalNetOrders,
     totalCanceledQty,
+    totalStockConsumedQty,
     totalRefundAmount,
   }
 }
@@ -480,6 +509,7 @@ async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
     ${item.returnQty},
     ${item.netQty},
     ${item.canceledQty},
+    ${item.stockConsumedQty},
     ${item.refundAmount},
     ${item.orderStatus},
     ${item.cancelationReturnType},
@@ -503,6 +533,7 @@ async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
       "returnQty",
       "netQty",
       "canceledQty",
+      "stockConsumedQty",
       "refundAmount",
       "orderStatus",
       "cancelationReturnType",
@@ -523,6 +554,7 @@ async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
       "returnQty" = EXCLUDED."returnQty",
       "netQty" = EXCLUDED."netQty",
       "canceledQty" = EXCLUDED."canceledQty",
+      "stockConsumedQty" = EXCLUDED."stockConsumedQty",
       "refundAmount" = EXCLUDED."refundAmount",
       "orderStatus" = EXCLUDED."orderStatus",
       "cancelationReturnType" = EXCLUDED."cancelationReturnType",
@@ -547,6 +579,7 @@ async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
     ${item.returnQty},
     ${item.netOrders},
     ${item.canceledQty},
+    ${item.stockConsumedQty},
     ${item.refundAmount},
     ${now},
     ${now}
@@ -563,6 +596,7 @@ async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
       "returnQty",
       "netOrders",
       "canceledQty",
+      "stockConsumedQty",
       "refundAmount",
       "createdAt",
       "updatedAt"
@@ -575,6 +609,7 @@ async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
       "returnQty" = EXCLUDED."returnQty",
       "netOrders" = EXCLUDED."netOrders",
       "canceledQty" = EXCLUDED."canceledQty",
+      "stockConsumedQty" = EXCLUDED."stockConsumedQty",
       "refundAmount" = EXCLUDED."refundAmount",
       "updatedAt" = CURRENT_TIMESTAMP
   `)
@@ -629,6 +664,7 @@ async function loadAggregatedMatchedOrderItems(
     returnQty: number | bigint | null
     netOrders: number | bigint | null
     canceledQty: number | bigint | null
+    stockConsumedQty: number | bigint | null
     refundAmount: number | string | null
   }>>(Prisma.sql`
     WITH "affected"("sellerSku", "paidDate") AS (
@@ -641,6 +677,7 @@ async function loadAggregatedMatchedOrderItems(
       SUM(poi."returnQty") AS "returnQty",
       SUM(poi."netQty") AS "netOrders",
       SUM(poi."canceledQty") AS "canceledQty",
+      SUM(poi."stockConsumedQty") AS "stockConsumedQty",
       SUM(poi."refundAmount") AS "refundAmount"
     FROM "ProductOrderItem" AS poi
     INNER JOIN "affected" AS a
@@ -661,6 +698,7 @@ async function loadAggregatedMatchedOrderItems(
         returnQty: Number(item.returnQty || 0),
         netOrders: Number(item.netOrders || 0),
         canceledQty: Number(item.canceledQty || 0),
+        stockConsumedQty: Number(item.stockConsumedQty || 0),
         refundAmount: Number(item.refundAmount || 0),
       }
     })
@@ -860,6 +898,7 @@ export async function POST(request: NextRequest) {
         const canceled = isCanceledOrder(orderStatus, cancelationReturnType)
         const canceledQty = canceled ? quantity : 0
         const netQty = canceled ? 0 : Math.max(quantity - returnQty, 0)
+        const stockConsumedQty = resolveStockConsumedQty(quantity, orderStatus, cancelationReturnType)
 
         parsedRows.push({
           row: rowNumber,
@@ -875,6 +914,7 @@ export async function POST(request: NextRequest) {
           returnQty,
           netQty,
           canceledQty,
+          stockConsumedQty,
           refundAmount,
           orderStatus,
           cancelationReturnType,
@@ -942,6 +982,7 @@ export async function POST(request: NextRequest) {
           totalReturnQty: 0,
           totalNetOrders: 0,
           totalCanceledQty: 0,
+          totalStockConsumedQty: 0,
           totalRefundAmount: 0,
         },
         { status: 400 },
@@ -987,6 +1028,7 @@ export async function POST(request: NextRequest) {
         totalReturnQty: fileSummary.totalReturnQty,
         totalNetOrders: fileSummary.totalNetOrders,
         totalCanceledQty: fileSummary.totalCanceledQty,
+        totalStockConsumedQty: fileSummary.totalStockConsumedQty,
         totalRefundAmount: fileSummary.totalRefundAmount,
       })
     }
@@ -1107,6 +1149,7 @@ export async function POST(request: NextRequest) {
         totalReturnQty: fileSummary.totalReturnQty,
         totalNetOrders: fileSummary.totalNetOrders,
         totalCanceledQty: fileSummary.totalCanceledQty,
+        totalStockConsumedQty: fileSummary.totalStockConsumedQty,
         totalRefundAmount: fileSummary.totalRefundAmount,
       })
     }
@@ -1149,6 +1192,7 @@ export async function POST(request: NextRequest) {
         returnQty: item.returnQty,
         netQty: item.netQty,
         canceledQty: item.canceledQty,
+        stockConsumedQty: item.stockConsumedQty,
         refundAmount: item.refundAmount,
         orderStatus: item.orderStatus || null,
         cancelationReturnType: item.cancelationReturnType || null,
@@ -1217,6 +1261,7 @@ export async function POST(request: NextRequest) {
         returnQty: item.returnQty,
         netQty: item.netOrders,
         canceledQty: item.canceledQty,
+        stockConsumedQty: item.stockConsumedQty,
         refundAmount: item.refundAmount,
       })),
     )
@@ -1253,6 +1298,7 @@ export async function POST(request: NextRequest) {
       totalReturnQty: writeSummary.totalReturnQty,
       totalNetOrders: writeSummary.totalNetOrders,
       totalCanceledQty: writeSummary.totalCanceledQty,
+      totalStockConsumedQty: writeSummary.totalStockConsumedQty,
       totalRefundAmount: writeSummary.totalRefundAmount,
       staleRecordCount: stalePairs.length,
     })
