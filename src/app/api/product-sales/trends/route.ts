@@ -31,6 +31,12 @@ type InventoryTarget = {
   snapshotCandidateSkus: string[]
 }
 
+type ResolvedSnapshotRow = {
+  sku: string
+  date: Date
+  qty: number | null
+}
+
 function startOfDay(date: Date) {
   const normalized = new Date(date)
   normalized.setHours(0, 0, 0, 0)
@@ -93,6 +99,32 @@ function addUniqueSku(target: string[], sku: string | null | undefined) {
   const value = normalizeCell(sku)
   if (!value || target.includes(value)) return
   target.push(value)
+}
+
+function resolveSnapshotQty(snapshot: {
+  totalQty: number | null
+  availableQty: number | null
+  lockedQty: number | null
+}) {
+  if (snapshot.totalQty !== null && snapshot.totalQty !== undefined) {
+    return snapshot.totalQty
+  }
+
+  const availableQty = snapshot.availableQty
+  const lockedQty = snapshot.lockedQty
+  if (availableQty !== null && availableQty !== undefined && lockedQty !== null && lockedQty !== undefined) {
+    return availableQty + lockedQty
+  }
+
+  if (availableQty !== null && availableQty !== undefined) {
+    return availableQty
+  }
+
+  if (lockedQty !== null && lockedQty !== undefined) {
+    return lockedQty
+  }
+
+  return null
 }
 
 function parseDateInput(value: string) {
@@ -494,6 +526,8 @@ export async function GET(request: NextRequest) {
             sku: true,
             date: true,
             totalQty: true,
+            availableQty: true,
+            lockedQty: true,
           },
           orderBy: [
             { sku: 'asc' },
@@ -502,12 +536,17 @@ export async function GET(request: NextRequest) {
         })
       : []
 
-    const snapshotsBySku = new Map<string, Array<{ date: Date; totalQty: number }>>()
+    const snapshotsBySku = new Map<string, ResolvedSnapshotRow[]>()
     snapshotRows.forEach((item) => {
       const bucket = snapshotsBySku.get(item.sku) || []
       bucket.push({
+        sku: item.sku,
         date: startOfDay(new Date(item.date)),
-        totalQty: item.totalQty || 0,
+        qty: resolveSnapshotQty({
+          totalQty: item.totalQty,
+          availableQty: item.availableQty,
+          lockedQty: item.lockedQty,
+        }),
       })
       snapshotsBySku.set(item.sku, bucket)
     })
@@ -518,17 +557,30 @@ export async function GET(request: NextRequest) {
       Math.round((selectedRange.endExclusive.getTime() - selectedRange.startDate.getTime()) / 86_400_000),
     )
 
-    const inventoryStates = inventoryTargets.map((target) => ({
-      fallbackStock: target.fallbackStock,
-      snapshotStates: target.snapshotCandidateSkus.map((sku) => ({
-        snapshots: (snapshotsBySku.get(sku) || []).map((item) => ({
-          dateMs: item.date.getTime(),
-          totalQty: item.totalQty,
+    const inventoryStates = inventoryTargets.map((target) => {
+      const allSnapshots = target.snapshotCandidateSkus.flatMap((sku) => snapshotsBySku.get(sku) || [])
+      const inRangeSnapshots = allSnapshots.filter((snapshot) => (
+        snapshot.date.getTime() >= selectedRange.startDate.getTime()
+        && snapshot.date.getTime() < selectedRange.endExclusive.getTime()
+      ))
+
+      return {
+        target,
+        fallbackStock: target.fallbackStock,
+        hasInRangeSnapshots: inRangeSnapshots.length > 0,
+        firstSnapshot: allSnapshots[0] || null,
+        lastSnapshot: allSnapshots[allSnapshots.length - 1] || null,
+        snapshotStates: target.snapshotCandidateSkus.map((sku) => ({
+          sku,
+          snapshots: (snapshotsBySku.get(sku) || []).map((item) => ({
+            dateMs: item.date.getTime(),
+            qty: item.qty,
+          })),
+          index: 0,
+          currentQty: null as number | null,
         })),
-        index: 0,
-        currentQty: null as number | null,
-      })),
-    }))
+      }
+    })
 
     for (let offset = 0; offset < totalDays; offset += 1) {
       const currentDate = addDays(selectedRange.startDate, offset)
@@ -537,6 +589,11 @@ export async function GET(request: NextRequest) {
       let totalStock = 0
 
       inventoryStates.forEach((targetState) => {
+        if (!targetState.hasInRangeSnapshots) {
+          totalStock += targetState.fallbackStock
+          return
+        }
+
         let resolvedStock: number | null = null
 
         targetState.snapshotStates.forEach((snapshotState) => {
@@ -544,7 +601,7 @@ export async function GET(request: NextRequest) {
             snapshotState.index < snapshotState.snapshots.length &&
             snapshotState.snapshots[snapshotState.index].dateMs <= currentDateMs
           ) {
-            snapshotState.currentQty = snapshotState.snapshots[snapshotState.index].totalQty
+            snapshotState.currentQty = snapshotState.snapshots[snapshotState.index].qty
             snapshotState.index += 1
           }
 
@@ -570,6 +627,37 @@ export async function GET(request: NextRequest) {
         stock: stockByDate.get(dateKey) || 0,
       }
     })
+
+    if (selectedSku) {
+      const debugTarget = inventoryStates[0]
+      console.log('Product sales inventory trend debug:', {
+        selectedSku,
+        resolvedProductSku: debugTarget?.target.productSku || null,
+        resolvedProductId: debugTarget?.target.productId || null,
+        productStock: debugTarget?.fallbackStock ?? 0,
+        snapshotCount: debugTarget
+          ? debugTarget.snapshotStates.reduce((sum, snapshotState) => sum + snapshotState.snapshots.length, 0)
+          : 0,
+        firstSnapshot: debugTarget?.firstSnapshot
+          ? {
+              sku: debugTarget.firstSnapshot.sku,
+              date: formatDateKey(debugTarget.firstSnapshot.date),
+              qty: debugTarget.firstSnapshot.qty,
+            }
+          : null,
+        lastSnapshot: debugTarget?.lastSnapshot
+          ? {
+              sku: debugTarget.lastSnapshot.sku,
+              date: formatDateKey(debugTarget.lastSnapshot.date),
+              qty: debugTarget.lastSnapshot.qty,
+            }
+          : null,
+        finalInventorySeries: trends.map((item) => ({
+          date: item.date,
+          stock: item.stock,
+        })),
+      })
+    }
 
     return NextResponse.json({
       selectedSku,
