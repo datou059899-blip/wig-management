@@ -85,7 +85,17 @@ interface OrderImportSummaryBySku {
 }
 
 interface OrderImportResult {
+  stage?: string
+  fileName?: string
+  fileSize?: number
   totalOrderRows: number
+  parsedRows?: number
+  validRows?: number
+  uniqueSkuCount?: number
+  matchedSkuCount?: number
+  missingSkuCount?: number
+  missingSkus?: string[]
+  aggregatedRecordCount?: number
   successCount: number
   failedCount: number
   failedRows: OrderImportFailure[]
@@ -96,6 +106,7 @@ interface OrderImportResult {
   totalNetOrders: number
   totalCanceledQty: number
   totalRefundAmount: number
+  writeErrors?: Array<{ sku: string; dateStr: string; reason: string }>
 }
 
 async function parseApiResponse(response: Response) {
@@ -161,6 +172,7 @@ export default function ProductSalesPage() {
   const { data: session } = useSession()
   const inventoryInputRef = useRef<HTMLInputElement>(null)
   const ordersInputRef = useRef<HTMLInputElement>(null)
+  const orderImportModeRef = useRef<'import' | 'dryRun' | 'checkOnly'>('import')
 
   const [summary, setSummary] = useState<SummaryData | null>(null)
   const [products, setProducts] = useState<ProductData[]>([])
@@ -292,7 +304,8 @@ export default function ProductSalesPage() {
     inventoryInputRef.current?.click()
   }
 
-  const handleImportOrders = () => {
+  const handleImportOrders = (mode: 'import' | 'dryRun' | 'checkOnly' = 'import') => {
+    orderImportModeRef.current = mode
     ordersInputRef.current?.click()
   }
 
@@ -354,8 +367,15 @@ export default function ProductSalesPage() {
     try {
       const formData = new FormData()
       formData.append('file', file)
+      const mode = orderImportModeRef.current
+      const query =
+        mode === 'dryRun'
+          ? '?dryRun=1'
+          : mode === 'checkOnly'
+            ? '?checkOnly=1'
+            : ''
 
-      const response = await fetch('/api/product-sales/import-orders', {
+      const response = await fetch(`/api/product-sales/import-orders${query}`, {
         method: 'POST',
         body: formData,
       })
@@ -367,7 +387,17 @@ export default function ProductSalesPage() {
       }
 
       setOrdersImportResult({
+        stage: payload.stage || '',
+        fileName: payload.fileName || '',
+        fileSize: payload.fileSize || 0,
         totalOrderRows: payload.totalOrderRows || 0,
+        parsedRows: payload.parsedRows || 0,
+        validRows: payload.validRows || 0,
+        uniqueSkuCount: payload.uniqueSkuCount || 0,
+        matchedSkuCount: payload.matchedSkuCount || 0,
+        missingSkuCount: payload.missingSkuCount || 0,
+        missingSkus: Array.isArray(payload.missingSkus) ? payload.missingSkus : [],
+        aggregatedRecordCount: payload.aggregatedRecordCount || 0,
         successCount: payload.successCount || 0,
         failedCount: payload.failedCount || 0,
         failedRows: Array.isArray(payload.failedRows) ? payload.failedRows : [],
@@ -378,6 +408,7 @@ export default function ProductSalesPage() {
         totalNetOrders: payload.totalNetOrders || 0,
         totalCanceledQty: payload.totalCanceledQty || 0,
         totalRefundAmount: payload.totalRefundAmount || 0,
+        writeErrors: Array.isArray(payload.writeErrors) ? payload.writeErrors : [],
       })
 
       await refreshAfterMutation()
@@ -631,11 +662,25 @@ export default function ProductSalesPage() {
                   {importingInventory ? '正在导入库存表...' : '导入库存表'}
                 </button>
                 <button
-                  onClick={handleImportOrders}
+                  onClick={() => handleImportOrders('import')}
                   className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
                   disabled={importingOrders || importingInventory || loading}
                 >
                   {importingOrders ? '正在导入订单表...' : '导入订单表'}
+                </button>
+                <button
+                  onClick={() => handleImportOrders('dryRun')}
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium hover:bg-amber-100 disabled:opacity-60"
+                  disabled={importingOrders || importingInventory || loading}
+                >
+                  {importingOrders ? '测试中...' : '测试解析订单表'}
+                </button>
+                <button
+                  onClick={() => handleImportOrders('checkOnly')}
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm font-medium hover:bg-sky-100 disabled:opacity-60"
+                  disabled={importingOrders || importingInventory || loading}
+                >
+                  {importingOrders ? '检测中...' : '检测订单 SKU 匹配'}
                 </button>
               </div>
             </div>
@@ -711,7 +756,19 @@ export default function ProductSalesPage() {
             <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-center gap-4 text-sm text-slate-700">
                 <span className="font-semibold text-slate-900">订单导入完成</span>
+                <span>阶段 {ordersImportResult.stage || '-'}</span>
+                <span>文件 {ordersImportResult.fileName || '-'}</span>
                 <span>读取订单行数 {ordersImportResult.totalOrderRows} 行</span>
+                <span>解析行数 {ordersImportResult.parsedRows || 0}</span>
+                <span>有效行数 {ordersImportResult.validRows || 0}</span>
+                <span>唯一 SKU {ordersImportResult.uniqueSkuCount || 0}</span>
+                <span>汇总记录 {ordersImportResult.aggregatedRecordCount || 0}</span>
+                {typeof ordersImportResult.matchedSkuCount === 'number' && (
+                  <span>匹配 SKU {ordersImportResult.matchedSkuCount}</span>
+                )}
+                {typeof ordersImportResult.missingSkuCount === 'number' && (
+                  <span>缺失 SKU {ordersImportResult.missingSkuCount}</span>
+                )}
                 <span>成功写入 SKU+日期 {ordersImportResult.successCount} 条</span>
                 <span>毛销量 {ordersImportResult.totalGrossOrders}</span>
                 <span>退货量 {ordersImportResult.totalReturnQty}</span>
@@ -720,6 +777,12 @@ export default function ProductSalesPage() {
                 <span>退款金额 {ordersImportResult.totalRefundAmount.toFixed(2)}</span>
                 <span>失败 {ordersImportResult.failedCount} 条</span>
               </div>
+              {ordersImportResult.missingSkus && ordersImportResult.missingSkus.length > 0 && (
+                <div className="mt-2 text-sm text-amber-700">
+                  缺失 SKU（前 {ordersImportResult.missingSkus.length} 个）：
+                  {ordersImportResult.missingSkus.join(', ')}
+                </div>
+              )}
               {ordersImportResult.summaryByDate.length > 0 && (
                 <div className="mt-4 overflow-x-auto">
                   <div className="mb-2 text-sm font-medium text-slate-900">按日期汇总</div>

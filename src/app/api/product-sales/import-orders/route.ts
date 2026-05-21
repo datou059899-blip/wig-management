@@ -8,6 +8,15 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
+type Stage =
+  | 'start'
+  | 'receive-file'
+  | 'parse-file'
+  | 'aggregate'
+  | 'match-products'
+  | 'write-performance'
+  | 'done'
+
 type OrderFailure = {
   row: number
   sku: string
@@ -40,7 +49,8 @@ type AggregatedOrderStat = {
   refundAmount: number
 }
 
-const WRITE_BATCH_SIZE = 50
+const WRITE_BATCH_SIZE = 5
+const TIMEOUT_GUARD_MS = 45_000
 
 function normalizeHeader(value: unknown) {
   return String(value ?? '').replace(/^\uFEFF/, '').trim()
@@ -227,24 +237,143 @@ function chunkArray<T>(items: T[], size: number) {
   return chunks
 }
 
+function createTimeoutResponse(
+  stage: Stage,
+  processedCount: number,
+  remainingCount: number,
+) {
+  return NextResponse.json(
+    {
+      error: '导入订单表超时保护',
+      detail: `已处理到 ${stage} 阶段，建议分批导入或使用后台任务`,
+      stage,
+      processedCount,
+      remainingCount,
+    },
+    { status: 408 },
+  )
+}
+
+function buildSummary(aggregatedItems: AggregatedOrderStat[]) {
+  const summaryByDateMap = new Map<string, {
+    date: string
+    grossOrders: number
+    returnQty: number
+    netOrders: number
+    canceledQty: number
+    refundAmount: number
+  }>()
+
+  const summaryBySkuMap = new Map<string, {
+    sku: string
+    grossOrders: number
+    returnQty: number
+    netOrders: number
+    canceledQty: number
+    refundAmount: number
+  }>()
+
+  aggregatedItems.forEach((item) => {
+    const byDate = summaryByDateMap.get(item.dateStr) || {
+      date: item.dateStr,
+      grossOrders: 0,
+      returnQty: 0,
+      netOrders: 0,
+      canceledQty: 0,
+      refundAmount: 0,
+    }
+    byDate.grossOrders += item.grossOrders
+    byDate.returnQty += item.returnQty
+    byDate.netOrders += item.netOrders
+    byDate.canceledQty += item.canceledQty
+    byDate.refundAmount += item.refundAmount
+    summaryByDateMap.set(item.dateStr, byDate)
+
+    const bySku = summaryBySkuMap.get(item.sku) || {
+      sku: item.sku,
+      grossOrders: 0,
+      returnQty: 0,
+      netOrders: 0,
+      canceledQty: 0,
+      refundAmount: 0,
+    }
+    bySku.grossOrders += item.grossOrders
+    bySku.returnQty += item.returnQty
+    bySku.netOrders += item.netOrders
+    bySku.canceledQty += item.canceledQty
+    bySku.refundAmount += item.refundAmount
+    summaryBySkuMap.set(item.sku, bySku)
+  })
+
+  const summaryByDate = Array.from(summaryByDateMap.values()).sort((a, b) => a.date.localeCompare(b.date))
+  const summaryBySku = Array.from(summaryBySkuMap.values()).sort((a, b) => a.sku.localeCompare(b.sku))
+
+  const totalGrossOrders = summaryBySku.reduce((sum, item) => sum + item.grossOrders, 0)
+  const totalReturnQty = summaryBySku.reduce((sum, item) => sum + item.returnQty, 0)
+  const totalNetOrders = summaryBySku.reduce((sum, item) => sum + item.netOrders, 0)
+  const totalCanceledQty = summaryBySku.reduce((sum, item) => sum + item.canceledQty, 0)
+  const totalRefundAmount = Number(
+    summaryBySku.reduce((sum, item) => sum + item.refundAmount, 0).toFixed(2),
+  )
+
+  return {
+    summaryByDate,
+    summaryBySku,
+    totalGrossOrders,
+    totalReturnQty,
+    totalNetOrders,
+    totalCanceledQty,
+    totalRefundAmount,
+  }
+}
+
 export async function POST(request: NextRequest) {
+  let stage: Stage = 'start'
+  const startedAt = Date.now()
+
+  const isTimedOut = () => Date.now() - startedAt > TIMEOUT_GUARD_MS
+
   try {
     const session = await getServerSession(authOptions)
     if (!session) {
-      return NextResponse.json({ error: '未登录' }, { status: 401 })
+      return NextResponse.json(
+        {
+          error: '未登录或登录已过期',
+          detail: '请重新登录后再导入订单表',
+          stage,
+        },
+        { status: 401 },
+      )
     }
 
     const user = session.user as any
     const userRole = user?.role as string | undefined
     if (!userRole || (userRole !== 'admin' && userRole !== 'operator' && userRole !== 'optimizer')) {
-      return NextResponse.json({ error: '无权限导入订单数据' }, { status: 403 })
+      return NextResponse.json(
+        {
+          error: '无权限导入订单数据',
+          detail: '当前账号没有导入订单表权限',
+          stage,
+        },
+        { status: 403 },
+      )
     }
 
+    const dryRun = request.nextUrl.searchParams.get('dryRun') === '1'
+    const checkOnly = request.nextUrl.searchParams.get('checkOnly') === '1'
+
+    stage = 'receive-file'
     const formData = await request.formData()
     const file = formData.get('file')
 
     if (!file || typeof file === 'string') {
-      return NextResponse.json({ error: '请上传订单文件' }, { status: 400 })
+      return NextResponse.json(
+        {
+          error: '请上传订单文件',
+          stage,
+        },
+        { status: 400 },
+      )
     }
 
     const bytes = await file.arrayBuffer()
@@ -254,8 +383,15 @@ export async function POST(request: NextRequest) {
     console.log('[import-orders] start', {
       fileName,
       fileSize,
+      dryRun,
+      checkOnly,
     })
 
+    if (isTimedOut()) {
+      return createTimeoutResponse(stage, 0, 0)
+    }
+
+    stage = 'parse-file'
     let rows: Array<{ rowNumber: number; record: Record<string, unknown> }> = []
 
     try {
@@ -269,11 +405,16 @@ export async function POST(request: NextRequest) {
           : workbook.SheetNames[0]
 
         if (!targetSheetName) {
-          return NextResponse.json({ error: '订单文件没有可读取的工作表' }, { status: 400 })
+          return NextResponse.json(
+            {
+              error: '订单文件没有可读取的工作表',
+              stage,
+            },
+            { status: 400 },
+          )
         }
 
-        const sheet = workbook.Sheets[targetSheetName]
-        rows = getNormalizedRowsFromSheet(sheet)
+        rows = getNormalizedRowsFromSheet(workbook.Sheets[targetSheetName])
       }
     } catch (parseError) {
       console.error('解析订单文件失败:', parseError)
@@ -281,18 +422,29 @@ export async function POST(request: NextRequest) {
         {
           error: '导入订单表失败',
           detail: `解析订单文件失败：${String((parseError as Error)?.message || parseError)}`,
+          stage,
         },
         { status: 400 },
       )
     }
 
     if (!rows.length) {
-      return NextResponse.json({ error: '订单文件中没有可导入的数据' }, { status: 400 })
+      return NextResponse.json(
+        {
+          error: '订单文件中没有可导入的数据',
+          stage,
+        },
+        { status: 400 },
+      )
     }
 
     console.log('[import-orders] parsed rows', {
       rowCount: rows.length,
     })
+
+    if (isTimedOut()) {
+      return createTimeoutResponse(stage, rows.length, 0)
+    }
 
     const failures: OrderFailure[] = []
     const parsedRows: ParsedOrderRow[] = []
@@ -369,21 +521,25 @@ export async function POST(request: NextRequest) {
     })
 
     const totalOrderRows = rows.length
-    const skuList = Array.from(new Set(parsedRows.map((item) => item.sku).filter(Boolean)))
+    const uniqueSkus = Array.from(new Set(parsedRows.map((item) => item.sku).filter(Boolean)))
 
     console.log('[import-orders] parsed valid rows', {
       parsedRowCount: parsedRows.length,
-      uniqueSkuCount: skuList.length,
+      uniqueSkuCount: uniqueSkus.length,
       parseFailureCount: failures.length,
     })
 
     if (!parsedRows.length) {
       return NextResponse.json({
         success: false,
-        totalOrderRows,
-        successCount: 0,
-        failedCount: failures.length,
-        failedRows: failures,
+        stage: 'parse-file',
+        fileName,
+        fileSize,
+        parsedRows: totalOrderRows,
+        validRows: 0,
+        failedRows: failures.slice(0, 20),
+        uniqueSkuCount: 0,
+        aggregatedRecordCount: 0,
         summaryByDate: [],
         summaryBySku: [],
         totalGrossOrders: 0,
@@ -394,40 +550,14 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    const products = await prisma.product.findMany({
-      where: {
-        sku: {
-          in: skuList,
-        },
-      },
-      select: {
-        sku: true,
-      },
-    })
+    if (isTimedOut()) {
+      return createTimeoutResponse('parse-file', parsedRows.length, 0)
+    }
 
-    const productSkuSet = new Set(
-      products.map((product) => product.sku).filter((sku): sku is string => Boolean(sku)),
-    )
-
-    console.log('[import-orders] matched product sku', {
-      matchedProductSkuCount: productSkuSet.size,
-    })
-
+    stage = 'aggregate'
     const aggregated = new Map<string, AggregatedOrderStat>()
 
     for (const item of parsedRows) {
-      if (!productSkuSet.has(item.sku)) {
-        failures.push({
-          row: item.row,
-          sku: item.sku,
-          paidTime: item.paidTime,
-          quantity: item.quantity,
-          returnQty: item.returnQty,
-          reason: '未找到匹配的 Product.sku',
-        })
-        continue
-      }
-
       const key = `${item.sku}__${item.dateStr}`
       const current = aggregated.get(key) || {
         sku: item.sku,
@@ -458,12 +588,108 @@ export async function POST(request: NextRequest) {
     }
 
     const aggregatedItems = Array.from(aggregated.values())
+    const aggregatedSummary = buildSummary(aggregatedItems)
 
     console.log('[import-orders] aggregated records', {
       aggregatedCount: aggregatedItems.length,
-      failedAfterProductMatch: failures.length,
     })
 
+    if (dryRun) {
+      return NextResponse.json({
+        success: true,
+        stage,
+        fileName,
+        fileSize,
+        parsedRows: totalOrderRows,
+        validRows: parsedRows.length,
+        totalOrderRows,
+        successCount: 0,
+        failedCount: failures.length,
+        failedRows: failures.slice(0, 20),
+        uniqueSkuCount: uniqueSkus.length,
+        aggregatedRecordCount: aggregatedItems.length,
+        summaryByDate: aggregatedSummary.summaryByDate,
+        summaryBySku: aggregatedSummary.summaryBySku.slice(0, 50),
+        totalGrossOrders: aggregatedSummary.totalGrossOrders,
+        totalReturnQty: aggregatedSummary.totalReturnQty,
+        totalNetOrders: aggregatedSummary.totalNetOrders,
+        totalCanceledQty: aggregatedSummary.totalCanceledQty,
+        totalRefundAmount: aggregatedSummary.totalRefundAmount,
+      })
+    }
+
+    if (isTimedOut()) {
+      return createTimeoutResponse('aggregate', aggregatedItems.length, 0)
+    }
+
+    stage = 'match-products'
+    const products = await prisma.product.findMany({
+      where: {
+        sku: {
+          in: uniqueSkus,
+        },
+      },
+      select: {
+        sku: true,
+      },
+    })
+
+    const productSkuSet = new Set(
+      products.map((product) => product.sku).filter((sku): sku is string => Boolean(sku)),
+    )
+    const missingSkus: string[] = []
+    const matchedAggregatedItems: AggregatedOrderStat[] = []
+
+    for (const item of aggregatedItems) {
+      if (!productSkuSet.has(item.sku)) {
+        if (!missingSkus.includes(item.sku)) {
+          missingSkus.push(item.sku)
+        }
+        failures.push({
+          row: 0,
+          sku: item.sku,
+          paidTime: item.dateStr,
+          quantity: item.grossOrders,
+          returnQty: item.returnQty,
+          reason: '未找到匹配的 Product.sku',
+        })
+        continue
+      }
+
+      matchedAggregatedItems.push(item)
+    }
+
+    console.log('[import-orders] matched product sku', {
+      matchedSkuCount: productSkuSet.size,
+      missingSkuCount: missingSkus.length,
+      matchedAggregatedCount: matchedAggregatedItems.length,
+    })
+
+    if (checkOnly) {
+      return NextResponse.json({
+        success: true,
+        stage,
+        fileName,
+        fileSize,
+        totalOrderRows,
+        parsedRows: totalOrderRows,
+        validRows: parsedRows.length,
+        successCount: 0,
+        failedCount: failures.length,
+        uniqueSkuCount: uniqueSkus.length,
+        matchedSkuCount: uniqueSkus.length - missingSkus.length,
+        missingSkuCount: missingSkus.length,
+        missingSkus: missingSkus.slice(0, 100),
+        aggregatedRecordCount: aggregatedItems.length,
+        failedRows: failures.slice(0, 20),
+      })
+    }
+
+    if (isTimedOut()) {
+      return createTimeoutResponse('match-products', matchedAggregatedItems.length, 0)
+    }
+
+    stage = 'write-performance'
     const summaryByDateMap = new Map<string, {
       date: string
       grossOrders: number
@@ -472,7 +698,6 @@ export async function POST(request: NextRequest) {
       canceledQty: number
       refundAmount: number
     }>()
-
     const summaryBySkuMap = new Map<string, {
       sku: string
       grossOrders: number
@@ -484,15 +709,23 @@ export async function POST(request: NextRequest) {
 
     let successCount = 0
     const writeErrors: Array<{ sku: string; dateStr: string; reason: string }> = []
+    const batches = chunkArray(matchedAggregatedItems, WRITE_BATCH_SIZE)
 
     console.log('[import-orders] write start', {
       batchSize: WRITE_BATCH_SIZE,
-      batchCount: chunkArray(aggregatedItems, WRITE_BATCH_SIZE).length,
+      batchCount: batches.length,
+      writeRecordCount: matchedAggregatedItems.length,
     })
 
-    const batches = chunkArray(aggregatedItems, WRITE_BATCH_SIZE)
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      const batch = batches[batchIndex]
 
-    for (const batch of batches) {
+      if (isTimedOut()) {
+        const processedCount = batchIndex * WRITE_BATCH_SIZE
+        const remainingCount = matchedAggregatedItems.length - processedCount
+        return createTimeoutResponse(stage, processedCount, remainingCount)
+      }
+
       const results = await Promise.allSettled(
         batch.map(async (item) => {
           await prisma.performanceDaily.upsert({
@@ -594,19 +827,8 @@ export async function POST(request: NextRequest) {
       totalFailureCount: failures.length,
     })
 
-    if (successCount === 0 && aggregatedItems.length > 0 && writeErrors.length > 0) {
-      return NextResponse.json(
-        {
-          error: '导入订单表失败',
-          detail: writeErrors[0].reason,
-        },
-        { status: 500 },
-      )
-    }
-
     const summaryByDate = Array.from(summaryByDateMap.values()).sort((a, b) => a.date.localeCompare(b.date))
     const summaryBySku = Array.from(summaryBySkuMap.values()).sort((a, b) => a.sku.localeCompare(b.sku))
-
     const totalGrossOrders = summaryBySku.reduce((sum, item) => sum + item.grossOrders, 0)
     const totalReturnQty = summaryBySku.reduce((sum, item) => sum + item.returnQty, 0)
     const totalNetOrders = summaryBySku.reduce((sum, item) => sum + item.netOrders, 0)
@@ -615,9 +837,31 @@ export async function POST(request: NextRequest) {
       summaryBySku.reduce((sum, item) => sum + item.refundAmount, 0).toFixed(2),
     )
 
+    if (successCount === 0 && matchedAggregatedItems.length > 0 && writeErrors.length > 0) {
+      return NextResponse.json(
+        {
+          error: '导入订单表失败',
+          detail: writeErrors[0].reason,
+          stage,
+        },
+        { status: 500 },
+      )
+    }
+
+    stage = 'done'
     return NextResponse.json({
       success: true,
+      stage,
+      fileName,
+      fileSize,
       totalOrderRows,
+      parsedRows: totalOrderRows,
+      validRows: parsedRows.length,
+      uniqueSkuCount: uniqueSkus.length,
+      matchedSkuCount: uniqueSkus.length - missingSkus.length,
+      missingSkuCount: missingSkus.length,
+      missingSkus: missingSkus.slice(0, 100),
+      aggregatedRecordCount: aggregatedItems.length,
       successCount,
       failedCount: failures.length,
       failedRows: failures,
@@ -636,6 +880,7 @@ export async function POST(request: NextRequest) {
       {
         error: '导入订单表失败',
         detail: String((error as Error)?.message || error),
+        stage,
       },
       { status: 500 },
     )
