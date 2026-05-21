@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
+type RangeKey = 'today' | '7' | '30' | 'custom'
+
 function startOfDay(date: Date) {
   const normalized = new Date(date)
   normalized.setHours(0, 0, 0, 0)
@@ -16,7 +18,81 @@ function addDays(date: Date, days: number) {
 }
 
 function formatDateKey(date: Date) {
-  return date.toISOString().slice(0, 10)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function parseDateInput(value: string) {
+  const matched = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!matched) return null
+
+  const [, yearText, monthText, dayText] = matched
+  const date = new Date(Number(yearText), Number(monthText) - 1, Number(dayText), 0, 0, 0, 0)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function resolveRange(searchParams: URLSearchParams) {
+  const requestedRange = String(searchParams.get('range') || '7').trim()
+  const today = startOfDay(new Date())
+  const tomorrow = addDays(today, 1)
+
+  if (requestedRange === 'today') {
+    return {
+      range: 'today' as RangeKey,
+      startDate: today,
+      endDate: today,
+      endExclusive: tomorrow,
+      startDateText: formatDateKey(today),
+      endDateText: formatDateKey(today),
+    }
+  }
+
+  if (requestedRange === '30') {
+    const startDate = addDays(today, -29)
+    return {
+      range: '30' as RangeKey,
+      startDate,
+      endDate: today,
+      endExclusive: tomorrow,
+      startDateText: formatDateKey(startDate),
+      endDateText: formatDateKey(today),
+    }
+  }
+
+  if (requestedRange === 'custom') {
+    const startDateText = String(searchParams.get('startDate') || '').trim()
+    const endDateText = String(searchParams.get('endDate') || '').trim()
+    const startDate = parseDateInput(startDateText)
+    const endDate = parseDateInput(endDateText)
+
+    if (!startDate || !endDate) {
+      throw new Error('自定义时间范围缺少有效的开始日期或结束日期')
+    }
+    if (startDate.getTime() > endDate.getTime()) {
+      throw new Error('开始日期不能大于结束日期')
+    }
+
+    return {
+      range: 'custom' as RangeKey,
+      startDate,
+      endDate,
+      endExclusive: addDays(endDate, 1),
+      startDateText,
+      endDateText,
+    }
+  }
+
+  const startDate = addDays(today, -6)
+  return {
+    range: '7' as RangeKey,
+    startDate,
+    endDate: today,
+    endExclusive: tomorrow,
+    startDateText: formatDateKey(startDate),
+    endDateText: formatDateKey(today),
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -29,11 +105,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const requestedSku = String(searchParams.get('sku') || '').trim()
     const requestedGroupId = String(searchParams.get('groupId') || '').trim()
-    const requestedRange = searchParams.get('range') === '30' ? 30 : 7
-
-    const today = startOfDay(new Date())
-    const thirtyDaysAgo = addDays(today, -30)
-    const trendStartDate = addDays(today, -(requestedRange - 1))
+    const selectedRange = resolveRange(searchParams)
 
     const products = await prisma.product.findMany({
       where: { isActive: true },
@@ -72,19 +144,29 @@ export async function GET(request: NextRequest) {
       trendTitle = `销售库存趋势 - 分组 ${selectedGroup.name}`
     }
 
-    const performanceData = await prisma.performanceDaily.findMany({
-      where: {
-        date: {
-          gte: thirtyDaysAgo,
-        },
-        ...(trendSkuList.length ? { sku: { in: trendSkuList } } : {}),
-      },
-      select: {
-        sku: true,
-        orders: true,
-        date: true,
-      },
-    })
+    const performanceData = trendSkuList.length
+      ? await prisma.performanceDaily.findMany({
+          where: {
+            date: {
+              gte: selectedRange.startDate,
+              lt: selectedRange.endExclusive,
+            },
+            sku: {
+              in: trendSkuList,
+            },
+          },
+          select: {
+            sku: true,
+            orders: true,
+            grossOrders: true,
+            returnQty: true,
+            netOrders: true,
+            canceledQty: true,
+            refundAmount: true,
+            date: true,
+          },
+        })
+      : []
 
     const snapshotRows = trendSkuList.length
       ? await prisma.productInventorySnapshot.findMany({
@@ -93,7 +175,7 @@ export async function GET(request: NextRequest) {
               in: trendSkuList,
             },
             date: {
-              lte: today,
+              lt: selectedRange.endExclusive,
             },
           },
           select: {
@@ -109,13 +191,27 @@ export async function GET(request: NextRequest) {
       : []
 
     const salesMap = new Map<string, number>()
-    performanceData.forEach((perf) => {
-      const perfDate = startOfDay(new Date(perf.date))
-      if (perfDate < trendStartDate || perfDate > today) return
+    const filterSummary = {
+      grossOrders: 0,
+      returnQty: 0,
+      netOrders: 0,
+      canceledQty: 0,
+      refundAmount: 0,
+    }
 
+    performanceData.forEach((item) => {
+      const perfDate = startOfDay(new Date(item.date))
       const dateKey = formatDateKey(perfDate)
-      salesMap.set(dateKey, (salesMap.get(dateKey) || 0) + perf.orders)
+
+      salesMap.set(dateKey, (salesMap.get(dateKey) || 0) + item.orders)
+      filterSummary.grossOrders += item.grossOrders || 0
+      filterSummary.returnQty += item.returnQty || 0
+      filterSummary.netOrders += item.netOrders || 0
+      filterSummary.canceledQty += item.canceledQty || 0
+      filterSummary.refundAmount += item.refundAmount || 0
     })
+
+    filterSummary.refundAmount = Number(filterSummary.refundAmount.toFixed(2))
 
     const snapshotsBySku = new Map<string, Array<{ date: Date; totalQty: number }>>()
     snapshotRows.forEach((item) => {
@@ -127,18 +223,20 @@ export async function GET(request: NextRequest) {
       snapshotsBySku.set(item.sku, bucket)
     })
 
-    const stockFallbackMap = new Map(
-      skuProducts.map((product) => [product.sku, product.stock || 0]),
+    const stockFallbackMap = new Map(skuProducts.map((product) => [product.sku, product.stock || 0]))
+    const stockByDate = new Map<string, number>()
+    const totalDays = Math.max(
+      1,
+      Math.round((selectedRange.endExclusive.getTime() - selectedRange.startDate.getTime()) / 86_400_000),
     )
 
-    const stockByDate = new Map<string, number>()
     for (const sku of trendSkuList) {
       const snapshots = snapshotsBySku.get(sku) || []
       let snapshotIndex = 0
-      let currentStock = snapshots.length === 0 ? (stockFallbackMap.get(sku) || 0) : 0
+      let currentStock = stockFallbackMap.get(sku) || 0
 
-      for (let offset = 0; offset < requestedRange; offset += 1) {
-        const currentDate = addDays(trendStartDate, offset)
+      for (let offset = 0; offset < totalDays; offset += 1) {
+        const currentDate = addDays(selectedRange.startDate, offset)
 
         while (
           snapshotIndex < snapshots.length &&
@@ -153,8 +251,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const trends = Array.from({ length: requestedRange }, (_, offset) => {
-      const currentDate = addDays(trendStartDate, offset)
+    const trends = Array.from({ length: totalDays }, (_, offset) => {
+      const currentDate = addDays(selectedRange.startDate, offset)
       const dateKey = formatDateKey(currentDate)
 
       return {
@@ -168,17 +266,23 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       selectedSku,
       selectedGroupId: selectedGroup?.id || '',
-      trendRange: requestedRange,
+      trendRange: selectedRange.range,
+      startDate: selectedRange.startDateText,
+      endDate: selectedRange.endDateText,
       trendTitle,
       skuOptions,
       groupOptions: groupOptions.map((group) => ({
         id: group.id,
         name: group.name,
       })),
+      filterSummary,
       trends,
     })
   } catch (error) {
     console.error('获取产品销售趋势失败:', error)
-    return NextResponse.json({ error: '获取产品销售趋势失败' }, { status: 500 })
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : '获取产品销售趋势失败' },
+      { status: 500 },
+    )
   }
 }

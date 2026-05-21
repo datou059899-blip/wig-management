@@ -35,6 +35,7 @@ interface ProductData {
   yesterdaySales: number
   weekSales: number
   monthSales: number
+  selectedRangeSales: number
   stock: number
   stockStatus: string
   updatedAt: string
@@ -92,12 +93,17 @@ interface OrderImportResult {
   totalOrderRows: number
   parsedRows?: number
   validRows?: number
+  orderItemCount?: number
+  dedupeKeyCount?: number
+  duplicateInFileCount?: number
   uniqueSkuCount?: number
   matchedSkuCount?: number
   missingSkuCount?: number
   missingSkuRows?: number
   skippedCount?: number
   missingSkus?: string[]
+  insertedOrderItemCount?: number
+  updatedOrderItemCount?: number
   aggregatedRecordCount?: number
   successCount: number
   failedCount: number
@@ -110,6 +116,7 @@ interface OrderImportResult {
   totalNetOrders: number
   totalCanceledQty: number
   totalRefundAmount: number
+  staleRecordCount?: number
   writeErrors?: Array<{ sku: string; dateStr: string; reason: string }>
 }
 
@@ -165,6 +172,14 @@ interface TrendPoint {
   stock: number
 }
 
+interface TrendSummary {
+  grossOrders: number
+  returnQty: number
+  netOrders: number
+  canceledQty: number
+  refundAmount: number
+}
+
 interface SkuOption {
   sku: string
 }
@@ -176,6 +191,15 @@ interface ProductSalesGroup {
 }
 
 type StockEditMode = 'set' | 'increase' | 'decrease'
+type TrendRange = 'today' | '7' | '30' | 'custom'
+
+function getTodayInputValue() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 export default function ProductSalesPage() {
   const router = useRouter()
@@ -190,12 +214,24 @@ export default function ProductSalesPage() {
   const [groups, setGroups] = useState<ProductSalesGroup[]>([])
   const [selectedSku, setSelectedSku] = useState('')
   const [selectedGroupId, setSelectedGroupId] = useState('')
-  const [trendRange, setTrendRange] = useState<7 | 30>(7)
+  const [trendRange, setTrendRange] = useState<TrendRange>('7')
+  const [trendStartDate, setTrendStartDate] = useState('')
+  const [trendEndDate, setTrendEndDate] = useState('')
+  const [customStartDate, setCustomStartDate] = useState(getTodayInputValue())
+  const [customEndDate, setCustomEndDate] = useState(getTodayInputValue())
   const [trendTitle, setTrendTitle] = useState('销售库存趋势 - 全部 SKU')
   const [trends, setTrends] = useState<TrendPoint[]>([])
+  const [trendSummary, setTrendSummary] = useState<TrendSummary>({
+    grossOrders: 0,
+    returnQty: 0,
+    netOrders: 0,
+    canceledQty: 0,
+    refundAmount: 0,
+  })
 
   const [loading, setLoading] = useState(true)
   const [trendLoading, setTrendLoading] = useState(false)
+  const [tableRangeLoading, setTableRangeLoading] = useState(false)
   const [importingInventory, setImportingInventory] = useState(false)
   const [importingOrders, setImportingOrders] = useState(false)
   const [editingStockSku, setEditingStockSku] = useState<string | null>(null)
@@ -216,21 +252,47 @@ export default function ProductSalesPage() {
   const [error, setError] = useState<string | null>(null)
   const [inventoryError, setInventoryError] = useState<string | null>(null)
   const [ordersError, setOrdersError] = useState<string | null>(null)
+  const [trendFilterError, setTrendFilterError] = useState<string | null>(null)
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
     key: 'sku',
     direction: 'asc',
   })
 
-  const loadPageData = async () => {
-    const response = await fetch('/api/product-sales')
-    const data = await response.json()
-    if (!response.ok) {
-      throw new Error(data.error || '获取数据失败')
+  const buildRangeParams = (range: TrendRange, startDate = trendStartDate, endDate = trendEndDate) => {
+    const params = new URLSearchParams()
+    params.set('range', range)
+    if (range === 'custom') {
+      params.set('startDate', startDate)
+      params.set('endDate', endDate)
     }
+    return params
+  }
 
-    setSummary(data.summary)
-    setProducts(Array.isArray(data.products) ? data.products : [])
-    setSkuOptions(Array.isArray(data.skuOptions) ? data.skuOptions : [])
+  const loadPageData = async (
+    range = trendRange,
+    startDate = trendStartDate,
+    endDate = trendEndDate,
+    showLoading = false,
+  ) => {
+    try {
+      if (showLoading) {
+        setTableRangeLoading(true)
+      }
+
+      const response = await fetch(`/api/product-sales?${buildRangeParams(range, startDate, endDate).toString()}`)
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || '获取数据失败')
+      }
+
+      setSummary(data.summary)
+      setProducts(Array.isArray(data.products) ? data.products : [])
+      setSkuOptions(Array.isArray(data.skuOptions) ? data.skuOptions : [])
+    } finally {
+      if (showLoading) {
+        setTableRangeLoading(false)
+      }
+    }
   }
 
   const loadGroups = async () => {
@@ -247,6 +309,8 @@ export default function ProductSalesPage() {
     sku = selectedSku,
     groupId = selectedGroupId,
     range = trendRange,
+    startDate = trendStartDate,
+    endDate = trendEndDate,
     showLoading = true,
   ) => {
     try {
@@ -262,6 +326,10 @@ export default function ProductSalesPage() {
         params.set('groupId', groupId)
       }
       params.set('range', String(range))
+      if (range === 'custom') {
+        params.set('startDate', startDate)
+        params.set('endDate', endDate)
+      }
 
       const response = await fetch(`/api/product-sales/trends?${params.toString()}`)
       const data = await response.json()
@@ -271,9 +339,25 @@ export default function ProductSalesPage() {
 
       setSelectedSku(data.selectedSku || '')
       setSelectedGroupId(data.selectedGroupId || '')
-      setTrendRange(data.trendRange === 30 ? 30 : 7)
+      setTrendRange((data.trendRange as TrendRange) || '7')
+      setTrendStartDate(data.startDate || '')
+      setTrendEndDate(data.endDate || '')
+      if (data.startDate) {
+        setCustomStartDate(data.startDate)
+      }
+      if (data.endDate) {
+        setCustomEndDate(data.endDate)
+      }
       setTrendTitle(data.trendTitle || '销售库存趋势 - 全部 SKU')
       setTrends(Array.isArray(data.trends) ? data.trends : [])
+      setTrendSummary({
+        grossOrders: data.filterSummary?.grossOrders || 0,
+        returnQty: data.filterSummary?.returnQty || 0,
+        netOrders: data.filterSummary?.netOrders || 0,
+        canceledQty: data.filterSummary?.canceledQty || 0,
+        refundAmount: data.filterSummary?.refundAmount || 0,
+      })
+      setTrendFilterError(null)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : '获取趋势失败')
@@ -288,8 +372,11 @@ export default function ProductSalesPage() {
     const initialize = async () => {
       try {
         setLoading(true)
-        await Promise.all([loadPageData(), loadGroups()])
-        await loadTrendData('', '', 7, false)
+        await Promise.all([
+          loadPageData('7', '', '', false),
+          loadGroups(),
+          loadTrendData('', '', '7', '', '', false),
+        ])
         setError(null)
       } catch (err) {
         setError(err instanceof Error ? err.message : '获取数据失败')
@@ -303,11 +390,38 @@ export default function ProductSalesPage() {
 
   const refreshAfterMutation = async () => {
     await Promise.all([
-      loadPageData(),
+      loadPageData(trendRange, trendStartDate, trendEndDate),
       loadGroups(),
-      loadTrendData(selectedSku, selectedGroupId, trendRange, false),
+      loadTrendData(selectedSku, selectedGroupId, trendRange, trendStartDate, trendEndDate, false),
     ])
     router.refresh()
+  }
+
+  const applyTrendRange = async (
+    nextRange: TrendRange,
+    nextStartDate: string,
+    nextEndDate: string,
+  ) => {
+    if (nextRange === 'custom') {
+      if (!nextStartDate || !nextEndDate) {
+        setTrendFilterError('请选择开始日期和结束日期')
+        return
+      }
+      if (nextStartDate > nextEndDate) {
+        setTrendFilterError('开始日期不能大于结束日期')
+        return
+      }
+    }
+
+    try {
+      setTrendFilterError(null)
+      await Promise.all([
+        loadPageData(nextRange, nextStartDate, nextEndDate, true),
+        loadTrendData(selectedSku, selectedGroupId, nextRange, nextStartDate, nextEndDate, true),
+      ])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新时间筛选失败')
+    }
   }
 
   const handleImportInventory = () => {
@@ -404,12 +518,17 @@ export default function ProductSalesPage() {
         totalOrderRows: payload.totalOrderRows || 0,
         parsedRows: payload.parsedRows || 0,
         validRows: payload.validRows || 0,
+        orderItemCount: payload.orderItemCount || 0,
+        dedupeKeyCount: payload.dedupeKeyCount || 0,
+        duplicateInFileCount: payload.duplicateInFileCount || 0,
         uniqueSkuCount: payload.uniqueSkuCount || 0,
         matchedSkuCount: payload.matchedSkuCount || 0,
         missingSkuCount: payload.missingSkuCount || 0,
         missingSkuRows: payload.missingSkuRows || 0,
         skippedCount: payload.skippedCount || 0,
         missingSkus: Array.isArray(payload.missingSkus) ? payload.missingSkus : [],
+        insertedOrderItemCount: payload.insertedOrderItemCount || 0,
+        updatedOrderItemCount: payload.updatedOrderItemCount || 0,
         aggregatedRecordCount: payload.aggregatedRecordCount || 0,
         successCount: payload.successCount || 0,
         failedCount: payload.failedCount || 0,
@@ -422,6 +541,7 @@ export default function ProductSalesPage() {
         totalNetOrders: payload.totalNetOrders || 0,
         totalCanceledQty: payload.totalCanceledQty || 0,
         totalRefundAmount: payload.totalRefundAmount || 0,
+        staleRecordCount: payload.staleRecordCount || 0,
         writeErrors: Array.isArray(payload.writeErrors) ? payload.writeErrors : [],
       })
 
@@ -591,7 +711,7 @@ export default function ProductSalesPage() {
       }
 
       await loadGroups()
-      await loadTrendData(selectedSku, selectedGroupId, trendRange, false)
+      await loadTrendData(selectedSku, selectedGroupId, trendRange, trendStartDate, trendEndDate, false)
       resetGroupForm()
     } catch (err) {
       setGroupFormError(err instanceof Error ? err.message : '保存分组失败')
@@ -617,7 +737,7 @@ export default function ProductSalesPage() {
       }
 
       await loadGroups()
-      await loadTrendData(selectedSku, selectedGroupId, trendRange, false)
+      await loadTrendData(selectedSku, selectedGroupId, trendRange, trendStartDate, trendEndDate, false)
       if (groupFormId === group.id) {
         resetGroupForm()
       }
@@ -774,22 +894,26 @@ export default function ProductSalesPage() {
                 <span>文件 {ordersImportResult.fileName || '-'}</span>
                 <span>读取订单行数 {ordersImportResult.totalOrderRows} 行</span>
                 <span>解析行数 {ordersImportResult.parsedRows || 0}</span>
-                <span>有效行数 {ordersImportResult.validRows || 0}</span>
+                <span>有效订单行数 {ordersImportResult.validRows || 0}</span>
+                <span>本次文件订单明细数 {ordersImportResult.orderItemCount || 0}</span>
+                <span>文件内重复订单数 {ordersImportResult.duplicateInFileCount || 0}</span>
                 <span>唯一 SKU {ordersImportResult.uniqueSkuCount || 0}</span>
-                <span>汇总记录 {ordersImportResult.aggregatedRecordCount || 0}</span>
                 {typeof ordersImportResult.matchedSkuCount === 'number' && (
                   <span>匹配 SKU {ordersImportResult.matchedSkuCount}</span>
                 )}
                 {typeof ordersImportResult.missingSkuCount === 'number' && (
                   <span>缺失 SKU {ordersImportResult.missingSkuCount}</span>
                 )}
+                {ordersImportResult.mode === 'import' && (
+                  <span>新增订单明细 {ordersImportResult.insertedOrderItemCount || 0} 条</span>
+                )}
+                {ordersImportResult.mode === 'import' && (
+                  <span>更新已有订单明细 {ordersImportResult.updatedOrderItemCount || 0} 条</span>
+                )}
                 {ordersImportResult.mode === 'import' ? (
-                  <span>成功写入 SKU+日期 {ordersImportResult.successCount} 条</span>
+                  <span>成功汇总写入 SKU+日期 {ordersImportResult.successCount} 条</span>
                 ) : (
-                  <span>可导入 SKU+日期 汇总 {ordersImportResult.mode === 'checkOnly'
-                    ? (ordersImportResult.aggregatedRecordCount || 0) - (ordersImportResult.missingSkuRows || 0)
-                    : ordersImportResult.aggregatedRecordCount || 0}
-                    条</span>
+                  <span>文件内 SKU+日期 汇总 {ordersImportResult.aggregatedRecordCount || 0} 条</span>
                 )}
                 <span>毛销量 {ordersImportResult.totalGrossOrders}</span>
                 <span>退货量 {ordersImportResult.totalReturnQty}</span>
@@ -799,11 +923,15 @@ export default function ProductSalesPage() {
                 <span>已跳过 {ordersImportResult.skippedCount || 0} 行</span>
                 <span>异常 {ordersImportResult.failedCount} 条</span>
               </div>
+              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                订单明细已按 Order ID + SKU ID 去重；当 SKU ID 为空时，会回退为 Order ID + Seller SKU。重复导入或重叠日期导入不会重复计算。
+              </div>
               {ordersImportResult.mode === 'import' && (
                 <div className="mt-2 text-sm text-slate-700">
-                  已成功导入 {ordersImportResult.matchedSkuCount || 0} 个 SKU 的销量数据。
+                  已完成订单明细去重并重算受影响日期的销量数据。
                   {ordersImportResult.missingSkuCount ? ` 有 ${ordersImportResult.missingSkuCount} 个 SKU 未在产品库中找到，请先补齐 Product.sku 后重新导入。` : ''}
                   {ordersImportResult.skippedCount ? ` 已跳过 ${ordersImportResult.skippedCount} 行 Seller SKU 为空的订单行。` : ''}
+                  {ordersImportResult.staleRecordCount ? ` 已清理 ${ordersImportResult.staleRecordCount} 条不再匹配的 SKU+日期 汇总。` : ''}
                 </div>
               )}
               {ordersImportResult.missingSkus && ordersImportResult.missingSkus.length > 0 && (
@@ -958,7 +1086,7 @@ export default function ProductSalesPage() {
                       onChange={(event) => {
                         const nextGroupId = event.target.value
                         setSelectedGroupId(nextGroupId)
-                        void loadTrendData(selectedSku, nextGroupId, trendRange)
+                        void loadTrendData(selectedSku, nextGroupId, trendRange, trendStartDate, trendEndDate)
                       }}
                       className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
                     >
@@ -974,7 +1102,7 @@ export default function ProductSalesPage() {
                       onChange={(event) => {
                         const nextSku = event.target.value
                         setSelectedSku(nextSku)
-                        void loadTrendData(nextSku, selectedGroupId, trendRange)
+                        void loadTrendData(nextSku, selectedGroupId, trendRange, trendStartDate, trendEndDate)
                       }}
                       className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
                     >
@@ -987,26 +1115,45 @@ export default function ProductSalesPage() {
                     </select>
                     <div className="inline-flex rounded-lg border border-slate-300 p-1">
                       <button
-                        onClick={() => {
-                          setTrendRange(7)
-                          void loadTrendData(selectedSku, selectedGroupId, 7)
-                        }}
+                        onClick={() => void applyTrendRange('today', '', '')}
                         className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                          trendRange === 7 ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                          trendRange === 'today' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        今日
+                      </button>
+                      <button
+                        onClick={() => void applyTrendRange('7', '', '')}
+                        className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                          trendRange === '7' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
                         }`}
                       >
                         最近 7 天
                       </button>
                       <button
-                        onClick={() => {
-                          setTrendRange(30)
-                          void loadTrendData(selectedSku, selectedGroupId, 30)
-                        }}
+                        onClick={() => void applyTrendRange('30', '', '')}
                         className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                          trendRange === 30 ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                          trendRange === '30' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
                         }`}
                       >
                         最近 30 天
+                      </button>
+                      <button
+                        onClick={() => {
+                          setTrendRange('custom')
+                          setTrendFilterError(null)
+                          if (trendStartDate) {
+                            setCustomStartDate(trendStartDate)
+                          }
+                          if (trendEndDate) {
+                            setCustomEndDate(trendEndDate)
+                          }
+                        }}
+                        className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                          trendRange === 'custom' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        自定义时间
                       </button>
                     </div>
                     <button
@@ -1019,6 +1166,51 @@ export default function ProductSalesPage() {
                       分组管理
                     </button>
                   </div>
+                </div>
+
+                {trendRange === 'custom' && (
+                  <div className="mt-4 flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-end">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-900">开始日期</label>
+                      <input
+                        type="date"
+                        value={customStartDate}
+                        onChange={(event) => {
+                          setCustomStartDate(event.target.value)
+                          setTrendFilterError(null)
+                        }}
+                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-900">结束日期</label>
+                      <input
+                        type="date"
+                        value={customEndDate}
+                        onChange={(event) => {
+                          setCustomEndDate(event.target.value)
+                          setTrendFilterError(null)
+                        }}
+                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      onClick={() => void applyTrendRange('custom', customStartDate, customEndDate)}
+                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                    >
+                      查询
+                    </button>
+                  </div>
+                )}
+
+                {trendFilterError && (
+                  <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {trendFilterError}
+                  </div>
+                )}
+
+                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                  当前筛选：毛销量 {trendSummary.grossOrders} ｜ 退货量 {trendSummary.returnQty} ｜ 净销量 {trendSummary.netOrders} ｜ 取消 {trendSummary.canceledQty} ｜ 退款金额 ${trendSummary.refundAmount.toFixed(2)}
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1402,6 +1594,10 @@ export default function ProductSalesPage() {
                   </div>
 
                   <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-3 text-sm text-slate-700">
+                      <span>下方总表始终显示全部 SKU；“筛选期销量”只跟随上方时间筛选。</span>
+                      {tableRangeLoading && <span className="text-slate-500">筛选期销量刷新中...</span>}
+                    </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
@@ -1448,6 +1644,14 @@ export default function ProductSalesPage() {
                             </th>
                             <th className="px-6 py-3 text-center">
                               <button
+                                onClick={() => handleSort('selectedRangeSales')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                筛选期销量 <SortIcon columnKey="selectedRangeSales" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-center">
+                              <button
                                 onClick={() => handleSort('stock')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
@@ -1478,7 +1682,7 @@ export default function ProductSalesPage() {
                         <tbody>
                           {sortedProducts.length === 0 ? (
                             <tr>
-                              <td colSpan={9} className="px-6 py-8 text-center text-slate-500">
+                              <td colSpan={10} className="px-6 py-8 text-center text-slate-500">
                                 暂无产品数据
                               </td>
                             </tr>
@@ -1490,6 +1694,7 @@ export default function ProductSalesPage() {
                                 <td className="px-6 py-4 text-sm text-center text-slate-700">{product.yesterdaySales}</td>
                                 <td className="px-6 py-4 text-sm text-center text-slate-700">{product.weekSales}</td>
                                 <td className="px-6 py-4 text-sm text-center text-slate-700">{product.monthSales}</td>
+                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.selectedRangeSales}</td>
                                 <td className="px-6 py-4 text-sm text-center font-medium text-slate-900">{product.stock}</td>
                                 <td className="px-6 py-4 text-sm text-center">
                                   <span
