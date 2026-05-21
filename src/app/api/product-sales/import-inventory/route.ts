@@ -23,6 +23,15 @@ type QtyParseResult = {
   invalid: boolean
 }
 
+function resolveEffectiveTotalQty(totalQty: number, availableQty: number, lockedQty: number) {
+  if (totalQty > 0) return totalQty
+
+  const availableAndLockedTotal = availableQty + lockedQty
+  if (availableAndLockedTotal > 0) return availableAndLockedTotal
+
+  return 0
+}
+
 function parseQty(value: unknown): QtyParseResult {
   if (value === null || value === undefined) {
     return { value: 0, invalid: false }
@@ -208,6 +217,7 @@ export async function POST(request: NextRequest) {
       const totalQty = hasSunnymayHairQty
         ? sunnymayHairQty
         : (fc03Atl1Qty + fc14Ewr4Qty + fc09Atl2Qty)
+      const effectiveTotalQty = resolveEffectiveTotalQty(totalQty, availableQty, lockedQty)
 
       return {
         row: excelRowNumber,
@@ -223,6 +233,7 @@ export async function POST(request: NextRequest) {
         fc14Ewr4Qty,
         fc09Atl2Qty,
         totalQty,
+        effectiveTotalQty,
       }
     }).filter(Boolean) as Array<{
       row: number
@@ -238,6 +249,7 @@ export async function POST(request: NextRequest) {
       fc14Ewr4Qty: number
       fc09Atl2Qty: number
       totalQty: number
+      effectiveTotalQty: number
     }>
 
     if (!candidates.length) {
@@ -392,7 +404,7 @@ export async function POST(request: NextRequest) {
               sku: item.sku,
               name: item.productName || item.sku,
               skuId: item.skuId || item.itemId || null,
-              stock: item.totalQty,
+              stock: item.effectiveTotalQty,
             },
             select: {
               id: true,
@@ -432,7 +444,7 @@ export async function POST(request: NextRequest) {
               fc03Atl1Qty: item.fc03Atl1Qty,
               fc14Ewr4Qty: item.fc14Ewr4Qty,
               fc09Atl2Qty: item.fc09Atl2Qty,
-              totalQty: item.totalQty,
+              totalQty: item.effectiveTotalQty,
               sourceFileName: file.name,
             },
             update: {
@@ -442,14 +454,14 @@ export async function POST(request: NextRequest) {
               fc03Atl1Qty: item.fc03Atl1Qty,
               fc14Ewr4Qty: item.fc14Ewr4Qty,
               fc09Atl2Qty: item.fc09Atl2Qty,
-              totalQty: item.totalQty,
+              totalQty: item.effectiveTotalQty,
               sourceFileName: file.name,
             },
           }),
           prisma.product.update({
             where: { id: product.id },
             data: {
-              stock: item.totalQty,
+              stock: item.effectiveTotalQty,
             },
           }),
         ])

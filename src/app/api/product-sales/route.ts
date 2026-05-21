@@ -47,6 +47,25 @@ function extractAliasSkusFromText(value: string | null | undefined) {
   return Array.from(aliases)
 }
 
+function resolveEffectiveStock(snapshot: {
+  totalQty: number | null
+  availableQty: number | null
+  lockedQty: number | null
+} | null | undefined, fallbackStock: number) {
+  if (snapshot && snapshot.totalQty !== null && snapshot.totalQty !== undefined && snapshot.totalQty > 0) {
+    return snapshot.totalQty
+  }
+
+  if (snapshot) {
+    const availableAndLockedTotal = (snapshot.availableQty ?? 0) + (snapshot.lockedQty ?? 0)
+    if (availableAndLockedTotal > 0) {
+      return availableAndLockedTotal
+    }
+  }
+
+  return fallbackStock
+}
+
 function parseDateInput(value: string) {
   const matched = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (!matched) return null
@@ -176,6 +195,45 @@ export async function GET(request: NextRequest) {
       },
     })
 
+    const productSkus = products
+      .map((product) => normalizeCell(product.sku))
+      .filter(Boolean)
+    const latestSnapshots = productSkus.length
+      ? await prisma.productInventorySnapshot.findMany({
+          where: {
+            sku: {
+              in: productSkus,
+            },
+          },
+          select: {
+            sku: true,
+            date: true,
+            totalQty: true,
+            availableQty: true,
+            lockedQty: true,
+          },
+          orderBy: [
+            { sku: 'asc' },
+            { date: 'desc' },
+          ],
+        })
+      : []
+
+    const latestSnapshotBySku = new Map<string, {
+      totalQty: number | null
+      availableQty: number | null
+      lockedQty: number | null
+    }>()
+    latestSnapshots.forEach((snapshot) => {
+      if (!latestSnapshotBySku.has(snapshot.sku)) {
+        latestSnapshotBySku.set(snapshot.sku, {
+          totalQty: snapshot.totalQty,
+          availableQty: snapshot.availableQty,
+          lockedQty: snapshot.lockedQty,
+        })
+      }
+    })
+
     const salesBySku: Record<string, {
       today: number
       yesterday: number
@@ -222,7 +280,10 @@ export async function GET(request: NextRequest) {
         month: 0,
         selectedRange: 0,
       }
-      const stock = product.stock || 0
+      const stock = resolveEffectiveStock(
+        product.sku ? latestSnapshotBySku.get(product.sku) : null,
+        product.stock || 0,
+      )
 
       let stockStatus = '正常'
       if (stock === 0) {
@@ -272,9 +333,13 @@ export async function GET(request: NextRequest) {
     const totalYesterdaySales = Object.values(salesBySku).reduce((sum, item) => sum + item.yesterday, 0)
     const totalWeekSales = Object.values(salesBySku).reduce((sum, item) => sum + item.week, 0)
     const totalMonthSales = Object.values(salesBySku).reduce((sum, item) => sum + item.month, 0)
-    const totalStock = products.reduce((sum, product) => sum + (product.stock || 0), 0)
-    const lowStockCount = products.filter((product) => (product.stock || 0) > 0 && (product.stock || 0) <= 10).length
-    const outOfStockCount = products.filter((product) => (product.stock || 0) === 0).length
+    const effectiveStocks = products.map((product) => resolveEffectiveStock(
+      product.sku ? latestSnapshotBySku.get(product.sku) : null,
+      product.stock || 0,
+    ))
+    const totalStock = effectiveStocks.reduce((sum, stock) => sum + stock, 0)
+    const lowStockCount = effectiveStocks.filter((stock) => stock > 0 && stock <= 10).length
+    const outOfStockCount = effectiveStocks.filter((stock) => stock === 0).length
 
     return NextResponse.json({
       summary: {

@@ -106,22 +106,15 @@ function resolveSnapshotQty(snapshot: {
   availableQty: number | null
   lockedQty: number | null
 }) {
-  if (snapshot.totalQty !== null && snapshot.totalQty !== undefined) {
+  if (snapshot.totalQty !== null && snapshot.totalQty !== undefined && snapshot.totalQty > 0) {
     return snapshot.totalQty
   }
 
-  const availableQty = snapshot.availableQty
-  const lockedQty = snapshot.lockedQty
-  if (availableQty !== null && availableQty !== undefined && lockedQty !== null && lockedQty !== undefined) {
-    return availableQty + lockedQty
-  }
-
-  if (availableQty !== null && availableQty !== undefined) {
-    return availableQty
-  }
-
-  if (lockedQty !== null && lockedQty !== undefined) {
-    return lockedQty
+  const availableQty = snapshot.availableQty ?? 0
+  const lockedQty = snapshot.lockedQty ?? 0
+  const availableAndLockedTotal = availableQty + lockedQty
+  if (availableAndLockedTotal > 0) {
+    return availableAndLockedTotal
   }
 
   return null
