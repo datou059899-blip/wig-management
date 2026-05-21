@@ -125,6 +125,33 @@ model PerformanceDaily {
   @@index([sku])
 }
 
+model ProductOrderItem {
+  id                     String   @id @default(cuid())
+  dedupeKey              String   @unique
+  orderId                String
+  skuId                  String?
+  sellerSku              String
+  paidDate               DateTime
+  paidTime               DateTime?
+  quantity               Int      @default(0)
+  returnQty              Int      @default(0)
+  netQty                 Int      @default(0)
+  canceledQty            Int      @default(0)
+  refundAmount           Float    @default(0)
+  orderStatus            String?
+  cancelationReturnType  String?
+  productMatched         Boolean  @default(false)
+  sourceFileName         String?
+  rawPaidTime            String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([sellerSku])
+  @@index([paidDate])
+  @@index([orderId])
+  @@index([productMatched])
+}
+
 model ProductInventorySnapshot {
   id              String   @id @default(cuid())
   sku             String
