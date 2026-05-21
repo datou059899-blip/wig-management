@@ -28,8 +28,23 @@ type ProductLookup = {
   name: string
 }
 
+type AliasLookup = {
+  aliasSku: string
+  productId: string
+  productName: string
+}
+
+type ParentheticalAliasLookup = {
+  aliasSku: string
+  productId: string
+  productName: string
+  source: 'product-name-parentheses'
+}
+
 type CandidateResolution =
-  | { type: 'existing'; sku: string }
+  | { type: 'existing-main'; sku: string }
+  | { type: 'existing-alias'; sku: string }
+  | { type: 'alias-matched'; sku: string; productId: string }
   | { type: 'create'; sku: string }
   | { type: 'fill'; sku: string; productId: string }
   | { type: 'suspicious'; row: ImportIssueRow }
@@ -49,6 +64,24 @@ function normalizeSkuForCompare(value: string) {
 
 function normalizeName(value: string) {
   return normalizeCell(value)
+}
+
+function extractAliasSkusFromProductName(name: string) {
+  const aliases = new Set<string>()
+  const text = normalizeName(name)
+  if (!text) return []
+
+  const pattern = /[（(]\s*([^()（）]+?)\s*[)）]/g
+  let match = pattern.exec(text)
+  while (match) {
+    const alias = normalizeCell(match[1])
+    if (alias) {
+      aliases.add(alias)
+    }
+    match = pattern.exec(text)
+  }
+
+  return Array.from(aliases)
 }
 
 function getNormalizedRowsFromSheet(sheet: XLSX.WorkSheet) {
@@ -198,16 +231,41 @@ function hasFillableProduct(
   return Boolean(result && 'product' in result)
 }
 
+function findByNormalizedSku<T extends { aliasSku?: string | null; sku?: string | null }>(
+  normalizedMap: Map<string, T[]>,
+  sku: string,
+) {
+  return normalizedMap.get(normalizeSkuForCompare(sku)) || []
+}
+
 function resolveCandidate(
   candidate: ParsedSkuRow,
   exactSkuMap: Map<string, ProductLookup>,
+  aliasSkuMap: Map<string, AliasLookup>,
+  parentheticalAliasMap: Map<string, ParentheticalAliasLookup>,
   normalizedSkuMap: Map<string, ProductLookup[]>,
+  normalizedAliasMap: Map<string, AliasLookup[]>,
+  normalizedParentheticalAliasMap: Map<string, ParentheticalAliasLookup[]>,
   nameMap: Map<string, ProductLookup[]>,
   normalizedFileMap: Map<string, ParsedSkuRow[]>,
   reservedProductIds: Set<string>,
 ): CandidateResolution {
   if (exactSkuMap.has(candidate.sku)) {
-    return { type: 'existing', sku: candidate.sku }
+    return { type: 'existing-main', sku: candidate.sku }
+  }
+
+  const exactAlias = aliasSkuMap.get(candidate.sku)
+  if (exactAlias) {
+    return { type: 'existing-alias', sku: candidate.sku }
+  }
+
+  const parentheticalAlias = parentheticalAliasMap.get(candidate.sku)
+  if (parentheticalAlias) {
+    return {
+      type: 'alias-matched',
+      sku: candidate.sku,
+      productId: parentheticalAlias.productId,
+    }
   }
 
   const normalizedSku = normalizeSkuForCompare(candidate.sku)
@@ -221,6 +279,34 @@ function resolveCandidate(
         sku: candidate.sku,
         productName: candidate.productName || undefined,
         reason: '检测到相似 SKU，请人工确认',
+      },
+    }
+  }
+
+  const similarAlias = findByNormalizedSku(normalizedAliasMap, candidate.sku)
+    .find((item) => item.aliasSku !== candidate.sku)
+  if (similarAlias) {
+    return {
+      type: 'suspicious',
+      row: {
+        row: candidate.row,
+        sku: candidate.sku,
+        productName: candidate.productName || undefined,
+        reason: '检测到相似 SKU 别称，请人工确认',
+      },
+    }
+  }
+
+  const similarParentheticalAlias = findByNormalizedSku(normalizedParentheticalAliasMap, candidate.sku)
+    .find((item) => item.aliasSku !== candidate.sku)
+  if (similarParentheticalAlias) {
+    return {
+      type: 'suspicious',
+      row: {
+        row: candidate.row,
+        sku: candidate.sku,
+        productName: candidate.productName || undefined,
+        reason: '检测到相似 SKU 别称，请人工确认',
       },
     }
   }
@@ -286,8 +372,8 @@ function resolveCandidate(
     }
   }
 
-  const normalizedMatches = normalizedSkuMap.get(normalizedSku) || []
-  const similarSkuProduct = normalizedMatches.find((product) => product.sku && product.sku !== candidate.sku)
+  const similarSkuProduct = findByNormalizedSku(normalizedSkuMap, candidate.sku)
+    .find((product) => product.sku && product.sku !== candidate.sku)
   if (similarSkuProduct) {
     return {
       type: 'suspicious',
@@ -431,17 +517,31 @@ export async function POST(request: NextRequest) {
     const uniqueSkuCount = uniqueCandidates.length
 
     stage = 'check-products'
-    const products = await prisma.product.findMany({
-      select: {
-        id: true,
-        sku: true,
-        name: true,
-      },
-    })
+    const [products, aliases] = await Promise.all([
+      prisma.product.findMany({
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+        },
+      }),
+      prisma.productSkuAlias.findMany({
+        include: {
+          product: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      }),
+    ])
 
     const exactSkuMap = new Map<string, ProductLookup>()
     const normalizedSkuMap = new Map<string, ProductLookup[]>()
     const nameMap = new Map<string, ProductLookup[]>()
+    const parentheticalAliasMap = new Map<string, ParentheticalAliasLookup>()
+    const normalizedParentheticalAliasMap = new Map<string, ParentheticalAliasLookup[]>()
 
     products.forEach((product) => {
       if (product.sku) {
@@ -458,6 +558,38 @@ export async function POST(request: NextRequest) {
         nameBucket.push(product)
         nameMap.set(normalizedProductName, nameBucket)
       }
+
+      extractAliasSkusFromProductName(product.name).forEach((aliasSku) => {
+        if (exactSkuMap.has(aliasSku)) return
+        if (parentheticalAliasMap.has(aliasSku)) return
+
+        const lookup: ParentheticalAliasLookup = {
+          aliasSku,
+          productId: product.id,
+          productName: product.name,
+          source: 'product-name-parentheses',
+        }
+        parentheticalAliasMap.set(aliasSku, lookup)
+        const normalizedAlias = normalizeSkuForCompare(aliasSku)
+        const bucket = normalizedParentheticalAliasMap.get(normalizedAlias) || []
+        bucket.push(lookup)
+        normalizedParentheticalAliasMap.set(normalizedAlias, bucket)
+      })
+    })
+
+    const aliasSkuMap = new Map<string, AliasLookup>()
+    const normalizedAliasMap = new Map<string, AliasLookup[]>()
+    aliases.forEach((alias) => {
+      const lookup: AliasLookup = {
+        aliasSku: alias.aliasSku,
+        productId: alias.productId,
+        productName: alias.product.name,
+      }
+      aliasSkuMap.set(alias.aliasSku, lookup)
+      const normalizedAlias = normalizeSkuForCompare(alias.aliasSku)
+      const bucket = normalizedAliasMap.get(normalizedAlias) || []
+      bucket.push(lookup)
+      normalizedAliasMap.set(normalizedAlias, bucket)
     })
 
     const normalizedFileMap = new Map<string, ParsedSkuRow[]>()
@@ -471,23 +603,45 @@ export async function POST(request: NextRequest) {
     const reservedProductIds = new Set<string>()
     const suspiciousRows: ImportIssueRow[] = []
     const existingSkus: string[] = []
+    const existingAliasSkus: string[] = []
+    const aliasMatchedSkus: string[] = []
     const newSkus: string[] = []
     const fillableSkus: string[] = []
     const createCandidates: ParsedSkuRow[] = []
     const fillCandidates: Array<ParsedSkuRow & { productId: string }> = []
+    const aliasCreateCandidates: Array<{ productId: string; aliasSku: string; source: string }> = []
 
     uniqueCandidates.forEach((candidate) => {
       const resolution = resolveCandidate(
         candidate,
         exactSkuMap,
+        aliasSkuMap,
+        parentheticalAliasMap,
         normalizedSkuMap,
+        normalizedAliasMap,
+        normalizedParentheticalAliasMap,
         nameMap,
         normalizedFileMap,
         reservedProductIds,
       )
 
-      if (resolution.type === 'existing') {
+      if (resolution.type === 'existing-main') {
         existingSkus.push(candidate.sku)
+        return
+      }
+
+      if (resolution.type === 'existing-alias') {
+        existingAliasSkus.push(candidate.sku)
+        return
+      }
+
+      if (resolution.type === 'alias-matched') {
+        aliasMatchedSkus.push(candidate.sku)
+        aliasCreateCandidates.push({
+          productId: resolution.productId,
+          aliasSku: candidate.sku,
+          source: 'product-name-parentheses',
+        })
         return
       }
 
@@ -530,6 +684,23 @@ export async function POST(request: NextRequest) {
           },
         })
       }
+
+      for (const candidate of aliasCreateCandidates) {
+        await prisma.productSkuAlias.upsert({
+          where: {
+            aliasSku: candidate.aliasSku,
+          },
+          create: {
+            productId: candidate.productId,
+            aliasSku: candidate.aliasSku,
+            source: candidate.source,
+          },
+          update: {
+            productId: candidate.productId,
+            source: candidate.source,
+          },
+        })
+      }
     }
 
     stage = 'done'
@@ -543,13 +714,18 @@ export async function POST(request: NextRequest) {
       extractedSkuCount,
       uniqueSkuCount,
       existingSkuCount: existingSkus.length,
+      existingAliasSkuCount: existingAliasSkus.length,
+      aliasMatchedSkuCount: aliasMatchedSkus.length,
       newSkuCount: newSkus.length,
       fillableSkuCount: fillableSkus.length,
       duplicateInFileCount,
       suspiciousCount: suspiciousRows.length,
       createdCount: dryRun ? 0 : createCandidates.length,
       filledCount: dryRun ? 0 : fillCandidates.length,
+      aliasCreatedCount: dryRun ? 0 : aliasCreateCandidates.length,
       existingSkus,
+      existingAliasSkus,
+      aliasMatchedSkus,
       newSkus,
       fillableSkus,
       suspiciousRows,

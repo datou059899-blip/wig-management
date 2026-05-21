@@ -99,6 +99,28 @@ function normalizeCell(value: unknown) {
   return typeof value === 'string' ? value.trim() : String(value).trim()
 }
 
+function normalizeSkuForCompare(value: string) {
+  return normalizeCell(value).replace(/\s+/g, '').toUpperCase()
+}
+
+function extractAliasSkusFromProductName(name: string) {
+  const aliases = new Set<string>()
+  const text = normalizeCell(name)
+  if (!text) return []
+
+  const pattern = /[（(]\s*([^()（）]+?)\s*[)）]/g
+  let match = pattern.exec(text)
+  while (match) {
+    const alias = normalizeCell(match[1])
+    if (alias) {
+      aliases.add(alias)
+    }
+    match = pattern.exec(text)
+  }
+
+  return Array.from(aliases)
+}
+
 function parseNumber(value: unknown): number {
   if (value === null || value === undefined) return 0
   if (typeof value === 'number') {
@@ -974,28 +996,58 @@ export async function POST(request: NextRequest) {
     }
 
     stage = 'match-products'
-    const products = await prisma.product.findMany({
-      where: {
-        sku: {
-          in: uniqueSkus,
+    const [products, aliases] = await Promise.all([
+      prisma.product.findMany({
+        select: {
+          id: true,
+          sku: true,
+          name: true,
         },
-      },
-      select: {
-        sku: true,
-        name: true,
-      },
+      }),
+      prisma.productSkuAlias.findMany({
+        include: {
+          product: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      }),
+    ])
+
+    const matchedSkuNameMap = new Map<string, string>()
+    const matchedSkuSet = new Set<string>()
+    const normalizedRequestedSkuMap = new Map(uniqueSkus.map((sku) => [normalizeSkuForCompare(sku), sku]))
+
+    products.forEach((product) => {
+      if (!product.sku) return
+
+      const requestedMainSku = normalizedRequestedSkuMap.get(normalizeSkuForCompare(product.sku))
+      if (requestedMainSku) {
+        matchedSkuSet.add(requestedMainSku)
+        matchedSkuNameMap.set(requestedMainSku, product.name)
+      }
+
+      extractAliasSkusFromProductName(product.name).forEach((aliasSku) => {
+        const requestedSku = normalizedRequestedSkuMap.get(normalizeSkuForCompare(aliasSku))
+        if (!requestedSku) return
+
+        matchedSkuSet.add(requestedSku)
+        matchedSkuNameMap.set(requestedSku, product.name)
+      })
     })
 
-    const productSkuSet = new Set(
-      products.map((product) => product.sku).filter((sku): sku is string => Boolean(sku)),
-    )
-    const productNameMap = new Map(
-      products
-        .filter((product): product is { sku: string; name: string } => Boolean(product.sku))
-        .map((product) => [product.sku, product.name]),
-    )
-    const missingSkus = uniqueSkus.filter((sku) => !productSkuSet.has(sku))
-    const missingSkuRows = dedupedItems.filter((item) => !productSkuSet.has(item.sellerSku)).length
+    aliases.forEach((alias) => {
+      const requestedAliasSku = normalizedRequestedSkuMap.get(normalizeSkuForCompare(alias.aliasSku))
+      if (!requestedAliasSku) return
+
+      matchedSkuSet.add(requestedAliasSku)
+      matchedSkuNameMap.set(requestedAliasSku, alias.product.name)
+    })
+
+    const missingSkus = uniqueSkus.filter((sku) => !matchedSkuSet.has(sku))
+    const missingSkuRows = dedupedItems.filter((item) => !matchedSkuSet.has(item.sellerSku)).length
 
     if (checkOnly) {
       return NextResponse.json({
@@ -1074,7 +1126,7 @@ export async function POST(request: NextRequest) {
         refundAmount: item.refundAmount,
         orderStatus: item.orderStatus || null,
         cancelationReturnType: item.cancelationReturnType || null,
-        productMatched: productSkuSet.has(item.sellerSku),
+        productMatched: matchedSkuSet.has(item.sellerSku),
         sourceFileName: sourceFileName || null,
         rawPaidTime: item.rawPaidTime || null,
       }
@@ -1097,7 +1149,7 @@ export async function POST(request: NextRequest) {
 
     stage = 'rebuild-performance'
     const affectedPairs = Array.from(affectedPairMap.values())
-    const aggregatedItems = await loadAggregatedMatchedOrderItems(affectedPairs, productNameMap)
+    const aggregatedItems = await loadAggregatedMatchedOrderItems(affectedPairs, matchedSkuNameMap)
     const aggregatedPairSet = new Set(aggregatedItems.map((item) => `${item.sku}__${item.dateStr}`))
     const stalePairs = affectedPairs.filter((item) => !aggregatedPairSet.has(`${item.sku}__${item.dateStr}`))
 
