@@ -37,7 +37,7 @@ type AggregatedOrderStat = {
 }
 
 function normalizeHeader(value: unknown) {
-  return String(value ?? '').trim()
+  return String(value ?? '').replace(/^\uFEFF/, '').trim()
 }
 
 function normalizeCell(value: unknown) {
@@ -56,7 +56,7 @@ function parseNumber(value: unknown): number {
     return 0
   }
 
-  const parsed = Number(text.replace(/,/g, ''))
+  const parsed = Number(text.replace(/[\$,]/g, ''))
   return Number.isFinite(parsed) ? parsed : 0
 }
 
@@ -150,6 +150,69 @@ function getNormalizedRowsFromSheet(sheet: XLSX.WorkSheet) {
   })
 }
 
+function parseCsvText(text: string) {
+  const rows: string[][] = []
+  let currentRow: string[] = []
+  let currentCell = ''
+  let inQuotes = false
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    const nextChar = text[index + 1]
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        currentCell += '"'
+        index += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+
+    if (char === ',' && !inQuotes) {
+      currentRow.push(currentCell)
+      currentCell = ''
+      continue
+    }
+
+    if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (char === '\r' && nextChar === '\n') {
+        index += 1
+      }
+      currentRow.push(currentCell)
+      rows.push(currentRow)
+      currentRow = []
+      currentCell = ''
+      continue
+    }
+
+    currentCell += char
+  }
+
+  if (currentCell.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentCell)
+    rows.push(currentRow)
+  }
+
+  if (!rows.length) return []
+
+  const headers = (rows[0] || []).map((cell) => normalizeHeader(cell))
+  return rows.slice(1).map((row, index) => {
+    const record = headers.reduce<Record<string, unknown>>((acc, header, headerIndex) => {
+      if (header) {
+        acc[header] = row[headerIndex] ?? ''
+      }
+      return acc
+    }, {})
+
+    return {
+      rowNumber: index + 2,
+      record,
+    }
+  })
+}
+
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
@@ -173,24 +236,35 @@ export async function POST(request: NextRequest) {
     const bytes = await file.arrayBuffer()
     const fileName = String(file.name || '').toLowerCase()
 
-    let workbook: XLSX.WorkBook
-    if (fileName.endsWith('.csv')) {
-      const text = new TextDecoder('utf-8').decode(bytes)
-      workbook = XLSX.read(text, { type: 'string' })
-    } else {
-      workbook = XLSX.read(bytes, { type: 'array' })
+    let rows: Array<{ rowNumber: number; record: Record<string, unknown> }> = []
+
+    try {
+      if (fileName.endsWith('.csv')) {
+        const text = new TextDecoder('utf-8').decode(bytes)
+        rows = parseCsvText(text)
+      } else {
+        const workbook = XLSX.read(bytes, { type: 'array' })
+        const targetSheetName = workbook.SheetNames.includes('OrderSKUList')
+          ? 'OrderSKUList'
+          : workbook.SheetNames[0]
+
+        if (!targetSheetName) {
+          return NextResponse.json({ error: '订单文件没有可读取的工作表' }, { status: 400 })
+        }
+
+        const sheet = workbook.Sheets[targetSheetName]
+        rows = getNormalizedRowsFromSheet(sheet)
+      }
+    } catch (parseError) {
+      console.error('解析订单文件失败:', parseError)
+      return NextResponse.json(
+        {
+          error: '导入订单表失败',
+          detail: `解析订单文件失败：${String((parseError as Error)?.message || parseError)}`,
+        },
+        { status: 400 },
+      )
     }
-
-    const targetSheetName = workbook.SheetNames.includes('OrderSKUList')
-      ? 'OrderSKUList'
-      : workbook.SheetNames[0]
-
-    if (!targetSheetName) {
-      return NextResponse.json({ error: '订单文件没有可读取的工作表' }, { status: 400 })
-    }
-
-    const sheet = workbook.Sheets[targetSheetName]
-    const rows = getNormalizedRowsFromSheet(sheet)
 
     if (!rows.length) {
       return NextResponse.json({ error: '订单文件中没有可导入的数据' }, { status: 400 })
@@ -200,62 +274,74 @@ export async function POST(request: NextRequest) {
     const parsedRows: ParsedOrderRow[] = []
 
     rows.forEach(({ rowNumber, record }) => {
-      const sku = normalizeCell(record['Seller SKU'])
-      const paidTime = normalizeCell(record['Paid Time'])
-      const quantity = Math.max(0, Math.round(parseNumber(record['Quantity'])))
-      const returnQty = Math.max(0, Math.round(parseNumber(record['Sku Quantity of return'])))
-      const dateStr = parseDateString(record['Paid Time'])
+      try {
+        const sku = normalizeCell(record['Seller SKU'])
+        const paidTime = normalizeCell(record['Paid Time'])
+        const quantity = Math.max(0, Math.round(parseNumber(record['Quantity'])))
+        const returnQty = Math.max(0, Math.round(parseNumber(record['Sku Quantity of return'])))
+        const dateStr = parseDateString(record['Paid Time'])
 
-      if (!sku) {
-        failures.push({
-          row: rowNumber,
-          sku: '',
-          paidTime,
-          quantity,
-          returnQty,
-          reason: 'Seller SKU 为空',
-        })
-        return
-      }
+        if (!sku) {
+          failures.push({
+            row: rowNumber,
+            sku: '',
+            paidTime,
+            quantity,
+            returnQty,
+            reason: 'Seller SKU 为空',
+          })
+          return
+        }
 
-      if (!paidTime) {
-        failures.push({
+        if (!paidTime) {
+          failures.push({
+            row: rowNumber,
+            sku,
+            paidTime: '',
+            quantity,
+            returnQty,
+            reason: 'Paid Time 为空',
+          })
+          return
+        }
+
+        if (!dateStr) {
+          failures.push({
+            row: rowNumber,
+            sku,
+            paidTime,
+            quantity,
+            returnQty,
+            reason: 'Paid Time 无法解析',
+          })
+          return
+        }
+
+        parsedRows.push({
           row: rowNumber,
           sku,
-          paidTime: '',
+          productName: normalizeCell(record['Product Name']),
           quantity,
           returnQty,
-          reason: 'Paid Time 为空',
+          paidTime,
+          dateStr,
+          isCanceled: isCanceledOrder(
+            normalizeCell(record['Order Status']),
+            normalizeCell(record['Cancelation/Return Type']),
+          ),
+          refundAmount: parseNumber(record['Order Refund Amount']),
         })
-        return
-      }
-
-      if (!dateStr) {
+      } catch (rowError) {
+        console.error(`解析订单行失败: row ${rowNumber}`, rowError)
         failures.push({
           row: rowNumber,
-          sku,
-          paidTime,
-          quantity,
-          returnQty,
-          reason: 'Paid Time 无法解析',
+          sku: normalizeCell(record['Seller SKU']),
+          paidTime: normalizeCell(record['Paid Time']),
+          quantity: Math.max(0, Math.round(parseNumber(record['Quantity']))),
+          returnQty: Math.max(0, Math.round(parseNumber(record['Sku Quantity of return']))),
+          reason: `订单行解析失败：${String((rowError as Error)?.message || rowError)}`,
         })
-        return
       }
-
-      parsedRows.push({
-        row: rowNumber,
-        sku,
-        productName: normalizeCell(record['Product Name']),
-        quantity,
-        returnQty,
-        paidTime,
-        dateStr,
-        isCanceled: isCanceledOrder(
-          normalizeCell(record['Order Status']),
-          normalizeCell(record['Cancelation/Return Type']),
-        ),
-        refundAmount: parseNumber(record['Order Refund Amount']),
-      })
     })
 
     const totalOrderRows = rows.length
@@ -459,6 +545,12 @@ export async function POST(request: NextRequest) {
     })
   } catch (error) {
     console.error('导入订单数据失败:', error)
-    return NextResponse.json({ error: '导入订单数据失败，请检查文件格式' }, { status: 500 })
+    return NextResponse.json(
+      {
+        error: '导入订单表失败',
+        detail: String((error as Error)?.message || error),
+      },
+      { status: 500 },
+    )
   }
 }

@@ -98,6 +98,45 @@ interface OrderImportResult {
   totalRefundAmount: number
 }
 
+async function parseApiResponse(response: Response) {
+  const text = await response.text()
+
+  if (!text) {
+    return { data: null, text: '' }
+  }
+
+  try {
+    return { data: JSON.parse(text), text }
+  } catch {
+    return { data: null, text }
+  }
+}
+
+function buildImportErrorMessage(
+  fallbackTitle: string,
+  response: Response,
+  data: any,
+  text: string,
+) {
+  const detail = typeof data?.detail === 'string' && data.detail.trim()
+    ? data.detail.trim()
+    : ''
+  const error = typeof data?.error === 'string' && data.error.trim()
+    ? data.error.trim()
+    : ''
+  const plainText = text.trim()
+
+  if (error || detail) {
+    return `${error || fallbackTitle}${detail ? `：${detail}` : ''}`
+  }
+
+  if (plainText) {
+    return `${fallbackTitle}：HTTP ${response.status} ${plainText}`
+  }
+
+  return `${fallbackTitle}：HTTP ${response.status}`
+}
+
 interface TrendPoint {
   date: string
   label: string
@@ -153,6 +192,8 @@ export default function ProductSalesPage() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [ordersImportResult, setOrdersImportResult] = useState<OrderImportResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [inventoryError, setInventoryError] = useState<string | null>(null)
+  const [ordersError, setOrdersError] = useState<string | null>(null)
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
     key: 'sku',
     direction: 'asc',
@@ -262,6 +303,7 @@ export default function ProductSalesPage() {
     setImportingInventory(true)
     setImportResult(null)
     setError(null)
+    setInventoryError(null)
 
     try {
       const formData = new FormData()
@@ -271,26 +313,29 @@ export default function ProductSalesPage() {
         method: 'POST',
         body: formData,
       })
-      const data = await response.json()
+      const { data, text } = await parseApiResponse(response)
+      const payload = data || {}
 
       if (!response.ok) {
-        throw new Error(data.error || '导入库存失败')
+        throw new Error(buildImportErrorMessage('导入库存表失败', response, payload, text))
       }
 
       setImportResult({
-        successCount: data.successCount || 0,
-        updatedExistingCount: data.updatedExistingCount || 0,
-        autoFilledSkuCount: data.autoFilledSkuCount || 0,
-        autoCreatedCount: data.autoCreatedCount || 0,
-        reviewCount: data.reviewCount || 0,
-        failureCount: data.failureCount || 0,
-        failures: Array.isArray(data.failures) ? data.failures : [],
-        hint: data.hint || null,
+        successCount: payload.successCount || 0,
+        updatedExistingCount: payload.updatedExistingCount || 0,
+        autoFilledSkuCount: payload.autoFilledSkuCount || 0,
+        autoCreatedCount: payload.autoCreatedCount || 0,
+        reviewCount: payload.reviewCount || 0,
+        failureCount: payload.failureCount || 0,
+        failures: Array.isArray(payload.failures) ? payload.failures : [],
+        hint: payload.hint || null,
       })
 
       await refreshAfterMutation()
     } catch (err) {
-      setError(err instanceof Error ? err.message : '导入库存失败')
+      const message = err instanceof Error ? err.message : '导入库存表失败'
+      setInventoryError(message)
+      setError(message)
     } finally {
       event.target.value = ''
       setImportingInventory(false)
@@ -304,6 +349,7 @@ export default function ProductSalesPage() {
     setImportingOrders(true)
     setOrdersImportResult(null)
     setError(null)
+    setOrdersError(null)
 
     try {
       const formData = new FormData()
@@ -313,29 +359,32 @@ export default function ProductSalesPage() {
         method: 'POST',
         body: formData,
       })
-      const data = await response.json()
+      const { data, text } = await parseApiResponse(response)
+      const payload = data || {}
 
       if (!response.ok) {
-        throw new Error(data.error || '导入订单失败')
+        throw new Error(buildImportErrorMessage('导入订单表失败', response, payload, text))
       }
 
       setOrdersImportResult({
-        totalOrderRows: data.totalOrderRows || 0,
-        successCount: data.successCount || 0,
-        failedCount: data.failedCount || 0,
-        failedRows: Array.isArray(data.failedRows) ? data.failedRows : [],
-        summaryByDate: Array.isArray(data.summaryByDate) ? data.summaryByDate : [],
-        summaryBySku: Array.isArray(data.summaryBySku) ? data.summaryBySku : [],
-        totalGrossOrders: data.totalGrossOrders || 0,
-        totalReturnQty: data.totalReturnQty || 0,
-        totalNetOrders: data.totalNetOrders || 0,
-        totalCanceledQty: data.totalCanceledQty || 0,
-        totalRefundAmount: data.totalRefundAmount || 0,
+        totalOrderRows: payload.totalOrderRows || 0,
+        successCount: payload.successCount || 0,
+        failedCount: payload.failedCount || 0,
+        failedRows: Array.isArray(payload.failedRows) ? payload.failedRows : [],
+        summaryByDate: Array.isArray(payload.summaryByDate) ? payload.summaryByDate : [],
+        summaryBySku: Array.isArray(payload.summaryBySku) ? payload.summaryBySku : [],
+        totalGrossOrders: payload.totalGrossOrders || 0,
+        totalReturnQty: payload.totalReturnQty || 0,
+        totalNetOrders: payload.totalNetOrders || 0,
+        totalCanceledQty: payload.totalCanceledQty || 0,
+        totalRefundAmount: payload.totalRefundAmount || 0,
       })
 
       await refreshAfterMutation()
     } catch (err) {
-      setError(err instanceof Error ? err.message : '导入订单失败')
+      const message = err instanceof Error ? err.message : '导入订单表失败'
+      setOrdersError(message)
+      setError(message)
     } finally {
       event.target.value = ''
       setImportingOrders(false)
@@ -595,7 +644,7 @@ export default function ProductSalesPage() {
           <input
             ref={inventoryInputRef}
             type="file"
-            accept=".xlsx,.xls,.csv"
+            accept=".xlsx,.xls"
             className="hidden"
             onChange={handleInventoryFileChange}
           />
@@ -649,6 +698,12 @@ export default function ProductSalesPage() {
                   </table>
                 </div>
               )}
+            </div>
+          )}
+
+          {inventoryError && (
+            <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              {inventoryError}
             </div>
           )}
 
@@ -752,6 +807,12 @@ export default function ProductSalesPage() {
                   </table>
                 </div>
               )}
+            </div>
+          )}
+
+          {ordersError && (
+            <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              {ordersError}
             </div>
           )}
 
