@@ -4,6 +4,10 @@ import * as XLSX from 'xlsx'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60
+
 type OrderFailure = {
   row: number
   sku: string
@@ -35,6 +39,8 @@ type AggregatedOrderStat = {
   canceledQty: number
   refundAmount: number
 }
+
+const WRITE_BATCH_SIZE = 50
 
 function normalizeHeader(value: unknown) {
   return String(value ?? '').replace(/^\uFEFF/, '').trim()
@@ -213,6 +219,14 @@ function parseCsvText(text: string) {
   })
 }
 
+function chunkArray<T>(items: T[], size: number) {
+  const chunks: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
+}
+
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
@@ -235,6 +249,12 @@ export async function POST(request: NextRequest) {
 
     const bytes = await file.arrayBuffer()
     const fileName = String(file.name || '').toLowerCase()
+    const fileSize = bytes.byteLength
+
+    console.log('[import-orders] start', {
+      fileName,
+      fileSize,
+    })
 
     let rows: Array<{ rowNumber: number; record: Record<string, unknown> }> = []
 
@@ -269,6 +289,10 @@ export async function POST(request: NextRequest) {
     if (!rows.length) {
       return NextResponse.json({ error: '订单文件中没有可导入的数据' }, { status: 400 })
     }
+
+    console.log('[import-orders] parsed rows', {
+      rowCount: rows.length,
+    })
 
     const failures: OrderFailure[] = []
     const parsedRows: ParsedOrderRow[] = []
@@ -345,6 +369,13 @@ export async function POST(request: NextRequest) {
     })
 
     const totalOrderRows = rows.length
+    const skuList = Array.from(new Set(parsedRows.map((item) => item.sku).filter(Boolean)))
+
+    console.log('[import-orders] parsed valid rows', {
+      parsedRowCount: parsedRows.length,
+      uniqueSkuCount: skuList.length,
+      parseFailureCount: failures.length,
+    })
 
     if (!parsedRows.length) {
       return NextResponse.json({
@@ -363,7 +394,6 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    const skuList = Array.from(new Set(parsedRows.map((item) => item.sku)))
     const products = await prisma.product.findMany({
       where: {
         sku: {
@@ -378,6 +408,10 @@ export async function POST(request: NextRequest) {
     const productSkuSet = new Set(
       products.map((product) => product.sku).filter((sku): sku is string => Boolean(sku)),
     )
+
+    console.log('[import-orders] matched product sku', {
+      matchedProductSkuCount: productSkuSet.size,
+    })
 
     const aggregated = new Map<string, AggregatedOrderStat>()
 
@@ -423,6 +457,13 @@ export async function POST(request: NextRequest) {
       aggregated.set(key, current)
     }
 
+    const aggregatedItems = Array.from(aggregated.values())
+
+    console.log('[import-orders] aggregated records', {
+      aggregatedCount: aggregatedItems.length,
+      failedAfterProductMatch: failures.length,
+    })
+
     const summaryByDateMap = new Map<string, {
       date: string
       grossOrders: number
@@ -442,80 +483,125 @@ export async function POST(request: NextRequest) {
     }>()
 
     let successCount = 0
+    const writeErrors: Array<{ sku: string; dateStr: string; reason: string }> = []
 
-    for (const item of Array.from(aggregated.values())) {
-      try {
-        await prisma.performanceDaily.upsert({
-          where: {
-            date_sku: {
+    console.log('[import-orders] write start', {
+      batchSize: WRITE_BATCH_SIZE,
+      batchCount: chunkArray(aggregatedItems, WRITE_BATCH_SIZE).length,
+    })
+
+    const batches = chunkArray(aggregatedItems, WRITE_BATCH_SIZE)
+
+    for (const batch of batches) {
+      const results = await Promise.allSettled(
+        batch.map(async (item) => {
+          await prisma.performanceDaily.upsert({
+            where: {
+              date_sku: {
+                sku: item.sku,
+                date: createDate(item.dateStr),
+              },
+            },
+            create: {
               sku: item.sku,
               date: createDate(item.dateStr),
+              productName: item.productName,
+              orders: item.netOrders,
+              grossOrders: item.grossOrders,
+              returnQty: item.returnQty,
+              netOrders: item.netOrders,
+              canceledQty: item.canceledQty,
+              refundAmount: item.refundAmount,
             },
-          },
-          create: {
+            update: {
+              productName: item.productName ?? undefined,
+              orders: item.netOrders,
+              grossOrders: item.grossOrders,
+              returnQty: item.returnQty,
+              netOrders: item.netOrders,
+              canceledQty: item.canceledQty,
+              refundAmount: item.refundAmount,
+            },
+          })
+
+          return item
+        }),
+      )
+
+      results.forEach((result, index) => {
+        const item = batch[index]
+
+        if (result.status === 'fulfilled') {
+          const byDate = summaryByDateMap.get(item.dateStr) || {
+            date: item.dateStr,
+            grossOrders: 0,
+            returnQty: 0,
+            netOrders: 0,
+            canceledQty: 0,
+            refundAmount: 0,
+          }
+          byDate.grossOrders += item.grossOrders
+          byDate.returnQty += item.returnQty
+          byDate.netOrders += item.netOrders
+          byDate.canceledQty += item.canceledQty
+          byDate.refundAmount += item.refundAmount
+          summaryByDateMap.set(item.dateStr, byDate)
+
+          const bySku = summaryBySkuMap.get(item.sku) || {
             sku: item.sku,
-            date: createDate(item.dateStr),
-            productName: item.productName,
-            orders: item.netOrders,
-            grossOrders: item.grossOrders,
-            returnQty: item.returnQty,
-            netOrders: item.netOrders,
-            canceledQty: item.canceledQty,
-            refundAmount: item.refundAmount,
-          },
-          update: {
-            productName: item.productName ?? undefined,
-            orders: item.netOrders,
-            grossOrders: item.grossOrders,
-            returnQty: item.returnQty,
-            netOrders: item.netOrders,
-            canceledQty: item.canceledQty,
-            refundAmount: item.refundAmount,
-          },
-        })
+            grossOrders: 0,
+            returnQty: 0,
+            netOrders: 0,
+            canceledQty: 0,
+            refundAmount: 0,
+          }
+          bySku.grossOrders += item.grossOrders
+          bySku.returnQty += item.returnQty
+          bySku.netOrders += item.netOrders
+          bySku.canceledQty += item.canceledQty
+          bySku.refundAmount += item.refundAmount
+          summaryBySkuMap.set(item.sku, bySku)
 
-        const byDate = summaryByDateMap.get(item.dateStr) || {
-          date: item.dateStr,
-          grossOrders: 0,
-          returnQty: 0,
-          netOrders: 0,
-          canceledQty: 0,
-          refundAmount: 0,
+          successCount += 1
+          return
         }
-        byDate.grossOrders += item.grossOrders
-        byDate.returnQty += item.returnQty
-        byDate.netOrders += item.netOrders
-        byDate.canceledQty += item.canceledQty
-        byDate.refundAmount += item.refundAmount
-        summaryByDateMap.set(item.dateStr, byDate)
 
-        const bySku = summaryBySkuMap.get(item.sku) || {
+        const reason = String((result.reason as Error)?.message || result.reason)
+        console.error('导入订单汇总失败:', {
           sku: item.sku,
-          grossOrders: 0,
-          returnQty: 0,
-          netOrders: 0,
-          canceledQty: 0,
-          refundAmount: 0,
-        }
-        bySku.grossOrders += item.grossOrders
-        bySku.returnQty += item.returnQty
-        bySku.netOrders += item.netOrders
-        bySku.canceledQty += item.canceledQty
-        bySku.refundAmount += item.refundAmount
-        summaryBySkuMap.set(item.sku, bySku)
-
-        successCount += 1
-      } catch (error) {
-        console.error('导入订单汇总失败:', error)
+          dateStr: item.dateStr,
+          error: reason,
+        })
+        writeErrors.push({
+          sku: item.sku,
+          dateStr: item.dateStr,
+          reason,
+        })
         failures.push({
           row: 0,
           sku: item.sku,
           paidTime: item.dateStr,
           quantity: item.grossOrders,
           returnQty: item.returnQty,
-          reason: `${item.dateStr} 写入 PerformanceDaily 失败`,
+          reason: `${item.dateStr} 写入 PerformanceDaily 失败：${reason}`,
         })
-      }
+      })
+    }
+
+    console.log('[import-orders] write end', {
+      successCount,
+      writeErrorCount: writeErrors.length,
+      totalFailureCount: failures.length,
+    })
+
+    if (successCount === 0 && aggregatedItems.length > 0 && writeErrors.length > 0) {
+      return NextResponse.json(
+        {
+          error: '导入订单表失败',
+          detail: writeErrors[0].reason,
+        },
+        { status: 500 },
+      )
     }
 
     const summaryByDate = Array.from(summaryByDateMap.values()).sort((a, b) => a.date.localeCompare(b.date))
@@ -542,6 +628,7 @@ export async function POST(request: NextRequest) {
       totalNetOrders,
       totalCanceledQty,
       totalRefundAmount,
+      writeErrors,
     })
   } catch (error) {
     console.error('导入订单数据失败:', error)
