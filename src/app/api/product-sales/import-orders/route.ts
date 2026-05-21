@@ -103,9 +103,9 @@ function normalizeSkuForCompare(value: string) {
   return normalizeCell(value).replace(/\s+/g, '').toUpperCase()
 }
 
-function extractAliasSkusFromProductName(name: string) {
+function extractAliasSkusFromText(value: string | null | undefined) {
   const aliases = new Set<string>()
-  const text = normalizeCell(name)
+  const text = normalizeCell(value)
   if (!text) return []
 
   const pattern = /[（(]\s*([^()（）]+?)\s*[)）]/g
@@ -1017,34 +1017,60 @@ export async function POST(request: NextRequest) {
     ])
 
     const matchedSkuNameMap = new Map<string, string>()
-    const matchedSkuSet = new Set<string>()
+    const matchedSkuPriorityMap = new Map<string, number>()
     const normalizedRequestedSkuMap = new Map(uniqueSkus.map((sku) => [normalizeSkuForCompare(sku), sku]))
+
+    const registerMatchedSku = (requestedSku: string | undefined, productName: string, priority: number) => {
+      if (!requestedSku) return
+
+      const existingPriority = matchedSkuPriorityMap.get(requestedSku)
+      if (existingPriority !== undefined && existingPriority <= priority) {
+        return
+      }
+
+      matchedSkuPriorityMap.set(requestedSku, priority)
+      matchedSkuNameMap.set(requestedSku, productName)
+    }
 
     products.forEach((product) => {
       if (!product.sku) return
 
-      const requestedMainSku = normalizedRequestedSkuMap.get(normalizeSkuForCompare(product.sku))
-      if (requestedMainSku) {
-        matchedSkuSet.add(requestedMainSku)
-        matchedSkuNameMap.set(requestedMainSku, product.name)
-      }
-
-      extractAliasSkusFromProductName(product.name).forEach((aliasSku) => {
-        const requestedSku = normalizedRequestedSkuMap.get(normalizeSkuForCompare(aliasSku))
-        if (!requestedSku) return
-
-        matchedSkuSet.add(requestedSku)
-        matchedSkuNameMap.set(requestedSku, product.name)
-      })
+      registerMatchedSku(
+        normalizedRequestedSkuMap.get(normalizeSkuForCompare(product.sku)),
+        product.name,
+        1,
+      )
     })
 
     aliases.forEach((alias) => {
-      const requestedAliasSku = normalizedRequestedSkuMap.get(normalizeSkuForCompare(alias.aliasSku))
-      if (!requestedAliasSku) return
-
-      matchedSkuSet.add(requestedAliasSku)
-      matchedSkuNameMap.set(requestedAliasSku, alias.product.name)
+      registerMatchedSku(
+        normalizedRequestedSkuMap.get(normalizeSkuForCompare(alias.aliasSku)),
+        alias.product.name,
+        2,
+      )
     })
+
+    products.forEach((product) => {
+      extractAliasSkusFromText(product.sku).forEach((aliasSku) => {
+        registerMatchedSku(
+          normalizedRequestedSkuMap.get(normalizeSkuForCompare(aliasSku)),
+          product.name,
+          3,
+        )
+      })
+    })
+
+    products.forEach((product) => {
+      extractAliasSkusFromText(product.name).forEach((aliasSku) => {
+        registerMatchedSku(
+          normalizedRequestedSkuMap.get(normalizeSkuForCompare(aliasSku)),
+          product.name,
+          4,
+        )
+      })
+    })
+
+    const matchedSkuSet = new Set(matchedSkuPriorityMap.keys())
 
     const missingSkus = uniqueSkus.filter((sku) => !matchedSkuSet.has(sku))
     const missingSkuRows = dedupedItems.filter((item) => !matchedSkuSet.has(item.sellerSku)).length

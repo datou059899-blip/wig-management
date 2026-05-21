@@ -137,6 +137,8 @@ interface SkuImportResult {
   existingSkuCount: number
   existingAliasSkuCount?: number
   aliasMatchedSkuCount?: number
+  productSkuParenthesisAliasSkuCount?: number
+  productNameParenthesisAliasSkuCount?: number
   newSkuCount: number
   fillableSkuCount?: number
   duplicateInFileCount: number
@@ -147,6 +149,8 @@ interface SkuImportResult {
   existingSkus: string[]
   existingAliasSkus?: string[]
   aliasMatchedSkus?: string[]
+  productSkuParenthesisAliasSkus?: string[]
+  productNameParenthesisAliasSkus?: string[]
   newSkus: string[]
   fillableSkus?: string[]
   suspiciousRows: SkuImportIssueRow[]
@@ -639,6 +643,8 @@ export default function ProductSalesPage() {
         existingSkuCount: payload.existingSkuCount || 0,
         existingAliasSkuCount: payload.existingAliasSkuCount || 0,
         aliasMatchedSkuCount: payload.aliasMatchedSkuCount || 0,
+        productSkuParenthesisAliasSkuCount: payload.productSkuParenthesisAliasSkuCount || 0,
+        productNameParenthesisAliasSkuCount: payload.productNameParenthesisAliasSkuCount || 0,
         newSkuCount: payload.newSkuCount || 0,
         fillableSkuCount: payload.fillableSkuCount || 0,
         duplicateInFileCount: payload.duplicateInFileCount || 0,
@@ -649,6 +655,12 @@ export default function ProductSalesPage() {
         existingSkus: Array.isArray(payload.existingSkus) ? payload.existingSkus : [],
         existingAliasSkus: Array.isArray(payload.existingAliasSkus) ? payload.existingAliasSkus : [],
         aliasMatchedSkus: Array.isArray(payload.aliasMatchedSkus) ? payload.aliasMatchedSkus : [],
+        productSkuParenthesisAliasSkus: Array.isArray(payload.productSkuParenthesisAliasSkus)
+          ? payload.productSkuParenthesisAliasSkus
+          : [],
+        productNameParenthesisAliasSkus: Array.isArray(payload.productNameParenthesisAliasSkus)
+          ? payload.productNameParenthesisAliasSkus
+          : [],
         newSkus: Array.isArray(payload.newSkus) ? payload.newSkus : [],
         fillableSkus: Array.isArray(payload.fillableSkus) ? payload.fillableSkus : [],
         suspiciousRows: Array.isArray(payload.suspiciousRows) ? payload.suspiciousRows : [],
@@ -701,6 +713,8 @@ export default function ProductSalesPage() {
         existingSkuCount: payload.existingSkuCount || 0,
         existingAliasSkuCount: payload.existingAliasSkuCount || 0,
         aliasMatchedSkuCount: payload.aliasMatchedSkuCount || 0,
+        productSkuParenthesisAliasSkuCount: payload.productSkuParenthesisAliasSkuCount || 0,
+        productNameParenthesisAliasSkuCount: payload.productNameParenthesisAliasSkuCount || 0,
         newSkuCount: payload.newSkuCount || 0,
         fillableSkuCount: payload.fillableSkuCount || 0,
         duplicateInFileCount: payload.duplicateInFileCount || 0,
@@ -711,6 +725,12 @@ export default function ProductSalesPage() {
         existingSkus: Array.isArray(payload.existingSkus) ? payload.existingSkus : [],
         existingAliasSkus: Array.isArray(payload.existingAliasSkus) ? payload.existingAliasSkus : [],
         aliasMatchedSkus: Array.isArray(payload.aliasMatchedSkus) ? payload.aliasMatchedSkus : [],
+        productSkuParenthesisAliasSkus: Array.isArray(payload.productSkuParenthesisAliasSkus)
+          ? payload.productSkuParenthesisAliasSkus
+          : [],
+        productNameParenthesisAliasSkus: Array.isArray(payload.productNameParenthesisAliasSkus)
+          ? payload.productNameParenthesisAliasSkus
+          : [],
         newSkus: Array.isArray(payload.newSkus) ? payload.newSkus : [],
         fillableSkus: Array.isArray(payload.fillableSkus) ? payload.fillableSkus : [],
         suspiciousRows: Array.isArray(payload.suspiciousRows) ? payload.suspiciousRows : [],
@@ -1084,7 +1104,8 @@ export default function ProductSalesPage() {
                 <span>去重后 SKU 数 {skuImportResult.uniqueSkuCount}</span>
                 <span>已存在主 SKU 数 {skuImportResult.existingSkuCount}</span>
                 <span>已存在别称 SKU 数 {skuImportResult.existingAliasSkuCount || 0}</span>
-                <span>从产品名称括号识别出的 SKU 数 {skuImportResult.aliasMatchedSkuCount || 0}</span>
+                <span>从 Product.sku 括号识别出的别称 SKU 数 {skuImportResult.productSkuParenthesisAliasSkuCount || 0}</span>
+                <span>从 Product.name 括号识别出的别称 SKU 数 {skuImportResult.productNameParenthesisAliasSkuCount || 0}</span>
                 <span>可新建 SKU 数 {skuImportResult.newSkuCount}</span>
                 <span>可补齐空 SKU 数 {skuImportResult.fillableSkuCount || 0}</span>
                 <span>文件内重复 SKU 数 {skuImportResult.duplicateInFileCount}</span>
@@ -1149,10 +1170,16 @@ export default function ProductSalesPage() {
                   <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.existingAliasSkus.join('\n')}</pre>
                 </div>
               )}
-              {skuImportResult.aliasMatchedSkus && skuImportResult.aliasMatchedSkus.length > 0 && (
+              {skuImportResult.productSkuParenthesisAliasSkus && skuImportResult.productSkuParenthesisAliasSkus.length > 0 && (
                 <div className="mt-4 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-800">
-                  <div className="font-medium">从产品名称括号识别出的 SKU 别称</div>
-                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.aliasMatchedSkus.join('\n')}</pre>
+                  <div className="font-medium">从 Product.sku 括号识别出的 SKU 别称</div>
+                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.productSkuParenthesisAliasSkus.join('\n')}</pre>
+                </div>
+              )}
+              {skuImportResult.productNameParenthesisAliasSkus && skuImportResult.productNameParenthesisAliasSkus.length > 0 && (
+                <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-800">
+                  <div className="font-medium">从 Product.name 括号识别出的 SKU 别称</div>
+                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.productNameParenthesisAliasSkus.join('\n')}</pre>
                 </div>
               )}
               {skuImportResult.suspiciousRows.length > 0 && (
