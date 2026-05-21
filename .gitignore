@@ -12,6 +12,7 @@ dist/
 
 # Env (never commit)
 .env.*
+!.env.example
 
 # Prisma (local sqlite)
 prisma/*.db-journal
@@ -23,3 +24,15 @@ pnpm-debug.log*
 
 # OS
 .vercel
+
+# Local backups / exported data / debug scripts
+backup/
+neon-backup-*/
+Influencer.json
+backup-production-influencers.js
+check-*.js
+test-*.js
+export-neon-data*.js
+import-influencers-to-*.js
+explore-neon-schema.js
+setup-preview-storage.sh
