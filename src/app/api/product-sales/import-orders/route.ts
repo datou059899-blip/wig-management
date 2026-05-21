@@ -17,6 +17,8 @@ type Stage =
   | 'write-performance'
   | 'done'
 
+type ImportMode = 'import' | 'dryRun' | 'checkOnly'
+
 type OrderFailure = {
   row: number
   sku: string
@@ -361,6 +363,7 @@ export async function POST(request: NextRequest) {
 
     const dryRun = request.nextUrl.searchParams.get('dryRun') === '1'
     const checkOnly = request.nextUrl.searchParams.get('checkOnly') === '1'
+    const mode: ImportMode = dryRun ? 'dryRun' : checkOnly ? 'checkOnly' : 'import'
 
     stage = 'receive-file'
     const formData = await request.formData()
@@ -383,8 +386,7 @@ export async function POST(request: NextRequest) {
     console.log('[import-orders] start', {
       fileName,
       fileSize,
-      dryRun,
-      checkOnly,
+      mode,
     })
 
     if (isTimedOut()) {
@@ -447,6 +449,7 @@ export async function POST(request: NextRequest) {
     }
 
     const failures: OrderFailure[] = []
+    const skippedRows: OrderFailure[] = []
     const parsedRows: ParsedOrderRow[] = []
 
     rows.forEach(({ rowNumber, record }) => {
@@ -458,13 +461,13 @@ export async function POST(request: NextRequest) {
         const dateStr = parseDateString(record['Paid Time'])
 
         if (!sku) {
-          failures.push({
+          skippedRows.push({
             row: rowNumber,
             sku: '',
             paidTime,
             quantity,
             returnQty,
-            reason: 'Seller SKU 为空',
+            reason: 'Seller SKU 为空，已跳过',
           })
           return
         }
@@ -527,17 +530,23 @@ export async function POST(request: NextRequest) {
       parsedRowCount: parsedRows.length,
       uniqueSkuCount: uniqueSkus.length,
       parseFailureCount: failures.length,
+      skippedRowCount: skippedRows.length,
     })
 
     if (!parsedRows.length) {
       return NextResponse.json({
         success: false,
+        mode,
         stage: 'parse-file',
         fileName,
         fileSize,
         parsedRows: totalOrderRows,
         validRows: 0,
+        skippedRows: skippedRows.slice(0, 20),
         failedRows: failures.slice(0, 20),
+        skippedCount: skippedRows.length,
+        missingSkuRows: 0,
+        missingSkus: [],
         uniqueSkuCount: 0,
         aggregatedRecordCount: 0,
         summaryByDate: [],
@@ -597,6 +606,7 @@ export async function POST(request: NextRequest) {
     if (dryRun) {
       return NextResponse.json({
         success: true,
+        mode,
         stage,
         fileName,
         fileSize,
@@ -605,7 +615,11 @@ export async function POST(request: NextRequest) {
         totalOrderRows,
         successCount: 0,
         failedCount: failures.length,
+        skippedCount: skippedRows.length,
+        missingSkuRows: 0,
+        skippedRows: skippedRows.slice(0, 20),
         failedRows: failures.slice(0, 20),
+        missingSkus: [],
         uniqueSkuCount: uniqueSkus.length,
         aggregatedRecordCount: aggregatedItems.length,
         summaryByDate: aggregatedSummary.summaryByDate,
@@ -639,20 +653,14 @@ export async function POST(request: NextRequest) {
     )
     const missingSkus: string[] = []
     const matchedAggregatedItems: AggregatedOrderStat[] = []
+    let missingSkuRows = 0
 
     for (const item of aggregatedItems) {
       if (!productSkuSet.has(item.sku)) {
         if (!missingSkus.includes(item.sku)) {
           missingSkus.push(item.sku)
         }
-        failures.push({
-          row: 0,
-          sku: item.sku,
-          paidTime: item.dateStr,
-          quantity: item.grossOrders,
-          returnQty: item.returnQty,
-          reason: '未找到匹配的 Product.sku',
-        })
+        missingSkuRows += 1
         continue
       }
 
@@ -668,6 +676,7 @@ export async function POST(request: NextRequest) {
     if (checkOnly) {
       return NextResponse.json({
         success: true,
+        mode,
         stage,
         fileName,
         fileSize,
@@ -676,12 +685,22 @@ export async function POST(request: NextRequest) {
         validRows: parsedRows.length,
         successCount: 0,
         failedCount: failures.length,
+        skippedCount: skippedRows.length,
         uniqueSkuCount: uniqueSkus.length,
         matchedSkuCount: uniqueSkus.length - missingSkus.length,
         missingSkuCount: missingSkus.length,
+        missingSkuRows,
         missingSkus: missingSkus.slice(0, 100),
         aggregatedRecordCount: aggregatedItems.length,
+        skippedRows: skippedRows.slice(0, 20),
         failedRows: failures.slice(0, 20),
+        summaryByDate: aggregatedSummary.summaryByDate,
+        summaryBySku: aggregatedSummary.summaryBySku.slice(0, 50),
+        totalGrossOrders: aggregatedSummary.totalGrossOrders,
+        totalReturnQty: aggregatedSummary.totalReturnQty,
+        totalNetOrders: aggregatedSummary.totalNetOrders,
+        totalCanceledQty: aggregatedSummary.totalCanceledQty,
+        totalRefundAmount: aggregatedSummary.totalRefundAmount,
       })
     }
 
@@ -851,6 +870,7 @@ export async function POST(request: NextRequest) {
     stage = 'done'
     return NextResponse.json({
       success: true,
+      mode,
       stage,
       fileName,
       fileSize,
@@ -860,7 +880,10 @@ export async function POST(request: NextRequest) {
       uniqueSkuCount: uniqueSkus.length,
       matchedSkuCount: uniqueSkus.length - missingSkus.length,
       missingSkuCount: missingSkus.length,
+      missingSkuRows,
+      skippedCount: skippedRows.length,
       missingSkus: missingSkus.slice(0, 100),
+      skippedRows: skippedRows.slice(0, 20),
       aggregatedRecordCount: aggregatedItems.length,
       successCount,
       failedCount: failures.length,

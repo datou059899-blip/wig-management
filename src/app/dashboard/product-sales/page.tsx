@@ -85,6 +85,7 @@ interface OrderImportSummaryBySku {
 }
 
 interface OrderImportResult {
+  mode?: 'import' | 'dryRun' | 'checkOnly'
   stage?: string
   fileName?: string
   fileSize?: number
@@ -94,10 +95,13 @@ interface OrderImportResult {
   uniqueSkuCount?: number
   matchedSkuCount?: number
   missingSkuCount?: number
+  missingSkuRows?: number
+  skippedCount?: number
   missingSkus?: string[]
   aggregatedRecordCount?: number
   successCount: number
   failedCount: number
+  skippedRows?: OrderImportFailure[]
   failedRows: OrderImportFailure[]
   summaryByDate: OrderImportSummaryByDate[]
   summaryBySku: OrderImportSummaryBySku[]
@@ -146,6 +150,12 @@ function buildImportErrorMessage(
   }
 
   return `${fallbackTitle}：HTTP ${response.status}`
+}
+
+function formatOrderImportTitle(mode?: 'import' | 'dryRun' | 'checkOnly') {
+  if (mode === 'dryRun') return '订单解析测试完成'
+  if (mode === 'checkOnly') return '订单 SKU 匹配检测完成'
+  return '订单导入完成'
 }
 
 interface TrendPoint {
@@ -387,6 +397,7 @@ export default function ProductSalesPage() {
       }
 
       setOrdersImportResult({
+        mode: payload.mode || 'import',
         stage: payload.stage || '',
         fileName: payload.fileName || '',
         fileSize: payload.fileSize || 0,
@@ -396,10 +407,13 @@ export default function ProductSalesPage() {
         uniqueSkuCount: payload.uniqueSkuCount || 0,
         matchedSkuCount: payload.matchedSkuCount || 0,
         missingSkuCount: payload.missingSkuCount || 0,
+        missingSkuRows: payload.missingSkuRows || 0,
+        skippedCount: payload.skippedCount || 0,
         missingSkus: Array.isArray(payload.missingSkus) ? payload.missingSkus : [],
         aggregatedRecordCount: payload.aggregatedRecordCount || 0,
         successCount: payload.successCount || 0,
         failedCount: payload.failedCount || 0,
+        skippedRows: Array.isArray(payload.skippedRows) ? payload.skippedRows : [],
         failedRows: Array.isArray(payload.failedRows) ? payload.failedRows : [],
         summaryByDate: Array.isArray(payload.summaryByDate) ? payload.summaryByDate : [],
         summaryBySku: Array.isArray(payload.summaryBySku) ? payload.summaryBySku : [],
@@ -755,7 +769,7 @@ export default function ProductSalesPage() {
           {ordersImportResult && (
             <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-center gap-4 text-sm text-slate-700">
-                <span className="font-semibold text-slate-900">订单导入完成</span>
+                <span className="font-semibold text-slate-900">{formatOrderImportTitle(ordersImportResult.mode)}</span>
                 <span>阶段 {ordersImportResult.stage || '-'}</span>
                 <span>文件 {ordersImportResult.fileName || '-'}</span>
                 <span>读取订单行数 {ordersImportResult.totalOrderRows} 行</span>
@@ -769,18 +783,62 @@ export default function ProductSalesPage() {
                 {typeof ordersImportResult.missingSkuCount === 'number' && (
                   <span>缺失 SKU {ordersImportResult.missingSkuCount}</span>
                 )}
-                <span>成功写入 SKU+日期 {ordersImportResult.successCount} 条</span>
+                {ordersImportResult.mode === 'import' ? (
+                  <span>成功写入 SKU+日期 {ordersImportResult.successCount} 条</span>
+                ) : (
+                  <span>可导入 SKU+日期 汇总 {ordersImportResult.mode === 'checkOnly'
+                    ? (ordersImportResult.aggregatedRecordCount || 0) - (ordersImportResult.missingSkuRows || 0)
+                    : ordersImportResult.aggregatedRecordCount || 0}
+                    条</span>
+                )}
                 <span>毛销量 {ordersImportResult.totalGrossOrders}</span>
                 <span>退货量 {ordersImportResult.totalReturnQty}</span>
                 <span>净销量 {ordersImportResult.totalNetOrders}</span>
                 <span>取消数量 {ordersImportResult.totalCanceledQty}</span>
                 <span>退款金额 {ordersImportResult.totalRefundAmount.toFixed(2)}</span>
-                <span>失败 {ordersImportResult.failedCount} 条</span>
+                <span>已跳过 {ordersImportResult.skippedCount || 0} 行</span>
+                <span>异常 {ordersImportResult.failedCount} 条</span>
               </div>
+              {ordersImportResult.mode === 'import' && (
+                <div className="mt-2 text-sm text-slate-700">
+                  已成功导入 {ordersImportResult.matchedSkuCount || 0} 个 SKU 的销量数据。
+                  {ordersImportResult.missingSkuCount ? ` 有 ${ordersImportResult.missingSkuCount} 个 SKU 未在产品库中找到，请先补齐 Product.sku 后重新导入。` : ''}
+                  {ordersImportResult.skippedCount ? ` 已跳过 ${ordersImportResult.skippedCount} 行 Seller SKU 为空的订单行。` : ''}
+                </div>
+              )}
               {ordersImportResult.missingSkus && ordersImportResult.missingSkus.length > 0 && (
-                <div className="mt-2 text-sm text-amber-700">
-                  缺失 SKU（前 {ordersImportResult.missingSkus.length} 个）：
-                  {ordersImportResult.missingSkus.join(', ')}
+                <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                  <div className="font-medium">缺失 SKU 列表</div>
+                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{ordersImportResult.missingSkus.join('\n')}</pre>
+                </div>
+              )}
+              {ordersImportResult.skippedRows && ordersImportResult.skippedRows.length > 0 && (
+                <div className="mt-4 overflow-x-auto">
+                  <div className="mb-2 text-sm font-medium text-slate-900">已跳过行</div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                        <th className="px-3 py-2">行号</th>
+                        <th className="px-3 py-2">SKU</th>
+                        <th className="px-3 py-2">Paid Time</th>
+                        <th className="px-3 py-2">Quantity</th>
+                        <th className="px-3 py-2">退货量</th>
+                        <th className="px-3 py-2">原因</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ordersImportResult.skippedRows.map((item, index) => (
+                        <tr key={`skipped-${item.row}-${item.sku}-${index}`} className="border-b border-slate-100">
+                          <td className="px-3 py-2 text-slate-700">{item.row || '-'}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.paidTime || '-'}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.quantity}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.returnQty}</td>
+                          <td className="px-3 py-2 text-slate-500">{item.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
               {ordersImportResult.summaryByDate.length > 0 && (
@@ -843,7 +901,7 @@ export default function ProductSalesPage() {
               )}
               {ordersImportResult.failedRows.length > 0 && (
                 <div className="mt-3 overflow-x-auto">
-                  <div className="mb-2 text-sm font-medium text-slate-900">失败明细</div>
+                  <div className="mb-2 text-sm font-medium text-slate-900">异常明细</div>
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 text-left text-slate-500">
