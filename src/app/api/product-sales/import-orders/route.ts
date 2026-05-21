@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomUUID } from 'crypto'
 import { getServerSession } from 'next-auth'
 import { Prisma } from '@prisma/client'
 import * as XLSX from 'xlsx'
@@ -333,7 +334,9 @@ function buildSummary(aggregatedItems: AggregatedOrderStat[]) {
 async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
   if (!batch.length) return
 
+  const now = new Date()
   const rows = batch.map((item) => Prisma.sql`(
+    ${randomUUID()},
     ${item.sku},
     ${createDate(item.dateStr)},
     ${item.productName},
@@ -343,11 +346,13 @@ async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
     ${item.netOrders},
     ${item.canceledQty},
     ${item.refundAmount},
-    CURRENT_TIMESTAMP
+    ${now},
+    ${now}
   )`)
 
   await prisma.$executeRaw(Prisma.sql`
     INSERT INTO "PerformanceDaily" (
+      "id",
       "sku",
       "date",
       "productName",
@@ -357,6 +362,7 @@ async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
       "netOrders",
       "canceledQty",
       "refundAmount",
+      "createdAt",
       "updatedAt"
     )
     VALUES ${Prisma.join(rows)}
