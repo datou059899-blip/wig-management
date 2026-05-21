@@ -120,6 +120,35 @@ interface OrderImportResult {
   writeErrors?: Array<{ sku: string; dateStr: string; reason: string }>
 }
 
+interface SkuImportIssueRow {
+  row: number
+  sku: string
+  productName?: string
+  reason: string
+}
+
+interface SkuImportResult {
+  mode?: 'dryRun' | 'import'
+  stage?: string
+  fileName?: string
+  totalRows: number
+  extractedSkuCount: number
+  uniqueSkuCount: number
+  existingSkuCount: number
+  newSkuCount: number
+  fillableSkuCount?: number
+  duplicateInFileCount: number
+  suspiciousCount: number
+  createdCount?: number
+  filledCount?: number
+  existingSkus: string[]
+  newSkus: string[]
+  fillableSkus?: string[]
+  suspiciousRows: SkuImportIssueRow[]
+  skippedRows: SkuImportIssueRow[]
+  failedRows: SkuImportIssueRow[]
+}
+
 async function parseApiResponse(response: Response) {
   const text = await response.text()
 
@@ -165,6 +194,10 @@ function formatOrderImportTitle(mode?: 'import' | 'dryRun' | 'checkOnly') {
   return '订单导入完成'
 }
 
+function formatSkuImportTitle(mode?: 'dryRun' | 'import') {
+  return mode === 'import' ? '产品 SKU 导入完成' : '产品 SKU 预检查完成'
+}
+
 interface TrendPoint {
   date: string
   label: string
@@ -206,6 +239,7 @@ export default function ProductSalesPage() {
   const { data: session } = useSession()
   const inventoryInputRef = useRef<HTMLInputElement>(null)
   const ordersInputRef = useRef<HTMLInputElement>(null)
+  const skuImportInputRef = useRef<HTMLInputElement>(null)
   const orderImportModeRef = useRef<'import' | 'dryRun' | 'checkOnly'>('import')
 
   const [summary, setSummary] = useState<SummaryData | null>(null)
@@ -234,6 +268,8 @@ export default function ProductSalesPage() {
   const [tableRangeLoading, setTableRangeLoading] = useState(false)
   const [importingInventory, setImportingInventory] = useState(false)
   const [importingOrders, setImportingOrders] = useState(false)
+  const [checkingSkuImport, setCheckingSkuImport] = useState(false)
+  const [importingSkus, setImportingSkus] = useState(false)
   const [editingStockSku, setEditingStockSku] = useState<string | null>(null)
   const [deletingStockSku, setDeletingStockSku] = useState<string | null>(null)
   const [stockEditTarget, setStockEditTarget] = useState<ProductData | null>(null)
@@ -249,9 +285,12 @@ export default function ProductSalesPage() {
   const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [ordersImportResult, setOrdersImportResult] = useState<OrderImportResult | null>(null)
+  const [skuImportResult, setSkuImportResult] = useState<SkuImportResult | null>(null)
+  const [pendingSkuImportFile, setPendingSkuImportFile] = useState<File | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [inventoryError, setInventoryError] = useState<string | null>(null)
   const [ordersError, setOrdersError] = useState<string | null>(null)
+  const [skuImportError, setSkuImportError] = useState<string | null>(null)
   const [trendFilterError, setTrendFilterError] = useState<string | null>(null)
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
     key: 'sku',
@@ -428,6 +467,10 @@ export default function ProductSalesPage() {
     inventoryInputRef.current?.click()
   }
 
+  const handleImportSkus = () => {
+    skuImportInputRef.current?.click()
+  }
+
   const handleImportOrders = (mode: 'import' | 'dryRun' | 'checkOnly' = 'import') => {
     orderImportModeRef.current = mode
     ordersInputRef.current?.click()
@@ -553,6 +596,121 @@ export default function ProductSalesPage() {
     } finally {
       event.target.value = ''
       setImportingOrders(false)
+    }
+  }
+
+  const handleSkuImportFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    setCheckingSkuImport(true)
+    setSkuImportResult(null)
+    setPendingSkuImportFile(file)
+    setSkuImportError(null)
+    setError(null)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await fetch('/api/product-sales/import-skus?dryRun=1', {
+        method: 'POST',
+        body: formData,
+      })
+      const { data, text } = await parseApiResponse(response)
+      const payload = data || {}
+
+      if (!response.ok) {
+        throw new Error(buildImportErrorMessage('预检查产品 SKU 失败', response, payload, text))
+      }
+
+      setSkuImportResult({
+        mode: payload.mode || 'dryRun',
+        stage: payload.stage || '',
+        fileName: payload.fileName || file.name,
+        totalRows: payload.totalRows || 0,
+        extractedSkuCount: payload.extractedSkuCount || 0,
+        uniqueSkuCount: payload.uniqueSkuCount || 0,
+        existingSkuCount: payload.existingSkuCount || 0,
+        newSkuCount: payload.newSkuCount || 0,
+        fillableSkuCount: payload.fillableSkuCount || 0,
+        duplicateInFileCount: payload.duplicateInFileCount || 0,
+        suspiciousCount: payload.suspiciousCount || 0,
+        createdCount: payload.createdCount || 0,
+        filledCount: payload.filledCount || 0,
+        existingSkus: Array.isArray(payload.existingSkus) ? payload.existingSkus : [],
+        newSkus: Array.isArray(payload.newSkus) ? payload.newSkus : [],
+        fillableSkus: Array.isArray(payload.fillableSkus) ? payload.fillableSkus : [],
+        suspiciousRows: Array.isArray(payload.suspiciousRows) ? payload.suspiciousRows : [],
+        skippedRows: Array.isArray(payload.skippedRows) ? payload.skippedRows : [],
+        failedRows: Array.isArray(payload.failedRows) ? payload.failedRows : [],
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '预检查产品 SKU 失败'
+      setSkuImportError(message)
+      setError(message)
+      setPendingSkuImportFile(null)
+    } finally {
+      event.target.value = ''
+      setCheckingSkuImport(false)
+    }
+  }
+
+  const handleConfirmSkuImport = async () => {
+    if (!pendingSkuImportFile) {
+      setSkuImportError('请先选择文件并完成 SKU 预检查')
+      return
+    }
+
+    setImportingSkus(true)
+    setSkuImportError(null)
+    setError(null)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', pendingSkuImportFile)
+
+      const response = await fetch('/api/product-sales/import-skus', {
+        method: 'POST',
+        body: formData,
+      })
+      const { data, text } = await parseApiResponse(response)
+      const payload = data || {}
+
+      if (!response.ok) {
+        throw new Error(buildImportErrorMessage('导入产品 SKU 失败', response, payload, text))
+      }
+
+      setSkuImportResult({
+        mode: payload.mode || 'import',
+        stage: payload.stage || '',
+        fileName: payload.fileName || pendingSkuImportFile.name,
+        totalRows: payload.totalRows || 0,
+        extractedSkuCount: payload.extractedSkuCount || 0,
+        uniqueSkuCount: payload.uniqueSkuCount || 0,
+        existingSkuCount: payload.existingSkuCount || 0,
+        newSkuCount: payload.newSkuCount || 0,
+        fillableSkuCount: payload.fillableSkuCount || 0,
+        duplicateInFileCount: payload.duplicateInFileCount || 0,
+        suspiciousCount: payload.suspiciousCount || 0,
+        createdCount: payload.createdCount || 0,
+        filledCount: payload.filledCount || 0,
+        existingSkus: Array.isArray(payload.existingSkus) ? payload.existingSkus : [],
+        newSkus: Array.isArray(payload.newSkus) ? payload.newSkus : [],
+        fillableSkus: Array.isArray(payload.fillableSkus) ? payload.fillableSkus : [],
+        suspiciousRows: Array.isArray(payload.suspiciousRows) ? payload.suspiciousRows : [],
+        skippedRows: Array.isArray(payload.skippedRows) ? payload.skippedRows : [],
+        failedRows: Array.isArray(payload.failedRows) ? payload.failedRows : [],
+      })
+
+      setPendingSkuImportFile(null)
+      await refreshAfterMutation()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '导入产品 SKU 失败'
+      setSkuImportError(message)
+      setError(message)
+    } finally {
+      setImportingSkus(false)
     }
   }
 
@@ -796,6 +954,13 @@ export default function ProductSalesPage() {
                   {importingInventory ? '正在导入库存表...' : '导入库存表'}
                 </button>
                 <button
+                  onClick={handleImportSkus}
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium hover:bg-emerald-100 disabled:opacity-60"
+                  disabled={checkingSkuImport || importingSkus || importingInventory || importingOrders || loading}
+                >
+                  {checkingSkuImport ? '预检查 SKU 中...' : importingSkus ? '导入 SKU 中...' : '导入/补齐产品 SKU'}
+                </button>
+                <button
                   onClick={() => handleImportOrders('import')}
                   className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
                   disabled={importingOrders || importingInventory || loading}
@@ -833,6 +998,13 @@ export default function ProductSalesPage() {
             accept=".xlsx,.xls,.csv"
             className="hidden"
             onChange={handleOrdersFileChange}
+          />
+          <input
+            ref={skuImportInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={handleSkuImportFileChange}
           />
 
           {error && (
@@ -883,6 +1055,150 @@ export default function ProductSalesPage() {
           {inventoryError && (
             <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               {inventoryError}
+            </div>
+          )}
+
+          {skuImportResult && (
+            <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-center gap-4 text-sm text-slate-700">
+                <span className="font-semibold text-slate-900">{formatSkuImportTitle(skuImportResult.mode)}</span>
+                <span>阶段 {skuImportResult.stage || '-'}</span>
+                <span>文件 {skuImportResult.fileName || '-'}</span>
+                <span>读取行数 {skuImportResult.totalRows}</span>
+                <span>文件内 SKU 数 {skuImportResult.extractedSkuCount}</span>
+                <span>去重后 SKU 数 {skuImportResult.uniqueSkuCount}</span>
+                <span>已存在 SKU 数 {skuImportResult.existingSkuCount}</span>
+                <span>可新建 SKU 数 {skuImportResult.newSkuCount}</span>
+                <span>可补齐空 SKU 数 {skuImportResult.fillableSkuCount || 0}</span>
+                <span>文件内重复 SKU 数 {skuImportResult.duplicateInFileCount}</span>
+                <span>疑似重复数量 {skuImportResult.suspiciousCount}</span>
+                {skuImportResult.mode === 'import' && (
+                  <span>实际新建 SKU 数 {skuImportResult.createdCount || 0}</span>
+                )}
+                {skuImportResult.mode === 'import' && (
+                  <span>实际补齐 SKU 数 {skuImportResult.filledCount || 0}</span>
+                )}
+              </div>
+              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                新建产品将默认使用 SKU 作为产品名称，后续可在产品库中补充真实名称、颜色、长度和图片。
+              </div>
+              {skuImportResult.mode === 'dryRun' && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => void handleConfirmSkuImport()}
+                    className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+                    disabled={!pendingSkuImportFile || importingSkus}
+                  >
+                    {importingSkus ? '导入 SKU 中...' : '确认导入 SKU'}
+                  </button>
+                  <button
+                    onClick={handleImportSkus}
+                    className="inline-flex items-center justify-center rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    disabled={checkingSkuImport || importingSkus}
+                  >
+                    重新选择文件
+                  </button>
+                </div>
+              )}
+              {skuImportResult.newSkus.length > 0 && (
+                <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+                  <div className="font-medium">新增 SKU 列表</div>
+                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.newSkus.join('\n')}</pre>
+                </div>
+              )}
+              {skuImportResult.fillableSkus && skuImportResult.fillableSkus.length > 0 && (
+                <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
+                  <div className="font-medium">可补齐空 SKU 列表</div>
+                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.fillableSkus.join('\n')}</pre>
+                </div>
+              )}
+              {skuImportResult.existingSkus.length > 0 && (
+                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                  <div className="font-medium">已存在 SKU 列表</div>
+                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.existingSkus.join('\n')}</pre>
+                </div>
+              )}
+              {skuImportResult.suspiciousRows.length > 0 && (
+                <div className="mt-4 overflow-x-auto">
+                  <div className="mb-2 text-sm font-medium text-slate-900">疑似重复列表</div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                        <th className="px-3 py-2">行号</th>
+                        <th className="px-3 py-2">SKU</th>
+                        <th className="px-3 py-2">商品名称</th>
+                        <th className="px-3 py-2">原因</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {skuImportResult.suspiciousRows.map((item, index) => (
+                        <tr key={`sku-suspicious-${item.row}-${item.sku}-${index}`} className="border-b border-slate-100">
+                          <td className="px-3 py-2 text-slate-700">{item.row}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.productName || '-'}</td>
+                          <td className="px-3 py-2 text-amber-700">{item.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {skuImportResult.skippedRows.length > 0 && (
+                <div className="mt-4 overflow-x-auto">
+                  <div className="mb-2 text-sm font-medium text-slate-900">跳过行</div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                        <th className="px-3 py-2">行号</th>
+                        <th className="px-3 py-2">SKU</th>
+                        <th className="px-3 py-2">商品名称</th>
+                        <th className="px-3 py-2">原因</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {skuImportResult.skippedRows.map((item, index) => (
+                        <tr key={`sku-skipped-${item.row}-${item.sku}-${index}`} className="border-b border-slate-100">
+                          <td className="px-3 py-2 text-slate-700">{item.row}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.productName || '-'}</td>
+                          <td className="px-3 py-2 text-slate-500">{item.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {skuImportResult.failedRows.length > 0 && (
+                <div className="mt-4 overflow-x-auto">
+                  <div className="mb-2 text-sm font-medium text-slate-900">失败行</div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                        <th className="px-3 py-2">行号</th>
+                        <th className="px-3 py-2">SKU</th>
+                        <th className="px-3 py-2">商品名称</th>
+                        <th className="px-3 py-2">原因</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {skuImportResult.failedRows.map((item, index) => (
+                        <tr key={`sku-failed-${item.row}-${item.sku}-${index}`} className="border-b border-slate-100">
+                          <td className="px-3 py-2 text-slate-700">{item.row}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.productName || '-'}</td>
+                          <td className="px-3 py-2 text-red-600">{item.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {skuImportError && (
+            <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              {skuImportError}
             </div>
           )}
 
