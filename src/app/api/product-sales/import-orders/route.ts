@@ -47,6 +47,11 @@ type ParsedOrderItem = {
   netQty: number
   canceledQty: number
   stockConsumedQty: number
+  isSample: boolean
+  sampleQty: number
+  buyerUsername: string
+  buyerNickname: string
+  recipient: string
   refundAmount: number
   orderStatus: string
   cancelationReturnType: string
@@ -64,6 +69,11 @@ type ProductOrderItemWriteRow = {
   netQty: number
   canceledQty: number
   stockConsumedQty: number
+  isSample: boolean
+  sampleQty: number
+  buyerUsername: string | null
+  buyerNickname: string | null
+  recipient: string | null
   refundAmount: number
   orderStatus: string | null
   cancelationReturnType: string | null
@@ -81,6 +91,7 @@ type AggregatedOrderStat = {
   netOrders: number
   canceledQty: number
   stockConsumedQty: number
+  sampleQty: number
   refundAmount: number
 }
 
@@ -92,6 +103,35 @@ type AffectedPair = {
 const WRITE_BATCH_SIZE = 200
 const LOOKUP_BATCH_SIZE = 500
 const TIMEOUT_GUARD_MS = 45_000
+const SAMPLE_ORDER_AMOUNT_FIELDS = [
+  'Order Payment',
+  'Order Amount',
+  'Buyer Paid Amount',
+  'Paid Amount',
+  'Actual Paid Amount',
+  'Payment',
+  'Total Payment',
+  'Order Total',
+  'Order Total Amount',
+  'Grand Total',
+  'Final Amount',
+  'Final Price',
+  'Subtotal After Discount',
+  'SKU Subtotal After Discount',
+  'Product Amount',
+  'Items Subtotal',
+]
+const SAMPLE_ORDER_KEYWORD_FIELDS = [
+  'Order Type',
+  'Order Note',
+  'Seller Note',
+  'Buyer Message',
+  'Remark',
+  'Remarks',
+  'Tags',
+  'Promotion Name',
+  'Campaign Name',
+]
 
 function normalizeHeader(value: unknown) {
   return String(value ?? '').replace(/^\uFEFF/, '').trim()
@@ -285,6 +325,79 @@ function isPreShipmentCancellation(orderStatus: string, cancelReturnType: string
 
 function resolveStockConsumedQty(quantity: number, orderStatus: string, cancelReturnType: string) {
   return isPreShipmentCancellation(orderStatus, cancelReturnType) ? 0 : quantity
+}
+
+function resolveOrderDate(record: Record<string, unknown>) {
+  const rawPaidTime = normalizeCell(record['Paid Time'])
+  const rawCreatedTime = normalizeCell(record['Created Time'])
+
+  if (rawPaidTime) {
+    return {
+      rawTime: rawPaidTime,
+      source: 'Paid Time',
+      parsedDate: parseDateValue(record['Paid Time']),
+    }
+  }
+
+  if (rawCreatedTime) {
+    return {
+      rawTime: rawCreatedTime,
+      source: 'Created Time',
+      parsedDate: parseDateValue(record['Created Time']),
+    }
+  }
+
+  return {
+    rawTime: '',
+    source: 'Paid Time / Created Time',
+    parsedDate: null,
+  }
+}
+
+function looksLikeSampleKeyword(value: string) {
+  return /(sample|free sample|gift|寄样|样品|赠品)/i.test(value)
+}
+
+function resolveSampleOrder(record: Record<string, unknown>) {
+  const keywordMatched = SAMPLE_ORDER_KEYWORD_FIELDS.some((field) => {
+    const value = normalizeCell(record[field])
+    return value ? looksLikeSampleKeyword(value) : false
+  })
+
+  const amountCandidates = SAMPLE_ORDER_AMOUNT_FIELDS
+    .map((field) => {
+      const rawValue = record[field]
+      const text = normalizeCell(rawValue)
+      if (!text && rawValue !== 0) return null
+      return {
+        field,
+        value: parseNumber(rawValue),
+      }
+    })
+    .filter((item): item is { field: string; value: number } => Boolean(item))
+
+  const zeroAmountMatched = amountCandidates.length > 0 && amountCandidates.every((item) => item.value === 0)
+
+  return {
+    isSample: keywordMatched || zeroAmountMatched,
+    reason: keywordMatched ? 'keyword' : zeroAmountMatched ? 'zero-amount' : '',
+  }
+}
+
+function buildSampleRecipientKey(item: {
+  buyerUsername?: string | null
+  buyerNickname?: string | null
+  recipient?: string | null
+}) {
+  const buyerUsername = normalizeCell(item.buyerUsername).toLowerCase()
+  const buyerNickname = normalizeCell(item.buyerNickname).toLowerCase()
+  const recipient = normalizeCell(item.recipient).toLowerCase()
+
+  if (!buyerUsername && !buyerNickname && !recipient) {
+    return 'unknown'
+  }
+
+  return `${buyerUsername}__${buyerNickname}__${recipient}`
 }
 
 function buildDedupeKey(orderId: string, skuId: string | null, sellerSku: string) {
@@ -493,6 +606,121 @@ function buildSummary(orderItems: Array<{
   }
 }
 
+function buildSampleSummary(orderItems: Array<{
+  sellerSku: string
+  quantity: number
+  isSample: boolean
+  sampleQty: number
+  buyerUsername: string
+  buyerNickname: string
+  recipient: string
+}>) {
+  const sampleItems = orderItems.filter((item) => item.isSample && item.sampleQty > 0)
+  const sampleBySkuMap = new Map<string, {
+    sku: string
+    sampleQty: number
+    sampleRows: number
+  }>()
+  const sampleByRecipientMap = new Map<string, {
+    buyerUsername: string
+    buyerNickname: string
+    recipient: string
+    sampleQty: number
+    sampleRows: number
+    skus: Set<string>
+  }>()
+  const sampleByRecipientAndSkuMap = new Map<string, {
+    buyerUsername: string
+    buyerNickname: string
+    recipient: string
+    sku: string
+    sampleQty: number
+    sampleRows: number
+  }>()
+
+  sampleItems.forEach((item) => {
+    const sampleBySku = sampleBySkuMap.get(item.sellerSku) || {
+      sku: item.sellerSku,
+      sampleQty: 0,
+      sampleRows: 0,
+    }
+    sampleBySku.sampleQty += item.sampleQty
+    sampleBySku.sampleRows += 1
+    sampleBySkuMap.set(item.sellerSku, sampleBySku)
+
+    const recipientKey = buildSampleRecipientKey(item)
+    const sampleByRecipient = sampleByRecipientMap.get(recipientKey) || {
+      buyerUsername: normalizeCell(item.buyerUsername),
+      buyerNickname: normalizeCell(item.buyerNickname),
+      recipient: normalizeCell(item.recipient),
+      sampleQty: 0,
+      sampleRows: 0,
+      skus: new Set<string>(),
+    }
+    sampleByRecipient.sampleQty += item.sampleQty
+    sampleByRecipient.sampleRows += 1
+    sampleByRecipient.skus.add(item.sellerSku)
+    sampleByRecipientMap.set(recipientKey, sampleByRecipient)
+
+    const recipientSkuKey = `${recipientKey}__${item.sellerSku}`
+    const sampleByRecipientAndSku = sampleByRecipientAndSkuMap.get(recipientSkuKey) || {
+      buyerUsername: normalizeCell(item.buyerUsername),
+      buyerNickname: normalizeCell(item.buyerNickname),
+      recipient: normalizeCell(item.recipient),
+      sku: item.sellerSku,
+      sampleQty: 0,
+      sampleRows: 0,
+    }
+    sampleByRecipientAndSku.sampleQty += item.sampleQty
+    sampleByRecipientAndSku.sampleRows += 1
+    sampleByRecipientAndSkuMap.set(recipientSkuKey, sampleByRecipientAndSku)
+  })
+
+  const sampleBySku = Array.from(sampleBySkuMap.values()).sort((a, b) => (
+    b.sampleQty - a.sampleQty || b.sampleRows - a.sampleRows || a.sku.localeCompare(b.sku)
+  ))
+  const sampleByRecipient = Array.from(sampleByRecipientMap.values())
+    .map((item) => ({
+      buyerUsername: item.buyerUsername || 'unknown',
+      buyerNickname: item.buyerNickname || '',
+      recipient: item.recipient || '',
+      sampleQty: item.sampleQty,
+      sampleRows: item.sampleRows,
+      skus: Array.from(item.skus).sort((a, b) => a.localeCompare(b)),
+    }))
+    .sort((a, b) => (
+      b.sampleQty - a.sampleQty
+      || b.sampleRows - a.sampleRows
+      || a.buyerUsername.localeCompare(b.buyerUsername)
+      || a.recipient.localeCompare(b.recipient)
+    ))
+  const sampleByRecipientAndSku = Array.from(sampleByRecipientAndSkuMap.values())
+    .map((item) => ({
+      buyerUsername: item.buyerUsername || 'unknown',
+      buyerNickname: item.buyerNickname || '',
+      recipient: item.recipient || '',
+      sku: item.sku,
+      sampleQty: item.sampleQty,
+      sampleRows: item.sampleRows,
+    }))
+    .sort((a, b) => (
+      b.sampleQty - a.sampleQty
+      || b.sampleRows - a.sampleRows
+      || a.buyerUsername.localeCompare(b.buyerUsername)
+      || a.sku.localeCompare(b.sku)
+    ))
+
+  return {
+    sampleRows: sampleItems.length,
+    sampleQty: sampleItems.reduce((sum, item) => sum + item.sampleQty, 0),
+    sampleSkuCount: sampleBySku.length,
+    sampleRecipientCount: sampleByRecipient.length,
+    sampleBySku,
+    sampleByRecipient,
+    sampleByRecipientAndSku,
+  }
+}
+
 async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
   if (!batch.length) return
 
@@ -510,6 +738,11 @@ async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
     ${item.netQty},
     ${item.canceledQty},
     ${item.stockConsumedQty},
+    ${item.isSample},
+    ${item.sampleQty},
+    ${item.buyerUsername},
+    ${item.buyerNickname},
+    ${item.recipient},
     ${item.refundAmount},
     ${item.orderStatus},
     ${item.cancelationReturnType},
@@ -534,6 +767,11 @@ async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
       "netQty",
       "canceledQty",
       "stockConsumedQty",
+      "isSample",
+      "sampleQty",
+      "buyerUsername",
+      "buyerNickname",
+      "recipient",
       "refundAmount",
       "orderStatus",
       "cancelationReturnType",
@@ -555,6 +793,11 @@ async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
       "netQty" = EXCLUDED."netQty",
       "canceledQty" = EXCLUDED."canceledQty",
       "stockConsumedQty" = EXCLUDED."stockConsumedQty",
+      "isSample" = EXCLUDED."isSample",
+      "sampleQty" = EXCLUDED."sampleQty",
+      "buyerUsername" = EXCLUDED."buyerUsername",
+      "buyerNickname" = EXCLUDED."buyerNickname",
+      "recipient" = EXCLUDED."recipient",
       "refundAmount" = EXCLUDED."refundAmount",
       "orderStatus" = EXCLUDED."orderStatus",
       "cancelationReturnType" = EXCLUDED."cancelationReturnType",
@@ -580,6 +823,7 @@ async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
     ${item.netOrders},
     ${item.canceledQty},
     ${item.stockConsumedQty},
+    ${item.sampleQty},
     ${item.refundAmount},
     ${now},
     ${now}
@@ -597,6 +841,7 @@ async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
       "netOrders",
       "canceledQty",
       "stockConsumedQty",
+      "sampleQty",
       "refundAmount",
       "createdAt",
       "updatedAt"
@@ -610,6 +855,7 @@ async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
       "netOrders" = EXCLUDED."netOrders",
       "canceledQty" = EXCLUDED."canceledQty",
       "stockConsumedQty" = EXCLUDED."stockConsumedQty",
+      "sampleQty" = EXCLUDED."sampleQty",
       "refundAmount" = EXCLUDED."refundAmount",
       "updatedAt" = CURRENT_TIMESTAMP
   `)
@@ -665,6 +911,7 @@ async function loadAggregatedMatchedOrderItems(
     netOrders: number | bigint | null
     canceledQty: number | bigint | null
     stockConsumedQty: number | bigint | null
+    sampleQty: number | bigint | null
     refundAmount: number | string | null
   }>>(Prisma.sql`
     WITH "affected"("sellerSku", "paidDate") AS (
@@ -678,6 +925,7 @@ async function loadAggregatedMatchedOrderItems(
       SUM(poi."netQty") AS "netOrders",
       SUM(poi."canceledQty") AS "canceledQty",
       SUM(poi."stockConsumedQty") AS "stockConsumedQty",
+      SUM(poi."sampleQty") AS "sampleQty",
       SUM(poi."refundAmount") AS "refundAmount"
     FROM "ProductOrderItem" AS poi
     INNER JOIN "affected" AS a
@@ -699,6 +947,7 @@ async function loadAggregatedMatchedOrderItems(
         netOrders: Number(item.netOrders || 0),
         canceledQty: Number(item.canceledQty || 0),
         stockConsumedQty: Number(item.stockConsumedQty || 0),
+        sampleQty: Number(item.sampleQty || 0),
         refundAmount: Number(item.refundAmount || 0),
       }
     })
@@ -826,12 +1075,17 @@ export async function POST(request: NextRequest) {
         const orderId = normalizeCell(record['Order ID'])
         const skuId = normalizeCell(record['SKU ID']) || null
         const sellerSku = normalizeCell(record['Seller SKU'])
-        const rawPaidTime = normalizeCell(record['Paid Time'])
+        const orderDate = resolveOrderDate(record)
+        const rawPaidTime = orderDate.rawTime
         const quantity = Math.max(0, Math.round(parseNumber(record['Quantity'])))
         const returnQty = Math.max(0, Math.round(parseNumber(record['Sku Quantity of return'])))
         const orderStatus = normalizeCell(record['Order Status'])
         const cancelationReturnType = normalizeCell(record['Cancelation/Return Type'])
-        const refundAmount = parseNumber(record['Order Refund Amount'])
+        const buyerUsername = normalizeCell(record['Buyer Username'])
+        const buyerNickname = normalizeCell(record['Buyer Nickname'])
+        const recipient = normalizeCell(record['Recipient'])
+        const { isSample } = resolveSampleOrder(record)
+        const refundAmount = isSample ? 0 : parseNumber(record['Order Refund Amount'])
 
         if (!sellerSku) {
           skippedRows.push({
@@ -864,20 +1118,19 @@ export async function POST(request: NextRequest) {
             paidTime: '',
             quantity,
             returnQty,
-            reason: 'Paid Time 为空',
+            reason: 'Paid Time / Created Time 为空',
           })
           return
         }
 
-        const parsedDate = parseDateValue(record['Paid Time'])
-        if (!parsedDate) {
+        if (!orderDate.parsedDate) {
           failures.push({
             row: rowNumber,
             sku: sellerSku,
             paidTime: rawPaidTime,
             quantity,
             returnQty,
-            reason: 'Paid Time 无法解析',
+            reason: `${orderDate.source} 无法解析`,
           })
           return
         }
@@ -896,9 +1149,10 @@ export async function POST(request: NextRequest) {
         }
 
         const canceled = isCanceledOrder(orderStatus, cancelationReturnType)
-        const canceledQty = canceled ? quantity : 0
-        const netQty = canceled ? 0 : Math.max(quantity - returnQty, 0)
+        const canceledQty = isSample ? 0 : canceled ? quantity : 0
+        const netQty = isSample ? 0 : canceled ? 0 : Math.max(quantity - returnQty, 0)
         const stockConsumedQty = resolveStockConsumedQty(quantity, orderStatus, cancelationReturnType)
+        const sampleQty = isSample ? quantity : 0
 
         parsedRows.push({
           row: rowNumber,
@@ -906,15 +1160,20 @@ export async function POST(request: NextRequest) {
           orderId,
           skuId,
           sellerSku,
-          paidDate: parsedDate.paidDate,
-          paidDateStr: parsedDate.dateStr,
-          paidTime: parsedDate.paidTime,
+          paidDate: orderDate.parsedDate.paidDate,
+          paidDateStr: orderDate.parsedDate.dateStr,
+          paidTime: orderDate.parsedDate.paidTime,
           rawPaidTime,
           quantity,
-          returnQty,
+          returnQty: isSample ? 0 : returnQty,
           netQty,
           canceledQty,
           stockConsumedQty,
+          isSample,
+          sampleQty,
+          buyerUsername,
+          buyerNickname,
+          recipient,
           refundAmount,
           orderStatus,
           cancelationReturnType,
@@ -984,6 +1243,13 @@ export async function POST(request: NextRequest) {
           totalCanceledQty: 0,
           totalStockConsumedQty: 0,
           totalRefundAmount: 0,
+          sampleRows: 0,
+          sampleQty: 0,
+          sampleSkuCount: 0,
+          sampleRecipientCount: 0,
+          sampleBySku: [],
+          sampleByRecipient: [],
+          sampleByRecipientAndSku: [],
         },
         { status: 400 },
       )
@@ -995,6 +1261,7 @@ export async function POST(request: NextRequest) {
 
     stage = 'aggregate'
     const fileSummary = buildSummary(dedupedItems)
+    const sampleSummary = buildSampleSummary(dedupedItems)
 
     if (dryRun) {
       return NextResponse.json({
@@ -1030,6 +1297,13 @@ export async function POST(request: NextRequest) {
         totalCanceledQty: fileSummary.totalCanceledQty,
         totalStockConsumedQty: fileSummary.totalStockConsumedQty,
         totalRefundAmount: fileSummary.totalRefundAmount,
+        sampleRows: sampleSummary.sampleRows,
+        sampleQty: sampleSummary.sampleQty,
+        sampleSkuCount: sampleSummary.sampleSkuCount,
+        sampleRecipientCount: sampleSummary.sampleRecipientCount,
+        sampleBySku: sampleSummary.sampleBySku,
+        sampleByRecipient: sampleSummary.sampleByRecipient,
+        sampleByRecipientAndSku: sampleSummary.sampleByRecipientAndSku,
       })
     }
 
@@ -1151,6 +1425,13 @@ export async function POST(request: NextRequest) {
         totalCanceledQty: fileSummary.totalCanceledQty,
         totalStockConsumedQty: fileSummary.totalStockConsumedQty,
         totalRefundAmount: fileSummary.totalRefundAmount,
+        sampleRows: sampleSummary.sampleRows,
+        sampleQty: sampleSummary.sampleQty,
+        sampleSkuCount: sampleSummary.sampleSkuCount,
+        sampleRecipientCount: sampleSummary.sampleRecipientCount,
+        sampleBySku: sampleSummary.sampleBySku,
+        sampleByRecipient: sampleSummary.sampleByRecipient,
+        sampleByRecipientAndSku: sampleSummary.sampleByRecipientAndSku,
       })
     }
 
@@ -1193,6 +1474,11 @@ export async function POST(request: NextRequest) {
         netQty: item.netQty,
         canceledQty: item.canceledQty,
         stockConsumedQty: item.stockConsumedQty,
+        isSample: item.isSample,
+        sampleQty: item.sampleQty,
+        buyerUsername: item.buyerUsername,
+        buyerNickname: item.buyerNickname,
+        recipient: item.recipient,
         refundAmount: item.refundAmount,
         orderStatus: item.orderStatus || null,
         cancelationReturnType: item.cancelationReturnType || null,
@@ -1262,6 +1548,11 @@ export async function POST(request: NextRequest) {
         netQty: item.netOrders,
         canceledQty: item.canceledQty,
         stockConsumedQty: item.stockConsumedQty,
+        isSample: false,
+        sampleQty: item.sampleQty,
+        buyerUsername: '',
+        buyerNickname: '',
+        recipient: '',
         refundAmount: item.refundAmount,
       })),
     )
@@ -1300,6 +1591,13 @@ export async function POST(request: NextRequest) {
       totalCanceledQty: writeSummary.totalCanceledQty,
       totalStockConsumedQty: writeSummary.totalStockConsumedQty,
       totalRefundAmount: writeSummary.totalRefundAmount,
+      sampleRows: sampleSummary.sampleRows,
+      sampleQty: sampleSummary.sampleQty,
+      sampleSkuCount: sampleSummary.sampleSkuCount,
+      sampleRecipientCount: sampleSummary.sampleRecipientCount,
+      sampleBySku: sampleSummary.sampleBySku,
+      sampleByRecipient: sampleSummary.sampleByRecipient,
+      sampleByRecipientAndSku: sampleSummary.sampleByRecipientAndSku,
       staleRecordCount: stalePairs.length,
     })
   } catch (error) {
