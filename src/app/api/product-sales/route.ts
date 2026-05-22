@@ -18,6 +18,24 @@ type AdjustmentRow = {
   type: string
 }
 
+type RankSettings = {
+  aDailySalesThreshold: number
+  bDailySalesThreshold: number
+  cStockRatioThreshold: number
+  cOrderRatioThreshold: number
+  dActiveDaysThreshold: number
+  windowDays: number
+}
+
+const DEFAULT_RANK_SETTINGS: RankSettings = {
+  aDailySalesThreshold: 20,
+  bDailySalesThreshold: 10,
+  cStockRatioThreshold: 0.1,
+  cOrderRatioThreshold: 0.2,
+  dActiveDaysThreshold: 3,
+  windowDays: 7,
+}
+
 function startOfDay(date: Date) {
   const normalized = new Date(date)
   normalized.setHours(0, 0, 0, 0)
@@ -81,6 +99,24 @@ function resolveEffectiveStock(snapshot: {
   }
 
   return fallbackStock
+}
+
+function resolveSalesMetric(item: { netOrders?: number | null; orders?: number | null }) {
+  if (item.netOrders !== null && item.netOrders !== undefined) {
+    return item.netOrders
+  }
+  return item.orders || 0
+}
+
+function formatNumber(value: number, digits = 2) {
+  if (Number.isInteger(value)) {
+    return String(value)
+  }
+  return value.toFixed(digits).replace(/\.?0+$/, '')
+}
+
+function formatPercent(value: number) {
+  return `${formatNumber(value * 100, 1)}%`
 }
 
 function parseDateInput(value: string) {
@@ -173,7 +209,7 @@ export async function GET(request: NextRequest) {
       ? selectedRange.endExclusive
       : tomorrow
 
-    const [products, aliases] = await Promise.all([
+    const [products, aliases, rankSettingRecord] = await Promise.all([
       prisma.product.findMany({
         where: { isActive: true },
         select: {
@@ -198,7 +234,23 @@ export async function GET(request: NextRequest) {
           productId: true,
         },
       }),
+      prisma.productSalesRankSetting.findFirst({
+        orderBy: { updatedAt: 'desc' },
+      }),
     ])
+
+    const rankSettings: RankSettings = rankSettingRecord
+      ? {
+          aDailySalesThreshold: rankSettingRecord.aDailySalesThreshold,
+          bDailySalesThreshold: rankSettingRecord.bDailySalesThreshold,
+          cStockRatioThreshold: rankSettingRecord.cStockRatioThreshold,
+          cOrderRatioThreshold: rankSettingRecord.cOrderRatioThreshold,
+          dActiveDaysThreshold: rankSettingRecord.dActiveDaysThreshold,
+          windowDays: rankSettingRecord.windowDays,
+        }
+      : DEFAULT_RANK_SETTINGS
+    const rankWindowDays = Math.max(rankSettings.windowDays, 1)
+    const rankWindowStart = addDays(today, -(rankWindowDays - 1))
 
     const relatedSkuSetByProductId = new Map<string, Set<string>>()
     const ensureRelatedSkuSet = (productId: string) => {
@@ -393,6 +445,21 @@ export async function GET(request: NextRequest) {
       },
     })
 
+    const rankPerformanceData = await prisma.performanceDaily.findMany({
+      where: {
+        date: {
+          gte: rankWindowStart,
+          lt: tomorrow,
+        },
+      },
+      select: {
+        sku: true,
+        netOrders: true,
+        orders: true,
+        date: true,
+      },
+    })
+
     const salesBySku: Record<string, {
       today: number
       yesterday: number
@@ -408,6 +475,8 @@ export async function GET(request: NextRequest) {
     })
 
     const consumedRowsByProductId = new Map<string, Array<{ date: Date; qty: number }>>()
+    const rankDailySalesByProductId = new Map<string, Map<string, number>>()
+    const storeSalesByDate = new Map<string, number>()
 
     salesPerformanceData.forEach((perf) => {
       if (!perf.sku) return
@@ -449,6 +518,23 @@ export async function GET(request: NextRequest) {
         qty: perf.stockConsumedQty || 0,
       })
       consumedRowsByProductId.set(productId, bucket)
+    })
+
+    rankPerformanceData.forEach((perf) => {
+      if (!perf.sku) return
+
+      const productId = relatedSkuToProductIdExact.get(perf.sku)
+        || relatedSkuToProductIdNormalized.get(normalizeSkuForCompare(perf.sku))
+      if (!productId) return
+
+      const dateKey = formatDateKey(startOfDay(new Date(perf.date)))
+      const effectiveSales = Math.max(resolveSalesMetric(perf), 0)
+
+      storeSalesByDate.set(dateKey, (storeSalesByDate.get(dateKey) || 0) + effectiveSales)
+
+      const productDailySales = rankDailySalesByProductId.get(productId) || new Map<string, number>()
+      productDailySales.set(dateKey, (productDailySales.get(dateKey) || 0) + effectiveSales)
+      rankDailySalesByProductId.set(productId, productDailySales)
     })
 
     const tableData = products.map((product) => {
@@ -505,6 +591,52 @@ export async function GET(request: NextRequest) {
           )
         : currentStock
 
+      const rankDailySales = rankDailySalesByProductId.get(product.id) || new Map<string, number>()
+      const orderedRankDailySales = Array.from(rankDailySales.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+      const totalRankSales = orderedRankDailySales.reduce((sum, [, sales]) => sum + sales, 0)
+      const avgDailySales = Number((totalRankSales / rankWindowDays).toFixed(2))
+      const activeSalesDays = orderedRankDailySales.filter(([, sales]) => sales > 0).length
+
+      let salesRank = 'F'
+      let salesRankReason = `F 不出单：近${rankWindowDays}天无销量`
+
+      if (avgDailySales >= rankSettings.aDailySalesThreshold) {
+        salesRank = 'A'
+        salesRankReason = `A 大爆品：近${rankWindowDays}天日均销量 ${formatNumber(avgDailySales)}，达到 A 标准`
+      } else if (avgDailySales >= rankSettings.bDailySalesThreshold) {
+        salesRank = 'B'
+        salesRankReason = `B 小爆品：近${rankWindowDays}天日均销量 ${formatNumber(avgDailySales)}，达到 B 标准`
+      } else {
+        const recentOrderedDailySales = [...orderedRankDailySales].sort((a, b) => b[0].localeCompare(a[0]))
+        let cReason = ''
+
+        for (const [dateKey, dailySales] of recentOrderedDailySales) {
+          if (dailySales <= 0) continue
+
+          if (estimatedStock > 0 && dailySales >= estimatedStock * rankSettings.cStockRatioThreshold) {
+            cReason = `C 潜力品：${dateKey.slice(5)} 单日销量 ${formatNumber(dailySales)}，占当前预计库存 ${formatPercent(dailySales / estimatedStock)}`
+            break
+          }
+
+          const storeDailySales = storeSalesByDate.get(dateKey) || 0
+          if (storeDailySales > 0 && dailySales >= storeDailySales * rankSettings.cOrderRatioThreshold) {
+            cReason = `C 潜力品：${dateKey.slice(5)} 单日销量 ${formatNumber(dailySales)}，占当天全店订单 ${formatPercent(dailySales / storeDailySales)}`
+            break
+          }
+        }
+
+        if (cReason) {
+          salesRank = 'C'
+          salesRankReason = cReason
+        } else if (activeSalesDays >= rankSettings.dActiveDaysThreshold) {
+          salesRank = 'D'
+          salesRankReason = `D 稳定动销：近${rankWindowDays}天有${activeSalesDays}天出单`
+        } else if (activeSalesDays > 0) {
+          salesRank = 'E'
+          salesRankReason = `E 弱动销：近${rankWindowDays}天有销量，但未达到 A/B/C/D`
+        }
+      }
+
       let stockStatus = '正常'
       if (currentStock === 0) {
         stockStatus = '断货'
@@ -525,6 +657,10 @@ export async function GET(request: NextRequest) {
         selectedRangeSales: sales.selectedRange,
         stock: currentStock,
         estimatedStock,
+        avgDailySales,
+        activeSalesDays,
+        salesRank,
+        salesRankReason,
         stockStatus,
         updatedAt: product.updatedAt.toISOString(),
       }

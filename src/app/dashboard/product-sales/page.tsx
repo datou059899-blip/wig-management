@@ -38,6 +38,10 @@ interface ProductData {
   selectedRangeSales: number
   stock: number
   estimatedStock: number
+  avgDailySales: number
+  activeSalesDays: number
+  salesRank: string
+  salesRankReason: string
   stockStatus: string
   updatedAt: string
 }
@@ -59,6 +63,18 @@ interface ProductStockAdjustment {
   adjustmentDate: string
   type: string
   note: string
+  createdAt: string
+  updatedAt: string
+}
+
+interface ProductSalesRankSetting {
+  id: string
+  aDailySalesThreshold: number
+  bDailySalesThreshold: number
+  cStockRatioThreshold: number
+  cOrderRatioThreshold: number
+  dActiveDaysThreshold: number
+  windowDays: number
   createdAt: string
   updatedAt: string
 }
@@ -335,6 +351,17 @@ export default function ProductSalesPage() {
   const [adjustmentError, setAdjustmentError] = useState<string | null>(null)
   const [savingAdjustment, setSavingAdjustment] = useState(false)
   const [deletingAdjustmentId, setDeletingAdjustmentId] = useState<string | null>(null)
+  const [rankSettingsOpen, setRankSettingsOpen] = useState(false)
+  const [rankSettings, setRankSettings] = useState<ProductSalesRankSetting | null>(null)
+  const [rankSettingsForm, setRankSettingsForm] = useState({
+    aDailySalesThreshold: '20',
+    bDailySalesThreshold: '10',
+    cStockRatioThreshold: '10',
+    cOrderRatioThreshold: '20',
+    dActiveDaysThreshold: '3',
+  })
+  const [rankSettingsError, setRankSettingsError] = useState<string | null>(null)
+  const [savingRankSettings, setSavingRankSettings] = useState(false)
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [groupFormId, setGroupFormId] = useState<string | null>(null)
   const [groupFormName, setGroupFormName] = useState('')
@@ -433,6 +460,24 @@ export default function ProductSalesPage() {
     setStockAdjustments(Array.isArray(data.adjustments) ? data.adjustments : [])
   }
 
+  const loadRankSettings = async () => {
+    const response = await fetch('/api/product-sales/rank-settings')
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.error || '获取等级设置失败')
+    }
+
+    const nextSetting = data.setting as ProductSalesRankSetting
+    setRankSettings(nextSetting)
+    setRankSettingsForm({
+      aDailySalesThreshold: String(nextSetting?.aDailySalesThreshold ?? 20),
+      bDailySalesThreshold: String(nextSetting?.bDailySalesThreshold ?? 10),
+      cStockRatioThreshold: String(Math.round((nextSetting?.cStockRatioThreshold ?? 0.1) * 100)),
+      cOrderRatioThreshold: String(Math.round((nextSetting?.cOrderRatioThreshold ?? 0.2) * 100)),
+      dActiveDaysThreshold: String(nextSetting?.dActiveDaysThreshold ?? 3),
+    })
+  }
+
   const loadTrendData = async (
     sku = selectedSku,
     groupId = selectedGroupId,
@@ -504,6 +549,7 @@ export default function ProductSalesPage() {
           loadPageData('7', '', '', false),
           loadBaselines(),
           loadGroups(),
+          loadRankSettings(),
           loadTrendData('', '', '7', '', '', false),
         ])
         setError(null)
@@ -523,6 +569,7 @@ export default function ProductSalesPage() {
       loadBaselines(baselineFormSku),
       loadAdjustments(adjustmentFormSku),
       loadGroups(),
+      loadRankSettings(),
       loadTrendData(selectedSku, selectedGroupId, trendRange, trendStartDate, trendEndDate, false),
     ])
     router.refresh()
@@ -1019,6 +1066,78 @@ export default function ProductSalesPage() {
     }
   }
 
+  const openRankSettingsModal = () => {
+    setRankSettingsOpen(true)
+    setRankSettingsError(null)
+  }
+
+  const handleSaveRankSettings = async () => {
+    const aDailySalesThreshold = Number(rankSettingsForm.aDailySalesThreshold.trim())
+    const bDailySalesThreshold = Number(rankSettingsForm.bDailySalesThreshold.trim())
+    const cStockRatioThreshold = Number(rankSettingsForm.cStockRatioThreshold.trim())
+    const cOrderRatioThreshold = Number(rankSettingsForm.cOrderRatioThreshold.trim())
+    const dActiveDaysThreshold = Number(rankSettingsForm.dActiveDaysThreshold.trim())
+
+    if (!Number.isInteger(aDailySalesThreshold) || aDailySalesThreshold <= 0) {
+      setRankSettingsError('A 日均销量阈值必须是正整数')
+      return
+    }
+    if (!Number.isInteger(bDailySalesThreshold) || bDailySalesThreshold <= 0) {
+      setRankSettingsError('B 日均销量阈值必须是正整数')
+      return
+    }
+    if (aDailySalesThreshold <= bDailySalesThreshold) {
+      setRankSettingsError('A 阈值必须大于 B 阈值')
+      return
+    }
+    if (!Number.isFinite(cStockRatioThreshold) || cStockRatioThreshold <= 0) {
+      setRankSettingsError('C 库存占比阈值必须大于 0')
+      return
+    }
+    if (!Number.isFinite(cOrderRatioThreshold) || cOrderRatioThreshold <= 0) {
+      setRankSettingsError('C 全店订单占比阈值必须大于 0')
+      return
+    }
+    if (!Number.isInteger(dActiveDaysThreshold) || dActiveDaysThreshold <= 0) {
+      setRankSettingsError('D 出单天数阈值必须是正整数')
+      return
+    }
+
+    try {
+      setSavingRankSettings(true)
+      setRankSettingsError(null)
+      setError(null)
+
+      const response = await fetch('/api/product-sales/rank-settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          aDailySalesThreshold,
+          bDailySalesThreshold,
+          cStockRatioThreshold: cStockRatioThreshold / 100,
+          cOrderRatioThreshold: cOrderRatioThreshold / 100,
+          dActiveDaysThreshold,
+        }),
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '保存等级设置失败')
+      }
+
+      await refreshAfterMutation()
+      setRankSettingsOpen(false)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '保存等级设置失败'
+      setRankSettingsError(message)
+      setError(message)
+    } finally {
+      setSavingRankSettings(false)
+    }
+  }
+
   const handleEditStock = (product: ProductData) => {
     if (!product.sku || product.sku === '-') {
       setError('该产品缺少 SKU，无法修改库存')
@@ -1274,6 +1393,13 @@ export default function ProductSalesPage() {
                   disabled={loading || savingAdjustment}
                 >
                   补货/调整库存
+                </button>
+                <button
+                  onClick={openRankSettingsModal}
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                  disabled={loading || savingRankSettings}
+                >
+                  等级设置
                 </button>
                 <button
                   onClick={handleImportSkus}
@@ -2304,6 +2430,139 @@ export default function ProductSalesPage() {
                 </div>
               )}
 
+              {rankSettingsOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+                  <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-xl">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900">等级设置</h3>
+                        <p className="mt-1 text-sm text-slate-600">A/B 用近 7 天日均销量判断，C 用单日销量占库存或全店订单占比判断。</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (savingRankSettings) return
+                          setRankSettingsOpen(false)
+                          setRankSettingsError(null)
+                        }}
+                        className="text-sm text-slate-500 hover:text-slate-700"
+                        disabled={savingRankSettings}
+                      >
+                        关闭
+                      </button>
+                    </div>
+
+                    <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-slate-900">A 日均销量阈值</label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={rankSettingsForm.aDailySalesThreshold}
+                          onChange={(event) => {
+                            setRankSettingsForm((prev) => ({ ...prev, aDailySalesThreshold: event.target.value }))
+                            setRankSettingsError(null)
+                          }}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                          disabled={savingRankSettings}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-slate-900">B 日均销量阈值</label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={rankSettingsForm.bDailySalesThreshold}
+                          onChange={(event) => {
+                            setRankSettingsForm((prev) => ({ ...prev, bDailySalesThreshold: event.target.value }))
+                            setRankSettingsError(null)
+                          }}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                          disabled={savingRankSettings}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-slate-900">C 库存占比阈值（%）</label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={rankSettingsForm.cStockRatioThreshold}
+                          onChange={(event) => {
+                            setRankSettingsForm((prev) => ({ ...prev, cStockRatioThreshold: event.target.value }))
+                            setRankSettingsError(null)
+                          }}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                          disabled={savingRankSettings}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-slate-900">C 全店订单占比阈值（%）</label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={rankSettingsForm.cOrderRatioThreshold}
+                          onChange={(event) => {
+                            setRankSettingsForm((prev) => ({ ...prev, cOrderRatioThreshold: event.target.value }))
+                            setRankSettingsError(null)
+                          }}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                          disabled={savingRankSettings}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-slate-900">D 出单天数阈值</label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={rankSettingsForm.dActiveDaysThreshold}
+                          onChange={(event) => {
+                            setRankSettingsForm((prev) => ({ ...prev, dActiveDaysThreshold: event.target.value }))
+                            setRankSettingsError(null)
+                          }}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                          disabled={savingRankSettings}
+                        />
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        <div>当前窗口：近 {rankSettings?.windowDays || 7} 天</div>
+                        <div className="mt-1">优先级：A &gt; B &gt; C &gt; D &gt; E &gt; F</div>
+                      </div>
+                    </div>
+
+                    {rankSettingsError && (
+                      <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        {rankSettingsError}
+                      </div>
+                    )}
+
+                    <div className="mt-5 flex justify-end gap-3">
+                      <button
+                        onClick={() => {
+                          if (savingRankSettings) return
+                          setRankSettingsOpen(false)
+                          setRankSettingsError(null)
+                        }}
+                        className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                        disabled={savingRankSettings}
+                      >
+                        取消
+                      </button>
+                      <button
+                        onClick={handleSaveRankSettings}
+                        className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+                        disabled={savingRankSettings}
+                      >
+                        {savingRankSettings ? '保存中...' : '保存设置'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {stockEditTarget && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
                   <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
@@ -2682,6 +2941,33 @@ export default function ProductSalesPage() {
                             </th>
                             <th className="px-6 py-3 text-center">
                               <button
+                                onClick={() => handleSort('avgDailySales')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                近7天日均销量 <SortIcon columnKey="avgDailySales" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('activeSalesDays')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                近7天出单天数 <SortIcon columnKey="activeSalesDays" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('salesRank')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                动销等级 <SortIcon columnKey="salesRank" />
+                              </button>
+                            </th>
+                            <th className="px-6 py-3 text-left font-semibold text-slate-900">
+                              等级原因
+                            </th>
+                            <th className="px-6 py-3 text-center">
+                              <button
                                 onClick={() => handleSort('stock')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
@@ -2712,7 +2998,7 @@ export default function ProductSalesPage() {
                         <tbody>
                           {sortedProducts.length === 0 ? (
                             <tr>
-                              <td colSpan={11} className="px-6 py-8 text-center text-slate-500">
+                              <td colSpan={15} className="px-6 py-8 text-center text-slate-500">
                                 暂无产品数据
                               </td>
                             </tr>
@@ -2726,6 +3012,14 @@ export default function ProductSalesPage() {
                                 <td className="px-6 py-4 text-sm text-center text-slate-700">{product.monthSales}</td>
                                 <td className="px-6 py-4 text-sm text-center text-slate-700">{product.selectedRangeSales}</td>
                                 <td className="px-6 py-4 text-sm text-center font-medium text-pink-700">{product.estimatedStock}</td>
+                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.avgDailySales}</td>
+                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.activeSalesDays}</td>
+                                <td className="px-6 py-4 text-sm text-center">
+                                  <span className="inline-block rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-800">
+                                    {product.salesRank}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 text-sm text-slate-600">{product.salesRankReason}</td>
                                 <td className="px-6 py-4 text-sm text-center font-medium text-slate-900">{product.stock}</td>
                                 <td className="px-6 py-4 text-sm text-center">
                                   <span
