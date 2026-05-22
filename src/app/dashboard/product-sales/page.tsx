@@ -86,6 +86,22 @@ interface ProductSalesRankSetting {
   updatedAt: string
 }
 
+interface BulkItemFailure {
+  lineNumber: number
+  sku: string
+  reason: string
+}
+
+interface BulkSaveSummary {
+  successCount: number
+  createdCount?: number
+  updatedCount?: number
+  failureCount: number
+  duplicateInInputCount?: number
+  unmatchedSkuCount?: number
+  failures: BulkItemFailure[]
+}
+
 interface ImportFailure {
   row: number
   sku: string
@@ -290,6 +306,56 @@ const ADJUSTMENT_TYPE_OPTIONS = [
   { value: 'other', label: '其他' },
 ]
 
+function parseBulkSkuQuantityText(text: string) {
+  const items: Array<{ sku: string; quantity: number; lineNumber: number }> = []
+  const failures: BulkItemFailure[] = []
+
+  text.split(/\r?\n/).forEach((rawLine, index) => {
+    const lineNumber = index + 1
+    const line = rawLine.trim()
+    if (!line) return
+
+    const matched = line.match(/^(.*?)(?:,|\t|\s+)(-?\d+)\s*$/)
+    if (!matched) {
+      failures.push({
+        lineNumber,
+        sku: '',
+        reason: '格式不正确，请使用“SKU 数量”、“SKU,数量”或“SKU+Tab+数量”',
+      })
+      return
+    }
+
+    const sku = matched[1].trim()
+    const quantity = Number(matched[2])
+
+    if (!sku) {
+      failures.push({
+        lineNumber,
+        sku: '',
+        reason: 'SKU 不能为空',
+      })
+      return
+    }
+
+    if (!Number.isInteger(quantity)) {
+      failures.push({
+        lineNumber,
+        sku,
+        reason: '数量必须是整数',
+      })
+      return
+    }
+
+    items.push({
+      sku,
+      quantity,
+      lineNumber,
+    })
+  })
+
+  return { items, failures }
+}
+
 function getTodayInputValue() {
   const now = new Date()
   const year = now.getFullYear()
@@ -342,20 +408,26 @@ export default function ProductSalesPage() {
   const [stockEditError, setStockEditError] = useState<string | null>(null)
   const [stockBaselineOpen, setStockBaselineOpen] = useState(false)
   const [stockBaselines, setStockBaselines] = useState<ProductStockBaseline[]>([])
+  const [baselineFormMode, setBaselineFormMode] = useState<'single' | 'bulk'>('single')
   const [baselineFormSku, setBaselineFormSku] = useState('')
   const [baselineFormQuantity, setBaselineFormQuantity] = useState('')
+  const [baselineBulkText, setBaselineBulkText] = useState('')
   const [baselineFormDate, setBaselineFormDate] = useState(getTodayInputValue())
   const [baselineFormNote, setBaselineFormNote] = useState('')
   const [baselineError, setBaselineError] = useState<string | null>(null)
+  const [baselineSaveSummary, setBaselineSaveSummary] = useState<BulkSaveSummary | null>(null)
   const [savingBaseline, setSavingBaseline] = useState(false)
   const [stockAdjustmentOpen, setStockAdjustmentOpen] = useState(false)
   const [stockAdjustments, setStockAdjustments] = useState<ProductStockAdjustment[]>([])
+  const [adjustmentFormMode, setAdjustmentFormMode] = useState<'single' | 'bulk'>('single')
   const [adjustmentFormSku, setAdjustmentFormSku] = useState('')
   const [adjustmentFormQuantity, setAdjustmentFormQuantity] = useState('')
+  const [adjustmentBulkText, setAdjustmentBulkText] = useState('')
   const [adjustmentFormDate, setAdjustmentFormDate] = useState(getTodayInputValue())
   const [adjustmentFormType, setAdjustmentFormType] = useState('replenish')
   const [adjustmentFormNote, setAdjustmentFormNote] = useState('')
   const [adjustmentError, setAdjustmentError] = useState<string | null>(null)
+  const [adjustmentSaveSummary, setAdjustmentSaveSummary] = useState<BulkSaveSummary | null>(null)
   const [savingAdjustment, setSavingAdjustment] = useState(false)
   const [deletingAdjustmentId, setDeletingAdjustmentId] = useState<string | null>(null)
   const [rankSettingsOpen, setRankSettingsOpen] = useState(false)
@@ -891,38 +963,70 @@ export default function ProductSalesPage() {
   const resetBaselineForm = (sku = '') => {
     setBaselineFormSku(sku)
     setBaselineFormQuantity('')
+    setBaselineBulkText('')
     setBaselineFormDate(getTodayInputValue())
     setBaselineFormNote('')
     setBaselineError(null)
+    setBaselineSaveSummary(null)
   }
 
   const openStockBaselineModal = () => {
     const nextSku = selectedSku || skuOptions[0]?.sku || ''
+    setBaselineFormMode('single')
     resetBaselineForm(nextSku)
     setStockBaselineOpen(true)
   }
 
   const handleSaveBaseline = async () => {
-    const sku = baselineFormSku.trim()
-    if (!sku) {
-      setBaselineError('请选择 SKU')
-      return
-    }
-
-    const quantity = Number(baselineFormQuantity.trim())
-    if (!Number.isInteger(quantity) || quantity < 0) {
-      setBaselineError('初始库存必须是大于等于 0 的整数')
-      return
-    }
-
     if (!baselineFormDate) {
       setBaselineError('请选择基准日期')
       return
     }
 
+    let payload: Record<string, unknown>
+    let bulkFailures: BulkItemFailure[] = []
+
+    if (baselineFormMode === 'bulk') {
+      const parsed = parseBulkSkuQuantityText(baselineBulkText)
+      bulkFailures = parsed.failures
+      if (parsed.items.some((item) => item.quantity < 0)) {
+        setBaselineError('初始库存必须是大于等于 0 的整数')
+        return
+      }
+      if (!parsed.items.length && !bulkFailures.length) {
+        setBaselineError('请先粘贴批量库存数据')
+        return
+      }
+      payload = {
+        items: parsed.items,
+        baselineDate: baselineFormDate,
+        note: baselineFormNote,
+      }
+    } else {
+      const sku = baselineFormSku.trim()
+      if (!sku) {
+        setBaselineError('请选择 SKU')
+        return
+      }
+
+      const quantity = Number(baselineFormQuantity.trim())
+      if (!Number.isInteger(quantity) || quantity < 0) {
+        setBaselineError('初始库存必须是大于等于 0 的整数')
+        return
+      }
+
+      payload = {
+        sku,
+        quantity,
+        baselineDate: baselineFormDate,
+        note: baselineFormNote,
+      }
+    }
+
     try {
       setSavingBaseline(true)
       setBaselineError(null)
+      setBaselineSaveSummary(null)
       setError(null)
 
       const response = await fetch('/api/product-sales/stock-baselines', {
@@ -930,12 +1034,7 @@ export default function ProductSalesPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          sku,
-          quantity,
-          baselineDate: baselineFormDate,
-          note: baselineFormNote,
-        }),
+        body: JSON.stringify(payload),
       })
       const data = await response.json()
 
@@ -944,8 +1043,23 @@ export default function ProductSalesPage() {
       }
 
       await refreshAfterMutation()
-      setStockBaselineOpen(false)
-      resetBaselineForm(sku)
+      const resultSummary: BulkSaveSummary = {
+        successCount: data.successCount || 0,
+        createdCount: data.createdCount,
+        updatedCount: data.updatedCount,
+        failureCount: (data.failureCount || 0) + bulkFailures.length,
+        duplicateInInputCount: data.duplicateInInputCount,
+        unmatchedSkuCount: data.unmatchedSkuCount,
+        failures: [...bulkFailures, ...(Array.isArray(data.failures) ? data.failures : [])],
+      }
+
+      if (baselineFormMode === 'bulk') {
+        setBaselineSaveSummary(resultSummary)
+        await loadBaselines()
+      } else {
+        setStockBaselineOpen(false)
+        resetBaselineForm(baselineFormSku.trim())
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : '保存初始库存失败'
       setBaselineError(message)
@@ -958,14 +1072,17 @@ export default function ProductSalesPage() {
   const resetAdjustmentForm = (sku = '') => {
     setAdjustmentFormSku(sku)
     setAdjustmentFormQuantity('')
+    setAdjustmentBulkText('')
     setAdjustmentFormDate(getTodayInputValue())
     setAdjustmentFormType('replenish')
     setAdjustmentFormNote('')
     setAdjustmentError(null)
+    setAdjustmentSaveSummary(null)
   }
 
   const openStockAdjustmentModal = async () => {
     const nextSku = selectedSku || skuOptions[0]?.sku || ''
+    setAdjustmentFormMode('single')
     resetAdjustmentForm(nextSku)
     setStockAdjustmentOpen(true)
     try {
@@ -976,36 +1093,75 @@ export default function ProductSalesPage() {
   }
 
   const handleSaveAdjustment = async () => {
-    const sku = adjustmentFormSku.trim()
-    if (!sku) {
-      setAdjustmentError('请选择 SKU')
-      return
-    }
-
-    const quantity = Number(adjustmentFormQuantity.trim())
-    if (!Number.isInteger(quantity) || quantity === 0) {
-      setAdjustmentError('调整数量必须是非 0 整数')
-      return
-    }
-
-    if (adjustmentFormType === 'replenish' && quantity < 0) {
-      setAdjustmentError('补货数量必须为正数')
-      return
-    }
-
-    if (adjustmentFormType === 'damage' && quantity > 0) {
-      setAdjustmentError('损耗数量必须为负数')
-      return
-    }
-
     if (!adjustmentFormDate) {
       setAdjustmentError('请选择调整日期')
       return
     }
 
+    let payload: Record<string, unknown>
+    let bulkFailures: BulkItemFailure[] = []
+
+    if (adjustmentFormMode === 'bulk') {
+      const parsed = parseBulkSkuQuantityText(adjustmentBulkText)
+      bulkFailures = parsed.failures
+      if (parsed.items.some((item) => item.quantity === 0)) {
+        setAdjustmentError('调整数量必须是非 0 整数')
+        return
+      }
+      if (adjustmentFormType === 'replenish' && parsed.items.some((item) => item.quantity < 0)) {
+        setAdjustmentError('补货数量必须为正数')
+        return
+      }
+      if (adjustmentFormType === 'damage' && parsed.items.some((item) => item.quantity > 0)) {
+        setAdjustmentError('损耗数量必须为负数')
+        return
+      }
+      if (!parsed.items.length && !bulkFailures.length) {
+        setAdjustmentError('请先粘贴批量补货/调整数据')
+        return
+      }
+      payload = {
+        items: parsed.items,
+        adjustmentDate: adjustmentFormDate,
+        type: adjustmentFormType,
+        note: adjustmentFormNote,
+      }
+    } else {
+      const sku = adjustmentFormSku.trim()
+      if (!sku) {
+        setAdjustmentError('请选择 SKU')
+        return
+      }
+
+      const quantity = Number(adjustmentFormQuantity.trim())
+      if (!Number.isInteger(quantity) || quantity === 0) {
+        setAdjustmentError('调整数量必须是非 0 整数')
+        return
+      }
+
+      if (adjustmentFormType === 'replenish' && quantity < 0) {
+        setAdjustmentError('补货数量必须为正数')
+        return
+      }
+
+      if (adjustmentFormType === 'damage' && quantity > 0) {
+        setAdjustmentError('损耗数量必须为负数')
+        return
+      }
+
+      payload = {
+        sku,
+        quantity,
+        adjustmentDate: adjustmentFormDate,
+        type: adjustmentFormType,
+        note: adjustmentFormNote,
+      }
+    }
+
     try {
       setSavingAdjustment(true)
       setAdjustmentError(null)
+      setAdjustmentSaveSummary(null)
       setError(null)
 
       const response = await fetch('/api/product-sales/stock-adjustments', {
@@ -1013,13 +1169,7 @@ export default function ProductSalesPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          sku,
-          quantity,
-          adjustmentDate: adjustmentFormDate,
-          type: adjustmentFormType,
-          note: adjustmentFormNote,
-        }),
+        body: JSON.stringify(payload),
       })
       const data = await response.json()
 
@@ -1028,8 +1178,21 @@ export default function ProductSalesPage() {
       }
 
       await refreshAfterMutation()
-      await loadAdjustments(sku)
-      resetAdjustmentForm(sku)
+      const resultSummary: BulkSaveSummary = {
+        successCount: data.successCount || 0,
+        failureCount: (data.failureCount || 0) + bulkFailures.length,
+        duplicateInInputCount: data.duplicateInInputCount,
+        unmatchedSkuCount: data.unmatchedSkuCount,
+        failures: [...bulkFailures, ...(Array.isArray(data.failures) ? data.failures : [])],
+      }
+
+      if (adjustmentFormMode === 'bulk') {
+        setAdjustmentSaveSummary(resultSummary)
+        await loadAdjustments()
+      } else {
+        await loadAdjustments(adjustmentFormSku.trim())
+        resetAdjustmentForm(adjustmentFormSku.trim())
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : '保存补货/调整记录失败'
       setAdjustmentError(message)
@@ -1454,8 +1617,12 @@ export default function ProductSalesPage() {
     return 'text-slate-900'
   }
 
-  const filteredBaselines = stockBaselines.filter((item) => !baselineFormSku || item.sku === baselineFormSku)
-  const filteredAdjustments = stockAdjustments.filter((item) => !adjustmentFormSku || item.sku === adjustmentFormSku)
+  const filteredBaselines = stockBaselines.filter((item) => (
+    baselineFormMode === 'bulk' || !baselineFormSku || item.sku === baselineFormSku
+  ))
+  const filteredAdjustments = stockAdjustments.filter((item) => (
+    adjustmentFormMode === 'bulk' || !adjustmentFormSku || item.sku === adjustmentFormSku
+  ))
 
   return (
     <PageGuard>
@@ -2201,43 +2368,91 @@ export default function ProductSalesPage() {
                     <div className="mt-5 grid gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
                       <div className="rounded-lg border border-slate-200 p-4">
                         <div className="space-y-4">
-                          <div>
-                            <label className="mb-2 block text-sm font-medium text-slate-900">SKU</label>
-                            <select
-                              value={baselineFormSku}
-                              onChange={(event) => {
-                                setBaselineFormSku(event.target.value)
+                          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                            <button
+                              onClick={() => {
+                                setBaselineFormMode('single')
                                 setBaselineError(null)
+                                setBaselineSaveSummary(null)
                               }}
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                              className={`rounded-md px-3 py-1.5 text-sm font-medium ${baselineFormMode === 'single' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                               disabled={savingBaseline}
                             >
-                              <option value="">请选择 SKU</option>
-                              {skuOptions.map((option) => (
-                                <option key={option.sku} value={option.sku}>
-                                  {option.sku}
-                                </option>
-                              ))}
-                            </select>
+                              单个设置
+                            </button>
+                            <button
+                              onClick={() => {
+                                setBaselineFormMode('bulk')
+                                setBaselineError(null)
+                                setBaselineSaveSummary(null)
+                              }}
+                              className={`rounded-md px-3 py-1.5 text-sm font-medium ${baselineFormMode === 'bulk' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                              disabled={savingBaseline}
+                            >
+                              批量设置
+                            </button>
                           </div>
 
-                          <div>
-                            <label className="mb-2 block text-sm font-medium text-slate-900">初始库存</label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              inputMode="numeric"
-                              value={baselineFormQuantity}
-                              onChange={(event) => {
-                                setBaselineFormQuantity(event.target.value)
-                                setBaselineError(null)
-                              }}
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
-                              placeholder="请输入初始库存"
-                              disabled={savingBaseline}
-                            />
-                          </div>
+                          {baselineFormMode === 'single' ? (
+                            <>
+                              <div>
+                                <label className="mb-2 block text-sm font-medium text-slate-900">SKU</label>
+                                <select
+                                  value={baselineFormSku}
+                                  onChange={(event) => {
+                                    setBaselineFormSku(event.target.value)
+                                    setBaselineError(null)
+                                    setBaselineSaveSummary(null)
+                                  }}
+                                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                                  disabled={savingBaseline}
+                                >
+                                  <option value="">请选择 SKU</option>
+                                  {skuOptions.map((option) => (
+                                    <option key={option.sku} value={option.sku}>
+                                      {option.sku}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="mb-2 block text-sm font-medium text-slate-900">初始库存</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  inputMode="numeric"
+                                  value={baselineFormQuantity}
+                                  onChange={(event) => {
+                                    setBaselineFormQuantity(event.target.value)
+                                    setBaselineError(null)
+                                    setBaselineSaveSummary(null)
+                                  }}
+                                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                                  placeholder="请输入初始库存"
+                                  disabled={savingBaseline}
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <div>
+                              <label className="mb-2 block text-sm font-medium text-slate-900">批量初始库存</label>
+                              <textarea
+                                value={baselineBulkText}
+                                onChange={(event) => {
+                                  setBaselineBulkText(event.target.value)
+                                  setBaselineError(null)
+                                  setBaselineSaveSummary(null)
+                                }}
+                                rows={8}
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                                placeholder={`SMH-12 100\nSM412-8 50\nRM4263 30`}
+                                disabled={savingBaseline}
+                              />
+                              <p className="mt-1 text-xs text-slate-500">每行一个 SKU 和数量，支持空格、逗号或 Tab 分隔。</p>
+                            </div>
+                          )}
 
                           <div>
                             <label className="mb-2 block text-sm font-medium text-slate-900">基准日期</label>
@@ -2247,6 +2462,7 @@ export default function ProductSalesPage() {
                               onChange={(event) => {
                                 setBaselineFormDate(event.target.value)
                                 setBaselineError(null)
+                                setBaselineSaveSummary(null)
                               }}
                               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
                               disabled={savingBaseline}
@@ -2261,6 +2477,7 @@ export default function ProductSalesPage() {
                               onChange={(event) => {
                                 setBaselineFormNote(event.target.value)
                                 setBaselineError(null)
+                                setBaselineSaveSummary(null)
                               }}
                               rows={3}
                               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
@@ -2272,6 +2489,41 @@ export default function ProductSalesPage() {
                           {baselineError && (
                             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                               {baselineError}
+                            </div>
+                          )}
+
+                          {baselineSaveSummary && (
+                            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+                              <div className="flex flex-wrap gap-3">
+                                <span>成功 {baselineSaveSummary.successCount}</span>
+                                <span>更新 {baselineSaveSummary.updatedCount || 0}</span>
+                                <span>新增 {(baselineSaveSummary.createdCount ?? Math.max(baselineSaveSummary.successCount - (baselineSaveSummary.updatedCount || 0), 0))}</span>
+                                <span>失败 {baselineSaveSummary.failureCount}</span>
+                                <span>输入重复 {baselineSaveSummary.duplicateInInputCount || 0}</span>
+                                <span>未匹配 SKU {baselineSaveSummary.unmatchedSkuCount || 0}</span>
+                              </div>
+                              {baselineSaveSummary.failures.length > 0 && (
+                                <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                                        <th className="px-3 py-2">行号</th>
+                                        <th className="px-3 py-2">SKU</th>
+                                        <th className="px-3 py-2">失败原因</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {baselineSaveSummary.failures.map((item, index) => (
+                                        <tr key={`${item.lineNumber}-${item.sku}-${index}`} className="border-b border-slate-100">
+                                          <td className="px-3 py-2 text-slate-700">{item.lineNumber}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
+                                          <td className="px-3 py-2 text-rose-700">{item.reason}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
                             </div>
                           )}
 
@@ -2296,13 +2548,13 @@ export default function ProductSalesPage() {
 
                       <div className="rounded-lg border border-slate-200 p-4">
                         <div className="mb-3">
-                          <div className="text-sm font-semibold text-slate-900">当前 SKU 已设置的库存基准</div>
+                          <div className="text-sm font-semibold text-slate-900">{baselineFormMode === 'bulk' ? '已设置的库存基准' : '当前 SKU 已设置的库存基准'}</div>
                           <div className="mt-1 text-xs text-slate-500">同一 SKU + 基准日期 重复保存时，会直接更新初始库存和备注。</div>
                         </div>
 
                         {filteredBaselines.length === 0 ? (
                           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-                            {baselineFormSku ? '这个 SKU 还没有手动初始库存基准。' : '请先选择 SKU。'}
+                            {baselineFormMode === 'bulk' ? '当前还没有手动初始库存基准。' : baselineFormSku ? '这个 SKU 还没有手动初始库存基准。' : '请先选择 SKU。'}
                           </div>
                         ) : (
                           <div className="overflow-x-auto">
@@ -2358,44 +2610,92 @@ export default function ProductSalesPage() {
                     <div className="mt-5 grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
                       <div className="rounded-lg border border-slate-200 p-4">
                         <div className="space-y-4">
-                          <div>
-                            <label className="mb-2 block text-sm font-medium text-slate-900">SKU</label>
-                            <select
-                              value={adjustmentFormSku}
-                              onChange={(event) => {
-                                const nextSku = event.target.value
-                                setAdjustmentFormSku(nextSku)
+                          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                            <button
+                              onClick={() => {
+                                setAdjustmentFormMode('single')
                                 setAdjustmentError(null)
-                                void loadAdjustments(nextSku)
+                                setAdjustmentSaveSummary(null)
                               }}
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                              className={`rounded-md px-3 py-1.5 text-sm font-medium ${adjustmentFormMode === 'single' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                               disabled={savingAdjustment}
                             >
-                              <option value="">请选择 SKU</option>
-                              {skuOptions.map((option) => (
-                                <option key={option.sku} value={option.sku}>
-                                  {option.sku}
-                                </option>
-                              ))}
-                            </select>
+                              单个调整
+                            </button>
+                            <button
+                              onClick={() => {
+                                setAdjustmentFormMode('bulk')
+                                setAdjustmentError(null)
+                                setAdjustmentSaveSummary(null)
+                              }}
+                              className={`rounded-md px-3 py-1.5 text-sm font-medium ${adjustmentFormMode === 'bulk' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                              disabled={savingAdjustment}
+                            >
+                              批量调整
+                            </button>
                           </div>
 
-                          <div>
-                            <label className="mb-2 block text-sm font-medium text-slate-900">调整数量</label>
-                            <input
-                              type="number"
-                              step="1"
-                              inputMode="numeric"
-                              value={adjustmentFormQuantity}
-                              onChange={(event) => {
-                                setAdjustmentFormQuantity(event.target.value)
-                                setAdjustmentError(null)
-                              }}
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
-                              placeholder="补货填正数，损耗填负数"
-                              disabled={savingAdjustment}
-                            />
-                          </div>
+                          {adjustmentFormMode === 'single' ? (
+                            <>
+                              <div>
+                                <label className="mb-2 block text-sm font-medium text-slate-900">SKU</label>
+                                <select
+                                  value={adjustmentFormSku}
+                                  onChange={(event) => {
+                                    const nextSku = event.target.value
+                                    setAdjustmentFormSku(nextSku)
+                                    setAdjustmentError(null)
+                                    setAdjustmentSaveSummary(null)
+                                    void loadAdjustments(nextSku)
+                                  }}
+                                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                                  disabled={savingAdjustment}
+                                >
+                                  <option value="">请选择 SKU</option>
+                                  {skuOptions.map((option) => (
+                                    <option key={option.sku} value={option.sku}>
+                                      {option.sku}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="mb-2 block text-sm font-medium text-slate-900">调整数量</label>
+                                <input
+                                  type="number"
+                                  step="1"
+                                  inputMode="numeric"
+                                  value={adjustmentFormQuantity}
+                                  onChange={(event) => {
+                                    setAdjustmentFormQuantity(event.target.value)
+                                    setAdjustmentError(null)
+                                    setAdjustmentSaveSummary(null)
+                                  }}
+                                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                                  placeholder="补货填正数，损耗填负数"
+                                  disabled={savingAdjustment}
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <div>
+                              <label className="mb-2 block text-sm font-medium text-slate-900">批量补货/调整</label>
+                              <textarea
+                                value={adjustmentBulkText}
+                                onChange={(event) => {
+                                  setAdjustmentBulkText(event.target.value)
+                                  setAdjustmentError(null)
+                                  setAdjustmentSaveSummary(null)
+                                }}
+                                rows={8}
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                                placeholder={`SMH-12 50\nSM412-8 20\nRM4263 -5`}
+                                disabled={savingAdjustment}
+                              />
+                              <p className="mt-1 text-xs text-slate-500">每行一个 SKU 和数量，支持空格、逗号或 Tab 分隔。</p>
+                            </div>
+                          )}
 
                           <div>
                             <label className="mb-2 block text-sm font-medium text-slate-900">调整日期</label>
@@ -2405,6 +2705,7 @@ export default function ProductSalesPage() {
                               onChange={(event) => {
                                 setAdjustmentFormDate(event.target.value)
                                 setAdjustmentError(null)
+                                setAdjustmentSaveSummary(null)
                               }}
                               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
                               disabled={savingAdjustment}
@@ -2419,6 +2720,7 @@ export default function ProductSalesPage() {
                               onChange={(event) => {
                                 setAdjustmentFormType(event.target.value)
                                 setAdjustmentError(null)
+                                setAdjustmentSaveSummary(null)
                               }}
                               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
                               disabled={savingAdjustment}
@@ -2438,6 +2740,7 @@ export default function ProductSalesPage() {
                               onChange={(event) => {
                                 setAdjustmentFormNote(event.target.value)
                                 setAdjustmentError(null)
+                                setAdjustmentSaveSummary(null)
                               }}
                               rows={3}
                               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
@@ -2449,6 +2752,39 @@ export default function ProductSalesPage() {
                           {adjustmentError && (
                             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                               {adjustmentError}
+                            </div>
+                          )}
+
+                          {adjustmentSaveSummary && (
+                            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+                              <div className="flex flex-wrap gap-3">
+                                <span>成功 {adjustmentSaveSummary.successCount}</span>
+                                <span>失败 {adjustmentSaveSummary.failureCount}</span>
+                                <span>输入重复 {adjustmentSaveSummary.duplicateInInputCount || 0}</span>
+                                <span>未匹配 SKU {adjustmentSaveSummary.unmatchedSkuCount || 0}</span>
+                              </div>
+                              {adjustmentSaveSummary.failures.length > 0 && (
+                                <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                                        <th className="px-3 py-2">行号</th>
+                                        <th className="px-3 py-2">SKU</th>
+                                        <th className="px-3 py-2">失败原因</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {adjustmentSaveSummary.failures.map((item, index) => (
+                                        <tr key={`${item.lineNumber}-${item.sku}-${index}`} className="border-b border-slate-100">
+                                          <td className="px-3 py-2 text-slate-700">{item.lineNumber}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
+                                          <td className="px-3 py-2 text-rose-700">{item.reason}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
                             </div>
                           )}
 
@@ -2473,13 +2809,13 @@ export default function ProductSalesPage() {
 
                       <div className="rounded-lg border border-slate-200 p-4">
                         <div className="mb-3">
-                          <div className="text-sm font-semibold text-slate-900">当前 SKU 的补货/调整记录</div>
+                          <div className="text-sm font-semibold text-slate-900">{adjustmentFormMode === 'bulk' ? '补货/调整记录' : '当前 SKU 的补货/调整记录'}</div>
                           <div className="mt-1 text-xs text-slate-500">补货为正数，损耗为负数，都会进入预计库存计算。</div>
                         </div>
 
                         {filteredAdjustments.length === 0 ? (
                           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-                            {adjustmentFormSku ? '这个 SKU 还没有补货/调整记录。' : '请先选择 SKU。'}
+                            {adjustmentFormMode === 'bulk' ? '当前还没有补货/调整记录。' : adjustmentFormSku ? '这个 SKU 还没有补货/调整记录。' : '请先选择 SKU。'}
                           </div>
                         ) : (
                           <div className="overflow-x-auto">

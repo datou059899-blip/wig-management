@@ -7,9 +7,25 @@ export const dynamic = 'force-dynamic'
 
 const ADJUSTMENT_TYPES = new Set(['replenish', 'manual_adjust', 'damage', 'other'])
 
+type AdjustmentPayloadItem = {
+  sku: string
+  quantity: number
+  lineNumber?: number
+}
+
+type AdjustmentFailure = {
+  lineNumber: number
+  sku: string
+  reason: string
+}
+
 function normalizeCell(value: unknown) {
   if (value === null || value === undefined) return ''
   return typeof value === 'string' ? value.trim() : String(value).trim()
+}
+
+function normalizeSkuKey(value: string) {
+  return normalizeCell(value).replace(/\s+/g, '').toUpperCase()
 }
 
 function parseDateInput(value: string) {
@@ -43,6 +59,24 @@ async function requireOperator() {
   return { error: null }
 }
 
+function extractAliasSkusFromText(value: string | null | undefined) {
+  const aliases = new Set<string>()
+  const text = normalizeCell(value)
+  if (!text) return []
+
+  const pattern = /[（(]\s*([^()（）]+?)\s*[)）]/g
+  let match = pattern.exec(text)
+  while (match) {
+    const alias = normalizeCell(match[1])
+    if (alias) {
+      aliases.add(alias)
+    }
+    match = pattern.exec(text)
+  }
+
+  return Array.from(aliases)
+}
+
 function serializeAdjustment(adjustment: {
   id: string
   sku: string
@@ -62,6 +96,69 @@ function serializeAdjustment(adjustment: {
     note: adjustment.note || '',
     createdAt: adjustment.createdAt.toISOString(),
     updatedAt: adjustment.updatedAt.toISOString(),
+  }
+}
+
+function validateAdjustmentItem(item: unknown, index: number, type: string): {
+  item: AdjustmentPayloadItem | null
+  failure: AdjustmentFailure | null
+} {
+  const sku = normalizeCell((item as any)?.sku)
+  const quantity = Number((item as any)?.quantity)
+  const rawLineNumber = Number((item as any)?.lineNumber)
+  const lineNumber = Number.isInteger(rawLineNumber) && rawLineNumber > 0 ? rawLineNumber : index + 1
+
+  if (!sku) {
+    return {
+      item: null,
+      failure: {
+        lineNumber,
+        sku: '',
+        reason: 'SKU 不能为空',
+      },
+    }
+  }
+
+  if (!Number.isInteger(quantity) || quantity === 0) {
+    return {
+      item: null,
+      failure: {
+        lineNumber,
+        sku,
+        reason: '调整数量不能为 0，且必须是整数',
+      },
+    }
+  }
+
+  if (type === 'replenish' && quantity < 0) {
+    return {
+      item: null,
+      failure: {
+        lineNumber,
+        sku,
+        reason: '补货数量必须为正数',
+      },
+    }
+  }
+
+  if (type === 'damage' && quantity > 0) {
+    return {
+      item: null,
+      failure: {
+        lineNumber,
+        sku,
+        reason: '损耗数量必须为负数',
+      },
+    }
+  }
+
+  return {
+    item: {
+      sku,
+      quantity,
+      lineNumber,
+    },
+    failure: null,
   }
 }
 
@@ -96,19 +193,9 @@ export async function POST(request: NextRequest) {
     if (error) return error
 
     const body = await request.json()
-    const sku = normalizeCell(body?.sku)
-    const quantity = Number(body?.quantity)
     const adjustmentDateText = normalizeCell(body?.adjustmentDate)
     const type = normalizeCell(body?.type)
     const note = normalizeCell(body?.note)
-
-    if (!sku) {
-      return NextResponse.json({ error: 'SKU 不能为空' }, { status: 400 })
-    }
-
-    if (!Number.isInteger(quantity) || quantity === 0) {
-      return NextResponse.json({ error: '调整数量不能为 0，且必须是整数' }, { status: 400 })
-    }
 
     if (!adjustmentDateText) {
       return NextResponse.json({ error: '调整日期不能为空' }, { status: 400 })
@@ -123,26 +210,108 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '调整类型无效' }, { status: 400 })
     }
 
-    if (type === 'replenish' && quantity < 0) {
-      return NextResponse.json({ error: '补货数量必须为正数' }, { status: 400 })
+    const rawItems: unknown[] = Array.isArray(body?.items)
+      ? body.items
+      : [{
+          sku: body?.sku,
+          quantity: body?.quantity,
+          lineNumber: 1,
+        }]
+
+    const failures: AdjustmentFailure[] = []
+    const dedupedItemsBySkuKey = new Map<string, AdjustmentPayloadItem>()
+    let duplicateInInputCount = 0
+
+    rawItems.forEach((item, index) => {
+      const { item: validatedItem, failure } = validateAdjustmentItem(item, index, type)
+      if (failure) {
+        failures.push(failure)
+        return
+      }
+      if (!validatedItem) return
+
+      const skuKey = normalizeSkuKey(validatedItem.sku)
+      if (dedupedItemsBySkuKey.has(skuKey)) {
+        duplicateInInputCount += 1
+      }
+      dedupedItemsBySkuKey.set(skuKey, validatedItem)
+    })
+
+    const items = Array.from(dedupedItemsBySkuKey.values())
+    if (!items.length) {
+      return NextResponse.json({
+        error: failures.length > 0 ? '没有可保存的补货/调整数据' : 'SKU 不能为空',
+        successCount: 0,
+        failureCount: failures.length,
+        duplicateInInputCount,
+        unmatchedSkuCount: 0,
+        failures,
+      }, { status: 400 })
     }
 
-    if (type === 'damage' && quantity > 0) {
-      return NextResponse.json({ error: '损耗数量必须为负数' }, { status: 400 })
+    const [products, aliases] = await Promise.all([
+      prisma.product.findMany({
+        select: {
+          sku: true,
+          name: true,
+        },
+      }),
+      prisma.productSkuAlias.findMany({
+        select: {
+          aliasSku: true,
+        },
+      }),
+    ])
+
+    const knownSkuKeys = new Set<string>()
+    products.forEach((product) => {
+      knownSkuKeys.add(normalizeSkuKey(product.sku || ''))
+      extractAliasSkusFromText(product.sku).forEach((aliasSku) => knownSkuKeys.add(normalizeSkuKey(aliasSku)))
+      extractAliasSkusFromText(product.name).forEach((aliasSku) => knownSkuKeys.add(normalizeSkuKey(aliasSku)))
+    })
+    aliases.forEach((alias) => {
+      knownSkuKeys.add(normalizeSkuKey(alias.aliasSku))
+    })
+
+    const unmatchedSkuCount = items.filter((item) => !knownSkuKeys.has(normalizeSkuKey(item.sku))).length
+
+    if (!Array.isArray(body?.items)) {
+      const adjustment = await prisma.productStockAdjustment.create({
+        data: {
+          sku: items[0].sku,
+          quantity: items[0].quantity,
+          adjustmentDate,
+          type,
+          note: note || null,
+        },
+      })
+
+      return NextResponse.json({
+        adjustment: serializeAdjustment(adjustment),
+        successCount: 1,
+        failureCount: failures.length,
+        duplicateInInputCount,
+        unmatchedSkuCount,
+        failures,
+      })
     }
 
-    const adjustment = await prisma.productStockAdjustment.create({
-      data: {
-        sku,
-        quantity,
+    const createdCount = await prisma.productStockAdjustment.createMany({
+      data: items.map((item) => ({
+        sku: item.sku,
+        quantity: item.quantity,
         adjustmentDate,
         type,
         note: note || null,
-      },
+      })),
     })
 
     return NextResponse.json({
-      adjustment: serializeAdjustment(adjustment),
+      successCount: createdCount.count,
+      failureCount: failures.length,
+      duplicateInInputCount,
+      unmatchedSkuCount,
+      failures,
     })
   } catch (error) {
     console.error('保存库存补货/调整记录失败:', error)
