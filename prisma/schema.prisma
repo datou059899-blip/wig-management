@@ -236,6 +236,43 @@ model ProductSalesGroup {
   updatedAt DateTime @updatedAt
 }
 
+model MaterialItem {
+  id           String                @id @default(cuid())
+  name         String
+  unit         String?
+  initialQty   Float                 @default(0)
+  currentQty   Float                 @default(0)
+  warningQty   Float                 @default(0)
+  note         String?
+  isActive     Boolean               @default(true)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  transactions MaterialTransaction[]
+
+  @@unique([name])
+  @@index([isActive])
+}
+
+model MaterialTransaction {
+  id              String       @id @default(cuid())
+  materialId      String
+  materialName    String
+  type            String
+  quantity        Float
+  beforeQty       Float
+  afterQty        Float
+  transactionDate DateTime
+  reason          String?
+  note            String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  material        MaterialItem @relation(fields: [materialId], references: [id], onDelete: Restrict)
+
+  @@index([materialId])
+  @@index([transactionDate])
+  @@index([type])
+}
+
 model PerformanceMeta {
   id                 String    @id @default(cuid())
   lastOrdersImportAt DateTime?
