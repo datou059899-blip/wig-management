@@ -288,6 +288,7 @@ interface TrendSummary {
 
 interface SkuOption {
   sku: string
+  label: string
 }
 
 interface ProductSalesGroup {
@@ -2171,7 +2172,7 @@ export default function ProductSalesPage() {
                       <option value="">全部 SKU</option>
                       {skuOptions.map((option) => (
                         <option key={option.sku} value={option.sku}>
-                          {option.sku}
+                          {option.label || option.sku}
                         </option>
                       ))}
                     </select>
@@ -2410,7 +2411,7 @@ export default function ProductSalesPage() {
                                   <option value="">请选择 SKU</option>
                                   {skuOptions.map((option) => (
                                     <option key={option.sku} value={option.sku}>
-                                      {option.sku}
+                                      {option.label || option.sku}
                                     </option>
                                   ))}
                                 </select>
@@ -2654,7 +2655,7 @@ export default function ProductSalesPage() {
                                   <option value="">请选择 SKU</option>
                                   {skuOptions.map((option) => (
                                     <option key={option.sku} value={option.sku}>
-                                      {option.sku}
+                                      {option.label || option.sku}
                                     </option>
                                   ))}
                                 </select>
@@ -3195,7 +3196,7 @@ export default function ProductSalesPage() {
                                       onChange={() => toggleGroupSku(option.sku)}
                                       disabled={savingGroup}
                                     />
-                                    <span>{option.sku}</span>
+                                    <span>{option.label || option.sku}</span>
                                   </label>
                                 ))}
                               </div>

@@ -737,23 +737,26 @@ export async function GET(request: NextRequest) {
     })
 
     const skuOptionsSet = new Set<string>()
-    const skuOptions: Array<{ sku: string }> = []
-    const registerSkuOption = (sku: string | null | undefined) => {
+    const skuOptions: Array<{ sku: string; label: string }> = []
+    const registerSkuOption = (sku: string | null | undefined, label?: string | null) => {
       const value = normalizeCell(sku)
       if (!value || skuOptionsSet.has(value)) return
       skuOptionsSet.add(value)
-      skuOptions.push({ sku: value })
+      skuOptions.push({ sku: value, label: normalizeCell(label) || value })
     }
 
     products.forEach((product) => {
-      registerSkuOption(product.sku)
+      const mainSku = normalizeCell(product.sku)
+      if (!mainSku) return
+      const productName = normalizeCell(product.name)
+      registerSkuOption(mainSku, productName ? `${mainSku} · ${productName}` : mainSku)
     })
     aliases.forEach((alias) => {
-      registerSkuOption(alias.aliasSku)
-    })
-    products.forEach((product) => {
-      extractAliasSkusFromText(product.sku).forEach((aliasSku) => registerSkuOption(aliasSku))
-      extractAliasSkusFromText(product.name).forEach((aliasSku) => registerSkuOption(aliasSku))
+      const aliasSku = normalizeCell(alias.aliasSku)
+      if (!aliasSku) return
+      const product = products.find((item) => item.id === alias.productId)
+      const mainSku = normalizeCell(product?.sku)
+      registerSkuOption(aliasSku, mainSku ? `${aliasSku} · alias of ${mainSku}` : `${aliasSku} · 别称`)
     })
 
     const totalTodaySales = Object.values(salesBySku).reduce((sum, item) => sum + item.today, 0)
