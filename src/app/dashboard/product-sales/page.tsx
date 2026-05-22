@@ -307,6 +307,19 @@ function formatSkuImportTitle(mode?: 'dryRun' | 'import') {
   return mode === 'import' ? '产品 SKU 导入完成' : '产品 SKU 预检查完成'
 }
 
+function hasSampleStats(result: OrderImportResult | null) {
+  if (!result) return false
+  return (
+    typeof result.sampleRows === 'number'
+    || typeof result.sampleQty === 'number'
+    || typeof result.sampleSkuCount === 'number'
+    || typeof result.sampleRecipientCount === 'number'
+    || Array.isArray(result.sampleBySku)
+    || Array.isArray(result.sampleByRecipient)
+    || Array.isArray(result.sampleByRecipientAndSku)
+  )
+}
+
 interface TrendPoint {
   date: string
   label: string
@@ -2075,6 +2088,127 @@ export default function ProductSalesPage() {
                   {ordersImportResult.staleRecordCount ? ` 已清理 ${ordersImportResult.staleRecordCount} 条不再匹配的 SKU+日期 汇总。` : ''}
                 </div>
               )}
+              {hasSampleStats(ordersImportResult) && (
+                <div className="mt-4 rounded-xl border-2 border-violet-300 bg-gradient-to-br from-violet-50 to-fuchsia-50 p-4 shadow-sm">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="text-base font-semibold text-violet-950">样品单统计</div>
+                      <div className="mt-1 text-sm text-violet-900/80">
+                        样品单不计入销量与退款金额，但会单独统计寄样数量，并继续参与库存消耗计算。
+                      </div>
+                    </div>
+                    <div className="rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-violet-700 ring-1 ring-violet-200">
+                      样品销量已从毛销量与净销量中排除
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-lg border border-violet-200 bg-white px-4 py-3">
+                      <div className="text-xs text-slate-500">样品订单行数</div>
+                      <div className="mt-1 text-2xl font-semibold text-slate-900">{ordersImportResult.sampleRows || 0}</div>
+                    </div>
+                    <div className="rounded-lg border border-violet-200 bg-white px-4 py-3">
+                      <div className="text-xs text-slate-500">样品总数量</div>
+                      <div className="mt-1 text-2xl font-semibold text-slate-900">{ordersImportResult.sampleQty || 0}</div>
+                    </div>
+                    <div className="rounded-lg border border-violet-200 bg-white px-4 py-3">
+                      <div className="text-xs text-slate-500">样品 SKU 数</div>
+                      <div className="mt-1 text-2xl font-semibold text-slate-900">{ordersImportResult.sampleSkuCount || 0}</div>
+                    </div>
+                    <div className="rounded-lg border border-violet-200 bg-white px-4 py-3">
+                      <div className="text-xs text-slate-500">样品收件人/达人数量</div>
+                      <div className="mt-1 text-2xl font-semibold text-slate-900">{ordersImportResult.sampleRecipientCount || 0}</div>
+                    </div>
+                  </div>
+
+                  {(ordersImportResult.sampleBySku?.length || 0) > 0 && (
+                    <div className="mt-4 overflow-x-auto rounded-lg border border-violet-200 bg-white p-3">
+                      <div className="mb-2 text-sm font-medium text-slate-900">按 SKU 样品统计</div>
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-violet-200 text-left text-slate-500">
+                            <th className="px-3 py-2">SKU</th>
+                            <th className="px-3 py-2">样品数量</th>
+                            <th className="px-3 py-2">样品行数</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(ordersImportResult.sampleBySku || []).map((item) => (
+                            <tr key={`sample-sku-top-${item.sku}`} className="border-b border-violet-100">
+                              <td className="px-3 py-2 text-slate-700">{item.sku}</td>
+                              <td className="px-3 py-2 text-slate-700">{item.sampleQty}</td>
+                              <td className="px-3 py-2 text-slate-700">{item.sampleRows}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {(ordersImportResult.sampleByRecipient?.length || 0) > 0 && (
+                    <div className="mt-4 overflow-x-auto rounded-lg border border-violet-200 bg-white p-3">
+                      <div className="mb-2 text-sm font-medium text-slate-900">按达人/收件账号统计</div>
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-violet-200 text-left text-slate-500">
+                            <th className="px-3 py-2">Buyer Username</th>
+                            <th className="px-3 py-2">Buyer Nickname</th>
+                            <th className="px-3 py-2">Recipient</th>
+                            <th className="px-3 py-2">样品数量</th>
+                            <th className="px-3 py-2">样品行数</th>
+                            <th className="px-3 py-2">涉及 SKU</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(ordersImportResult.sampleByRecipient || []).map((item, index) => (
+                            <tr key={`sample-recipient-top-${item.buyerUsername}-${item.recipient}-${index}`} className="border-b border-violet-100">
+                              <td className="px-3 py-2 text-slate-700">{item.buyerUsername || 'unknown'}</td>
+                              <td className="px-3 py-2 text-slate-700">{item.buyerNickname || '-'}</td>
+                              <td className="px-3 py-2 text-slate-700">{item.recipient || '未知收件人'}</td>
+                              <td className="px-3 py-2 text-slate-700">{item.sampleQty}</td>
+                              <td className="px-3 py-2 text-slate-700">{item.sampleRows}</td>
+                              <td className="px-3 py-2 text-slate-700">{item.skus.join('、') || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {(ordersImportResult.sampleByRecipientAndSku?.length || 0) > 0 && (
+                    <details className="mt-4 rounded-lg border border-violet-200 bg-white p-3">
+                      <summary className="cursor-pointer text-sm font-medium text-slate-900">
+                        查看按达人 + SKU 明细
+                      </summary>
+                      <div className="mt-3 overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-violet-200 text-left text-slate-500">
+                              <th className="px-3 py-2">Buyer Username</th>
+                              <th className="px-3 py-2">Buyer Nickname</th>
+                              <th className="px-3 py-2">Recipient</th>
+                              <th className="px-3 py-2">SKU</th>
+                              <th className="px-3 py-2">样品数量</th>
+                              <th className="px-3 py-2">样品行数</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(ordersImportResult.sampleByRecipientAndSku || []).map((item, index) => (
+                              <tr key={`sample-recipient-sku-top-${item.buyerUsername}-${item.recipient}-${item.sku}-${index}`} className="border-b border-violet-100">
+                                <td className="px-3 py-2 text-slate-700">{item.buyerUsername || 'unknown'}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.buyerNickname || '-'}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.recipient || '未知收件人'}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.sku}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.sampleQty}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.sampleRows}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </details>
+                  )}
+                </div>
+              )}
               {ordersImportResult.missingSkus && ordersImportResult.missingSkus.length > 0 && (
                 <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                   <div className="font-medium">缺失 SKU 列表</div>
@@ -2170,107 +2304,6 @@ export default function ProductSalesPage() {
                       ))}
                     </tbody>
                   </table>
-                </div>
-              )}
-              {((ordersImportResult.sampleRows || 0) > 0
-                || (ordersImportResult.sampleBySku?.length || 0) > 0
-                || (ordersImportResult.sampleByRecipient?.length || 0) > 0) && (
-                <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50 p-4">
-                  <div className="text-sm font-medium text-slate-900">样品单统计</div>
-                  <div className="mt-2 flex flex-wrap gap-4 text-sm text-slate-700">
-                    <span>样品订单行数 {ordersImportResult.sampleRows || 0}</span>
-                    <span>样品总数量 {ordersImportResult.sampleQty || 0}</span>
-                    <span>样品 SKU 数 {ordersImportResult.sampleSkuCount || 0}</span>
-                    <span>样品收件人/达人数量 {ordersImportResult.sampleRecipientCount || 0}</span>
-                  </div>
-
-                  {(ordersImportResult.sampleBySku?.length || 0) > 0 && (
-                    <div className="mt-4 overflow-x-auto">
-                      <div className="mb-2 text-sm font-medium text-slate-900">按 SKU 统计</div>
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-violet-200 text-left text-slate-500">
-                            <th className="px-3 py-2">SKU</th>
-                            <th className="px-3 py-2">样品数量</th>
-                            <th className="px-3 py-2">样品行数</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(ordersImportResult.sampleBySku || []).map((item) => (
-                            <tr key={`sample-sku-${item.sku}`} className="border-b border-violet-100">
-                              <td className="px-3 py-2 text-slate-700">{item.sku}</td>
-                              <td className="px-3 py-2 text-slate-700">{item.sampleQty}</td>
-                              <td className="px-3 py-2 text-slate-700">{item.sampleRows}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-
-                  {(ordersImportResult.sampleByRecipient?.length || 0) > 0 && (
-                    <div className="mt-4 overflow-x-auto">
-                      <div className="mb-2 text-sm font-medium text-slate-900">按达人/收件账号统计</div>
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-violet-200 text-left text-slate-500">
-                            <th className="px-3 py-2">Buyer Username</th>
-                            <th className="px-3 py-2">Buyer Nickname</th>
-                            <th className="px-3 py-2">Recipient</th>
-                            <th className="px-3 py-2">样品数量</th>
-                            <th className="px-3 py-2">样品行数</th>
-                            <th className="px-3 py-2">涉及 SKU</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(ordersImportResult.sampleByRecipient || []).map((item, index) => (
-                            <tr key={`sample-recipient-${item.buyerUsername}-${item.recipient}-${index}`} className="border-b border-violet-100">
-                              <td className="px-3 py-2 text-slate-700">{item.buyerUsername || 'unknown'}</td>
-                              <td className="px-3 py-2 text-slate-700">{item.buyerNickname || '-'}</td>
-                              <td className="px-3 py-2 text-slate-700">{item.recipient || '未知收件人'}</td>
-                              <td className="px-3 py-2 text-slate-700">{item.sampleQty}</td>
-                              <td className="px-3 py-2 text-slate-700">{item.sampleRows}</td>
-                              <td className="px-3 py-2 text-slate-700">{item.skus.join('、') || '-'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-
-                  {(ordersImportResult.sampleByRecipientAndSku?.length || 0) > 0 && (
-                    <details className="mt-4 rounded-lg border border-violet-200 bg-white p-3">
-                      <summary className="cursor-pointer text-sm font-medium text-slate-900">
-                        按达人 + SKU 明细
-                      </summary>
-                      <div className="mt-3 overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-violet-200 text-left text-slate-500">
-                              <th className="px-3 py-2">Buyer Username</th>
-                              <th className="px-3 py-2">Buyer Nickname</th>
-                              <th className="px-3 py-2">Recipient</th>
-                              <th className="px-3 py-2">SKU</th>
-                              <th className="px-3 py-2">样品数量</th>
-                              <th className="px-3 py-2">样品行数</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(ordersImportResult.sampleByRecipientAndSku || []).map((item, index) => (
-                              <tr key={`sample-recipient-sku-${item.buyerUsername}-${item.recipient}-${item.sku}-${index}`} className="border-b border-violet-100">
-                                <td className="px-3 py-2 text-slate-700">{item.buyerUsername || 'unknown'}</td>
-                                <td className="px-3 py-2 text-slate-700">{item.buyerNickname || '-'}</td>
-                                <td className="px-3 py-2 text-slate-700">{item.recipient || '未知收件人'}</td>
-                                <td className="px-3 py-2 text-slate-700">{item.sku}</td>
-                                <td className="px-3 py-2 text-slate-700">{item.sampleQty}</td>
-                                <td className="px-3 py-2 text-slate-700">{item.sampleRows}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </details>
-                  )}
                 </div>
               )}
               {ordersImportResult.failedRows.length > 0 && (
