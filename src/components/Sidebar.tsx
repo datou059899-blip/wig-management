@@ -19,6 +19,7 @@ const ICONS: Record<string, string> = {
   products: '📦',
   productOpportunities: '💡',
   productSales: '📊',
+  materials: '🧰',
   influencers: '👥',
   scripts: '📝',
   viralVideos: '🎬',

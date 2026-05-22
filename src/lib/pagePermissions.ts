@@ -38,6 +38,13 @@ export const PAGE_PERMISSIONS = {
     icon: 'Package',
     category: '产品',
   },
+  materials: {
+    id: 'materials',
+    name: '耗材管理',
+    path: '/dashboard/materials',
+    icon: 'Boxes',
+    category: '产品',
+  },
   
   // 达人相关
   influencers: {
@@ -120,12 +127,12 @@ export type PagePermissionKey = keyof typeof PAGE_PERMISSIONS;
 // 角色默认权限映射
 export const ROLE_DEFAULT_PAGES: Record<string, PagePermissionKey[]> = {
   admin: Object.keys(PAGE_PERMISSIONS) as PagePermissionKey[],
-  boss: ['overview', 'performance', 'productSales', 'products', 'influencers', 'scripts', 'viralVideos', 'videoMetrics'],
-  product: ['workbench', 'products', 'productOpportunities', 'productSales', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance'],
-  operator: ['workbench', 'products', 'productOpportunities', 'productSales', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance', 'tiktokSync', 'priceCheck'],
+  boss: ['overview', 'performance', 'productSales', 'materials', 'products', 'influencers', 'scripts', 'viralVideos', 'videoMetrics'],
+  product: ['workbench', 'products', 'productOpportunities', 'productSales', 'materials', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance'],
+  operator: ['workbench', 'products', 'productOpportunities', 'productSales', 'materials', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance', 'tiktokSync', 'priceCheck'],
   bd: ['workbench', 'influencers', 'products', 'scripts', 'viralVideos'],
   editor: ['workbench', 'scripts', 'viralVideos'],
-  viewer: ['overview', 'products', 'productSales', 'performance', 'scripts', 'viralVideos', 'videoMetrics', 'influencers'],
+  viewer: ['overview', 'products', 'productSales', 'materials', 'performance', 'scripts', 'viralVideos', 'videoMetrics', 'influencers'],
 };
 
 // 旧角色映射到新角色
