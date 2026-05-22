@@ -117,6 +117,7 @@ model PerformanceDaily {
   netOrders   Int      @default(0)
   canceledQty Int      @default(0)
   stockConsumedQty Int @default(0)
+  sampleQty   Int      @default(0)
   refundAmount Float   @default(0)
   adsCost     Float    @default(0)
   createdAt   DateTime @default(now())
@@ -140,6 +141,11 @@ model ProductOrderItem {
   netQty                 Int      @default(0)
   canceledQty            Int      @default(0)
   stockConsumedQty       Int      @default(0)
+  isSample               Boolean  @default(false)
+  sampleQty              Int      @default(0)
+  buyerUsername          String?
+  buyerNickname          String?
+  recipient              String?
   refundAmount           Float    @default(0)
   orderStatus            String?
   cancelationReturnType  String?
