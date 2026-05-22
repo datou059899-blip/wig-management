@@ -38,9 +38,16 @@ interface ProductData {
   selectedRangeSales: number
   stock: number
   estimatedStock: number
+  recent3DaySales: number
+  sevenDaySales: number
+  sevenDayAvgSales: number
+  salesToStockRatio: number
+  orderShareRatio: number
+  velocityScore: number
   avgDailySales: number
   activeSalesDays: number
   salesRank: string
+  salesRankPriority: number
   salesRankReason: string
   stockStatus: string
   updatedAt: string
@@ -380,7 +387,7 @@ export default function ProductSalesPage() {
   const [trendFilterError, setTrendFilterError] = useState<string | null>(null)
   const [expandedProductIds, setExpandedProductIds] = useState<string[]>([])
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
-    key: 'sku',
+    key: 'salesRankPriority',
     direction: 'asc',
   })
 
@@ -1338,7 +1345,31 @@ export default function ProductSalesPage() {
     }))
   }
 
+  const compareDefaultSalesRankSort = (a: ProductData, b: ProductData) => {
+    const rankPriorityDiff = a.salesRankPriority - b.salesRankPriority
+    if (rankPriorityDiff !== 0) return rankPriorityDiff
+
+    const velocityScoreDiff = b.velocityScore - a.velocityScore
+    if (velocityScoreDiff !== 0) return velocityScoreDiff
+
+    const recent3DaySalesDiff = b.recent3DaySales - a.recent3DaySales
+    if (recent3DaySalesDiff !== 0) return recent3DaySalesDiff
+
+    const sevenDayAvgSalesDiff = b.sevenDayAvgSales - a.sevenDayAvgSales
+    if (sevenDayAvgSalesDiff !== 0) return sevenDayAvgSalesDiff
+
+    const estimatedStockDiff = a.estimatedStock - b.estimatedStock
+    if (estimatedStockDiff !== 0) return estimatedStockDiff
+
+    return a.sku.localeCompare(b.sku)
+  }
+
   const sortedProducts = [...products].sort((a, b) => {
+    if (sortConfig.key === 'salesRankPriority') {
+      const result = compareDefaultSalesRankSort(a, b)
+      return sortConfig.direction === 'asc' ? result : -result
+    }
+
     const aValue = a[sortConfig.key as keyof ProductData]
     const bValue = b[sortConfig.key as keyof ProductData]
 
@@ -2989,10 +3020,10 @@ export default function ProductSalesPage() {
                             </th>
                             <th className="sticky top-0 z-20 min-w-[120px] bg-slate-50 px-6 py-3 text-center">
                               <button
-                                onClick={() => handleSort('salesRank')}
+                                onClick={() => handleSort('salesRankPriority')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
-                                等级 <SortIcon columnKey="salesRank" />
+                                等级 <SortIcon columnKey="salesRankPriority" />
                               </button>
                             </th>
                             <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
@@ -3089,6 +3120,10 @@ export default function ProductSalesPage() {
                                           </div>
                                           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                                             <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">近3天销量</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.recent3DaySales}</div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
                                               <div className="text-xs text-slate-500">今日销量</div>
                                               <div className="mt-1 text-sm font-semibold text-slate-900">{product.todaySales}</div>
                                             </div>
@@ -3111,6 +3146,10 @@ export default function ProductSalesPage() {
                                             <div className="rounded-lg bg-white px-3 py-3">
                                               <div className="text-xs text-slate-500">预计库存</div>
                                               <div className={`mt-1 text-sm font-semibold ${getEstimatedStockTextClass(product.estimatedStock)}`}>{product.estimatedStock}</div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">动销分</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.velocityScore}</div>
                                             </div>
                                             <div className="rounded-lg bg-white px-3 py-3">
                                               <div className="text-xs text-slate-500">等级</div>

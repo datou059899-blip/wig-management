@@ -119,6 +119,23 @@ function formatPercent(value: number) {
   return `${formatNumber(value * 100, 1)}%`
 }
 
+function getSalesRankPriority(rank: string) {
+  switch (rank) {
+    case 'A':
+      return 1
+    case 'B':
+      return 2
+    case 'C':
+      return 3
+    case 'D':
+      return 4
+    case 'E':
+      return 5
+    default:
+      return 6
+  }
+}
+
 function parseDateInput(value: string) {
   const matched = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (!matched) return null
@@ -251,6 +268,11 @@ export async function GET(request: NextRequest) {
       : DEFAULT_RANK_SETTINGS
     const rankWindowDays = Math.max(rankSettings.windowDays, 1)
     const rankWindowStart = addDays(today, -(rankWindowDays - 1))
+    const recentThreeDayStart = addDays(today, -2)
+    const fixedSevenDayStart = addDays(today, -6)
+    const performanceWindowStart = rankWindowStart.getTime() < fixedSevenDayStart.getTime()
+      ? rankWindowStart
+      : fixedSevenDayStart
 
     const relatedSkuSetByProductId = new Map<string, Set<string>>()
     const ensureRelatedSkuSet = (productId: string) => {
@@ -448,7 +470,7 @@ export async function GET(request: NextRequest) {
     const rankPerformanceData = await prisma.performanceDaily.findMany({
       where: {
         date: {
-          gte: rankWindowStart,
+          gte: performanceWindowStart,
           lt: tomorrow,
         },
       },
@@ -593,49 +615,90 @@ export async function GET(request: NextRequest) {
 
       const rankDailySales = rankDailySalesByProductId.get(product.id) || new Map<string, number>()
       const orderedRankDailySales = Array.from(rankDailySales.entries()).sort((a, b) => a[0].localeCompare(b[0]))
-      const totalRankSales = orderedRankDailySales.reduce((sum, [, sales]) => sum + sales, 0)
-      const avgDailySales = Number((totalRankSales / rankWindowDays).toFixed(2))
-      const activeSalesDays = orderedRankDailySales.filter(([, sales]) => sales > 0).length
+      const rankWindowStartKey = formatDateKey(rankWindowStart)
+      const fixedSevenDayStartKey = formatDateKey(fixedSevenDayStart)
+      const recentThreeDayStartKey = formatDateKey(recentThreeDayStart)
+      const rankWindowDailySales = orderedRankDailySales.filter(([dateKey]) => dateKey >= rankWindowStartKey)
+      const sevenDayDailySales = orderedRankDailySales.filter(([dateKey]) => dateKey >= fixedSevenDayStartKey)
+      const totalRankSales = rankWindowDailySales.reduce((sum, [, dailySales]) => sum + dailySales, 0)
+      const rankWindowAvgDailySales = Number((totalRankSales / rankWindowDays).toFixed(2))
+      const rankWindowActiveSalesDays = rankWindowDailySales.filter(([, dailySales]) => dailySales > 0).length
+      const sevenDaySales = sevenDayDailySales.reduce((sum, [, dailySales]) => sum + dailySales, 0)
+      const sevenDayAvgSales = Number((sevenDaySales / 7).toFixed(2))
+      const sevenDayActiveSalesDays = sevenDayDailySales.filter(([, dailySales]) => dailySales > 0).length
+      const recent3DaySales = sevenDayDailySales.reduce((sum, [dateKey, dailySales]) => (
+        dateKey >= recentThreeDayStartKey ? sum + dailySales : sum
+      ), 0)
+      const sevenDaySalesToStockRatio = estimatedStock > 0 ? sevenDaySales / estimatedStock : 0
+      let matchedStockRatio = 0
+      let matchedOrderShareRatio = 0
+      let maxOrderShareRatio = 0
 
       let salesRank = 'F'
       let salesRankReason = `F 不出单：近${rankWindowDays}天无销量`
 
-      if (avgDailySales >= rankSettings.aDailySalesThreshold) {
+      if (rankWindowAvgDailySales >= rankSettings.aDailySalesThreshold) {
         salesRank = 'A'
-        salesRankReason = `A 大爆品：近${rankWindowDays}天日均销量 ${formatNumber(avgDailySales)}，达到 A 标准`
-      } else if (avgDailySales >= rankSettings.bDailySalesThreshold) {
+        salesRankReason = `A 大爆品：近${rankWindowDays}天日均销量 ${formatNumber(rankWindowAvgDailySales)}，达到 A 标准`
+      } else if (rankWindowAvgDailySales >= rankSettings.bDailySalesThreshold) {
         salesRank = 'B'
-        salesRankReason = `B 小爆品：近${rankWindowDays}天日均销量 ${formatNumber(avgDailySales)}，达到 B 标准`
+        salesRankReason = `B 小爆品：近${rankWindowDays}天日均销量 ${formatNumber(rankWindowAvgDailySales)}，达到 B 标准`
       } else {
-        const recentOrderedDailySales = [...orderedRankDailySales].sort((a, b) => b[0].localeCompare(a[0]))
+        const recentOrderedDailySales = [...rankWindowDailySales].sort((a, b) => b[0].localeCompare(a[0]))
         let cReason = ''
 
         for (const [dateKey, dailySales] of recentOrderedDailySales) {
           if (dailySales <= 0) continue
 
           if (estimatedStock > 0 && dailySales >= estimatedStock * rankSettings.cStockRatioThreshold) {
+            matchedStockRatio = dailySales / estimatedStock
             cReason = `C 潜力品：${dateKey.slice(5)} 单日销量 ${formatNumber(dailySales)}，占当前预计库存 ${formatPercent(dailySales / estimatedStock)}`
             break
           }
 
           const storeDailySales = storeSalesByDate.get(dateKey) || 0
+          if (storeDailySales > 0) {
+            maxOrderShareRatio = Math.max(maxOrderShareRatio, dailySales / storeDailySales)
+          }
           if (storeDailySales > 0 && dailySales >= storeDailySales * rankSettings.cOrderRatioThreshold) {
+            matchedOrderShareRatio = dailySales / storeDailySales
             cReason = `C 潜力品：${dateKey.slice(5)} 单日销量 ${formatNumber(dailySales)}，占当天全店订单 ${formatPercent(dailySales / storeDailySales)}`
             break
           }
         }
 
+        sevenDayDailySales.forEach(([dateKey, dailySales]) => {
+          if (dailySales <= 0) return
+          const storeDailySales = storeSalesByDate.get(dateKey) || 0
+          if (storeDailySales > 0) {
+            maxOrderShareRatio = Math.max(maxOrderShareRatio, dailySales / storeDailySales)
+          }
+        })
+
         if (cReason) {
           salesRank = 'C'
           salesRankReason = cReason
-        } else if (activeSalesDays >= rankSettings.dActiveDaysThreshold) {
+        } else if (rankWindowActiveSalesDays >= rankSettings.dActiveDaysThreshold) {
           salesRank = 'D'
-          salesRankReason = `D 稳定动销：近${rankWindowDays}天有${activeSalesDays}天出单`
-        } else if (activeSalesDays > 0) {
+          salesRankReason = `D 稳定动销：近${rankWindowDays}天有${rankWindowActiveSalesDays}天出单`
+        } else if (rankWindowActiveSalesDays > 0) {
           salesRank = 'E'
           salesRankReason = `E 弱动销：近${rankWindowDays}天有销量，但未达到 A/B/C/D`
         }
       }
+
+      const salesToStockRatio = Number((
+        matchedStockRatio > 0 ? matchedStockRatio : sevenDaySalesToStockRatio
+      ).toFixed(4))
+      const orderShareRatio = Number((
+        matchedOrderShareRatio > 0 ? matchedOrderShareRatio : maxOrderShareRatio
+      ).toFixed(4))
+      const velocityScore = Number((
+        recent3DaySales * 3
+        + sevenDayAvgSales * 5
+        + salesToStockRatio * 20
+        + orderShareRatio * 20
+      ).toFixed(2))
 
       let stockStatus = '正常'
       if (currentStock === 0) {
@@ -657,9 +720,16 @@ export async function GET(request: NextRequest) {
         selectedRangeSales: sales.selectedRange,
         stock: currentStock,
         estimatedStock,
-        avgDailySales,
-        activeSalesDays,
+        recent3DaySales,
+        sevenDaySales,
+        sevenDayAvgSales,
+        salesToStockRatio,
+        orderShareRatio,
+        velocityScore,
+        avgDailySales: sevenDayAvgSales,
+        activeSalesDays: sevenDayActiveSalesDays,
         salesRank,
+        salesRankPriority: getSalesRankPriority(salesRank),
         salesRankReason,
         stockStatus,
         updatedAt: product.updatedAt.toISOString(),
