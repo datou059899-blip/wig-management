@@ -104,22 +104,10 @@ const WRITE_BATCH_SIZE = 200
 const LOOKUP_BATCH_SIZE = 500
 const TIMEOUT_GUARD_MS = 45_000
 const SAMPLE_ORDER_AMOUNT_FIELDS = [
-  'Order Payment',
   'Order Amount',
-  'Buyer Paid Amount',
-  'Paid Amount',
-  'Actual Paid Amount',
-  'Payment',
-  'Total Payment',
-  'Order Total',
-  'Order Total Amount',
-  'Grand Total',
-  'Final Amount',
-  'Final Price',
-  'Subtotal After Discount',
+  'SKU Unit Original Price',
+  'SKU Subtotal Before Discount',
   'SKU Subtotal After Discount',
-  'Product Amount',
-  'Items Subtotal',
 ]
 const SAMPLE_ORDER_KEYWORD_FIELDS = [
   'Order Type',
@@ -131,6 +119,10 @@ const SAMPLE_ORDER_KEYWORD_FIELDS = [
   'Tags',
   'Promotion Name',
   'Campaign Name',
+]
+const SAMPLE_ORDER_EMPTY_FIELDS = [
+  'Payment Method',
+  'Normal or Pre-order',
 ]
 
 function normalizeHeader(value: unknown) {
@@ -359,28 +351,29 @@ function looksLikeSampleKeyword(value: string) {
 }
 
 function resolveSampleOrder(record: Record<string, unknown>) {
+  const strongZeroAmountMatched = SAMPLE_ORDER_AMOUNT_FIELDS.every((field) => {
+    const rawValue = record[field]
+    const text = normalizeCell(rawValue)
+    if (!text && rawValue !== 0) return false
+    return parseNumber(rawValue) === 0
+  })
+  const strongEmptyFieldMatched = SAMPLE_ORDER_EMPTY_FIELDS.every((field) => !normalizeCell(record[field]))
+
+  if (strongZeroAmountMatched && strongEmptyFieldMatched) {
+    return {
+      isSample: true,
+      reason: 'zero-amount-strong-rule',
+    }
+  }
+
   const keywordMatched = SAMPLE_ORDER_KEYWORD_FIELDS.some((field) => {
     const value = normalizeCell(record[field])
     return value ? looksLikeSampleKeyword(value) : false
   })
 
-  const amountCandidates = SAMPLE_ORDER_AMOUNT_FIELDS
-    .map((field) => {
-      const rawValue = record[field]
-      const text = normalizeCell(rawValue)
-      if (!text && rawValue !== 0) return null
-      return {
-        field,
-        value: parseNumber(rawValue),
-      }
-    })
-    .filter((item): item is { field: string; value: number } => Boolean(item))
-
-  const zeroAmountMatched = amountCandidates.length > 0 && amountCandidates.every((item) => item.value === 0)
-
   return {
-    isSample: keywordMatched || zeroAmountMatched,
-    reason: keywordMatched ? 'keyword' : zeroAmountMatched ? 'zero-amount' : '',
+    isSample: keywordMatched,
+    reason: keywordMatched ? 'keyword' : '',
   }
 }
 
@@ -525,6 +518,7 @@ function buildSummary(orderItems: Array<{
   netQty: number
   canceledQty: number
   stockConsumedQty: number
+  isSample?: boolean
   refundAmount: number
 }>) {
   const summaryByDateMap = new Map<string, {
@@ -557,7 +551,7 @@ function buildSummary(orderItems: Array<{
       stockConsumedQty: 0,
       refundAmount: 0,
     }
-    byDate.grossOrders += item.quantity
+    byDate.grossOrders += item.isSample ? 0 : item.quantity
     byDate.returnQty += item.returnQty
     byDate.netOrders += item.netQty
     byDate.canceledQty += item.canceledQty
@@ -574,7 +568,7 @@ function buildSummary(orderItems: Array<{
       stockConsumedQty: 0,
       refundAmount: 0,
     }
-    bySku.grossOrders += item.quantity
+    bySku.grossOrders += item.isSample ? 0 : item.quantity
     bySku.returnQty += item.returnQty
     bySku.netOrders += item.netQty
     bySku.canceledQty += item.canceledQty
@@ -920,7 +914,7 @@ async function loadAggregatedMatchedOrderItems(
     SELECT
       poi."sellerSku" AS "sku",
       poi."paidDate" AS "date",
-      SUM(poi."quantity") AS "grossOrders",
+      SUM(CASE WHEN poi."isSample" THEN 0 ELSE poi."quantity" END) AS "grossOrders",
       SUM(poi."returnQty") AS "returnQty",
       SUM(poi."netQty") AS "netOrders",
       SUM(poi."canceledQty") AS "canceledQty",
