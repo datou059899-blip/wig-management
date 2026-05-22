@@ -784,32 +784,6 @@ export async function GET(request: NextRequest) {
       snapshotsBySku.set(item.sku, bucket)
     })
 
-    const stockConsumedByTargetMap = new Map<string, Map<string, number>>()
-    const exactConsumedSkuTargetMap = new Map<string, string>()
-    const normalizedConsumedSkuTargetMap = new Map<string, string>()
-    inventoryTargets.forEach((target) => {
-      target.consumedSkus.forEach((sku) => {
-        const value = normalizeCell(sku)
-        if (!value) return
-        exactConsumedSkuTargetMap.set(value, target.key)
-        const normalized = normalizeSkuForCompare(value)
-        if (normalized) {
-          normalizedConsumedSkuTargetMap.set(normalized, target.key)
-        }
-      })
-    })
-
-    performanceData.forEach((item) => {
-      const targetKey = exactConsumedSkuTargetMap.get(item.sku)
-        || normalizedConsumedSkuTargetMap.get(normalizeSkuForCompare(item.sku))
-      if (!targetKey) return
-
-      const dateKey = formatDateKey(startOfDay(new Date(item.date)))
-      const consumedByDate = stockConsumedByTargetMap.get(targetKey) || new Map<string, number>()
-      consumedByDate.set(dateKey, (consumedByDate.get(dateKey) || 0) + (item.stockConsumedQty || 0))
-      stockConsumedByTargetMap.set(targetKey, consumedByDate)
-    })
-
     const totalDays = Math.max(
       1,
       Math.round((selectedRange.endExclusive.getTime() - selectedRange.startDate.getTime()) / 86_400_000),
@@ -860,6 +834,68 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    const inventoryConsumptionStartDate = inventoryStates.reduce((earliest, targetState) => {
+      if (!targetState.activeBaseline) return earliest
+      return targetState.activeBaseline.baselineDate.getTime() < earliest.getTime()
+        ? targetState.activeBaseline.baselineDate
+        : earliest
+    }, selectedRange.startDate)
+
+    const inventoryConsumedSkuList = Array.from(new Set(
+      inventoryTargets.flatMap((target) => target.consumedSkus.map((sku) => normalizeCell(sku)).filter(Boolean)),
+    ))
+
+    const inventoryPerformanceData = inventoryConsumedSkuList.length
+      ? await prisma.performanceDaily.findMany({
+          where: {
+            date: {
+              gte: inventoryConsumptionStartDate,
+              lt: selectedRange.endExclusive,
+            },
+            sku: {
+              in: inventoryConsumedSkuList,
+            },
+          },
+          select: {
+            sku: true,
+            orders: true,
+            netOrders: true,
+            stockConsumedQty: true,
+            date: true,
+          },
+          orderBy: [
+            { date: 'asc' },
+            { sku: 'asc' },
+          ],
+        })
+      : []
+
+    const stockConsumedByTargetMap = new Map<string, Map<string, number>>()
+    const exactConsumedSkuTargetMap = new Map<string, string>()
+    const normalizedConsumedSkuTargetMap = new Map<string, string>()
+    inventoryTargets.forEach((target) => {
+      target.consumedSkus.forEach((sku) => {
+        const value = normalizeCell(sku)
+        if (!value) return
+        exactConsumedSkuTargetMap.set(value, target.key)
+        const normalized = normalizeSkuForCompare(value)
+        if (normalized) {
+          normalizedConsumedSkuTargetMap.set(normalized, target.key)
+        }
+      })
+    })
+
+    inventoryPerformanceData.forEach((item) => {
+      const targetKey = exactConsumedSkuTargetMap.get(item.sku)
+        || normalizedConsumedSkuTargetMap.get(normalizeSkuForCompare(item.sku))
+      if (!targetKey) return
+
+      const dateKey = formatDateKey(startOfDay(new Date(item.date)))
+      const consumedByDate = stockConsumedByTargetMap.get(targetKey) || new Map<string, number>()
+      consumedByDate.set(dateKey, (consumedByDate.get(dateKey) || 0) + (item.stockConsumedQty || 0))
+      stockConsumedByTargetMap.set(targetKey, consumedByDate)
+    })
+
     inventoryStates.forEach((targetState) => {
       const consumedByDate = stockConsumedByTargetMap.get(targetState.target.key) || new Map<string, number>()
       const targetSeries = targetState.activeBaseline
@@ -897,6 +933,30 @@ export async function GET(request: NextRequest) {
 
     if (selectedSku) {
       const debugTarget = inventoryStates[0]
+      const debugTargetKey = debugTarget?.target.key || ''
+      const debugConsumedByDate = stockConsumedByTargetMap.get(debugTargetKey) || new Map<string, number>()
+      const debugPerformanceRows = inventoryPerformanceData
+        .filter((item) => {
+          const targetKey = exactConsumedSkuTargetMap.get(item.sku)
+            || normalizedConsumedSkuTargetMap.get(normalizeSkuForCompare(item.sku))
+          return targetKey === debugTargetKey
+        })
+        .map((item) => ({
+          date: formatDateKey(startOfDay(new Date(item.date))),
+          sku: item.sku,
+          orders: item.orders || 0,
+          netOrders: item.netOrders || 0,
+          stockConsumedQty: item.stockConsumedQty || 0,
+        }))
+
+      if (debugPerformanceRows.some((item) => (item.orders > 0 || item.netOrders > 0) && item.stockConsumedQty === 0)) {
+        console.warn('Product sales inventory trend stockConsumedQty warning:', {
+          selectedSku,
+          baselineDate: debugTarget?.activeBaseline ? formatDateKey(debugTarget.activeBaseline.baselineDate) : null,
+          rows: debugPerformanceRows,
+        })
+      }
+
       console.log('Product sales inventory trend debug:', {
         selectedSku,
         resolvedProductSku: debugTarget?.target.productSku || null,
@@ -905,6 +965,9 @@ export async function GET(request: NextRequest) {
         baselineSku: debugTarget?.activeBaseline?.sku || null,
         baselineDate: debugTarget?.activeBaseline ? formatDateKey(debugTarget.activeBaseline.baselineDate) : null,
         baselineQty: debugTarget?.activeBaseline?.quantity ?? null,
+        inventoryConsumptionStartDate: formatDateKey(inventoryConsumptionStartDate),
+        performanceRows: debugPerformanceRows,
+        consumedByDate: Array.from(debugConsumedByDate.entries()).map(([date, qty]) => ({ date, qty })),
         snapshotCount: debugTarget?.resolvedSnapshots.length || 0,
         firstSnapshot: debugTarget?.firstSnapshot
           ? {

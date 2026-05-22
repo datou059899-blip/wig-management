@@ -227,21 +227,6 @@ export async function GET(request: NextRequest) {
       })
     })
 
-    const performanceData = await prisma.performanceDaily.findMany({
-      where: {
-        date: {
-          gte: queryStartDate,
-          lt: queryEndExclusive,
-        },
-      },
-      select: {
-        sku: true,
-        orders: true,
-        stockConsumedQty: true,
-        date: true,
-      },
-    })
-
     const productSkus = products
       .map((product) => normalizeCell(product.sku))
       .filter(Boolean)
@@ -323,6 +308,39 @@ export async function GET(request: NextRequest) {
       })
     })
 
+    const inventoryConsumptionStartDate = baselines.reduce((earliest, baseline) => {
+      const baselineDate = startOfDay(new Date(baseline.baselineDate))
+      return baselineDate.getTime() < earliest.getTime() ? baselineDate : earliest
+    }, today)
+
+    const salesPerformanceData = await prisma.performanceDaily.findMany({
+      where: {
+        date: {
+          gte: queryStartDate,
+          lt: queryEndExclusive,
+        },
+      },
+      select: {
+        sku: true,
+        orders: true,
+        date: true,
+      },
+    })
+
+    const inventoryPerformanceData = await prisma.performanceDaily.findMany({
+      where: {
+        date: {
+          gte: inventoryConsumptionStartDate,
+          lt: tomorrow,
+        },
+      },
+      select: {
+        sku: true,
+        stockConsumedQty: true,
+        date: true,
+      },
+    })
+
     const salesBySku: Record<string, {
       today: number
       yesterday: number
@@ -339,7 +357,7 @@ export async function GET(request: NextRequest) {
 
     const consumedRowsByProductId = new Map<string, Array<{ date: Date; qty: number }>>()
 
-    performanceData.forEach((perf) => {
+    salesPerformanceData.forEach((perf) => {
       if (!perf.sku) return
 
       if (!salesBySku[perf.sku]) {
@@ -363,6 +381,12 @@ export async function GET(request: NextRequest) {
         salesBySku[perf.sku].selectedRange += perf.orders
       }
 
+    })
+
+    inventoryPerformanceData.forEach((perf) => {
+      if (!perf.sku) return
+
+      const perfDate = startOfDay(new Date(perf.date))
       const productId = relatedSkuToProductIdExact.get(perf.sku)
         || relatedSkuToProductIdNormalized.get(normalizeSkuForCompare(perf.sku))
       if (!productId) return
