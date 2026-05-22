@@ -10,12 +10,17 @@ const ADJUSTMENT_TYPES = new Set(['replenish', 'manual_adjust', 'damage', 'other
 type AdjustmentPayloadItem = {
   sku: string
   quantity: number
+  adjustmentDate?: string
   lineNumber?: number
+  rawLine?: string
 }
 
 type AdjustmentFailure = {
   lineNumber: number
   sku: string
+  quantity?: number | null
+  date?: string
+  rawLine?: string
   reason: string
 }
 
@@ -29,7 +34,8 @@ function normalizeSkuKey(value: string) {
 }
 
 function parseDateInput(value: string) {
-  const matched = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  const normalized = normalizeCell(value).replace(/\//g, '-')
+  const matched = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (!matched) return null
 
   const [, yearText, monthText, dayText] = matched
@@ -105,7 +111,9 @@ function validateAdjustmentItem(item: unknown, index: number, type: string): {
 } {
   const sku = normalizeCell((item as any)?.sku)
   const quantity = Number((item as any)?.quantity)
+  const adjustmentDate = normalizeCell((item as any)?.adjustmentDate)
   const rawLineNumber = Number((item as any)?.lineNumber)
+  const rawLine = normalizeCell((item as any)?.rawLine)
   const lineNumber = Number.isInteger(rawLineNumber) && rawLineNumber > 0 ? rawLineNumber : index + 1
 
   if (!sku) {
@@ -114,6 +122,9 @@ function validateAdjustmentItem(item: unknown, index: number, type: string): {
       failure: {
         lineNumber,
         sku: '',
+        quantity: Number.isFinite(quantity) ? quantity : null,
+        date: adjustmentDate,
+        rawLine,
         reason: 'SKU 不能为空',
       },
     }
@@ -125,6 +136,9 @@ function validateAdjustmentItem(item: unknown, index: number, type: string): {
       failure: {
         lineNumber,
         sku,
+        quantity: Number.isFinite(quantity) ? quantity : null,
+        date: adjustmentDate,
+        rawLine,
         reason: '调整数量不能为 0，且必须是整数',
       },
     }
@@ -136,6 +150,9 @@ function validateAdjustmentItem(item: unknown, index: number, type: string): {
       failure: {
         lineNumber,
         sku,
+        quantity,
+        date: adjustmentDate,
+        rawLine,
         reason: '补货数量必须为正数',
       },
     }
@@ -147,6 +164,9 @@ function validateAdjustmentItem(item: unknown, index: number, type: string): {
       failure: {
         lineNumber,
         sku,
+        quantity,
+        date: adjustmentDate,
+        rawLine,
         reason: '损耗数量必须为负数',
       },
     }
@@ -156,7 +176,9 @@ function validateAdjustmentItem(item: unknown, index: number, type: string): {
     item: {
       sku,
       quantity,
+      adjustmentDate,
       lineNumber,
+      rawLine,
     },
     failure: null,
   }
@@ -193,17 +215,21 @@ export async function POST(request: NextRequest) {
     if (error) return error
 
     const body = await request.json()
-    const adjustmentDateText = normalizeCell(body?.adjustmentDate)
+    const defaultAdjustmentDateText = normalizeCell(body?.adjustmentDate)
     const type = normalizeCell(body?.type)
     const note = normalizeCell(body?.note)
 
-    if (!adjustmentDateText) {
-      return NextResponse.json({ error: '调整日期不能为空' }, { status: 400 })
-    }
+    const defaultAdjustmentDate = defaultAdjustmentDateText ? parseDateInput(defaultAdjustmentDateText) : null
 
-    const adjustmentDate = parseDateInput(adjustmentDateText)
-    if (!adjustmentDate) {
-      return NextResponse.json({ error: '调整日期格式必须为 YYYY-MM-DD' }, { status: 400 })
+    if (!Array.isArray(body?.items)) {
+      if (!defaultAdjustmentDateText) {
+        return NextResponse.json({ error: '调整日期不能为空' }, { status: 400 })
+      }
+      if (!defaultAdjustmentDate) {
+        return NextResponse.json({ error: '调整日期格式必须为 YYYY-MM-DD' }, { status: 400 })
+      }
+    } else if (defaultAdjustmentDateText && !defaultAdjustmentDate) {
+      return NextResponse.json({ error: '统一调整日期格式必须为 YYYY-MM-DD' }, { status: 400 })
     }
 
     if (!ADJUSTMENT_TYPES.has(type)) {
@@ -215,11 +241,12 @@ export async function POST(request: NextRequest) {
       : [{
           sku: body?.sku,
           quantity: body?.quantity,
+          adjustmentDate: body?.adjustmentDate,
           lineNumber: 1,
         }]
 
     const failures: AdjustmentFailure[] = []
-    const dedupedItemsBySkuKey = new Map<string, AdjustmentPayloadItem>()
+    const dedupedItemsByCompositeKey = new Map<string, AdjustmentPayloadItem & { resolvedAdjustmentDateText: string }>()
     let duplicateInInputCount = 0
 
     rawItems.forEach((item, index) => {
@@ -230,14 +257,44 @@ export async function POST(request: NextRequest) {
       }
       if (!validatedItem) return
 
-      const skuKey = normalizeSkuKey(validatedItem.sku)
-      if (dedupedItemsBySkuKey.has(skuKey)) {
+      const effectiveDateText = normalizeCell(validatedItem.adjustmentDate) || defaultAdjustmentDateText
+      if (!effectiveDateText) {
+        failures.push({
+          lineNumber: validatedItem.lineNumber || index + 1,
+          sku: validatedItem.sku,
+          quantity: validatedItem.quantity,
+          date: '',
+          rawLine: validatedItem.rawLine || '',
+          reason: '缺少调整日期',
+        })
+        return
+      }
+
+      const parsedItemDate = parseDateInput(effectiveDateText)
+      if (!parsedItemDate) {
+        failures.push({
+          lineNumber: validatedItem.lineNumber || index + 1,
+          sku: validatedItem.sku,
+          quantity: validatedItem.quantity,
+          date: effectiveDateText,
+          rawLine: validatedItem.rawLine || '',
+          reason: '调整日期格式必须为 YYYY-MM-DD',
+        })
+        return
+      }
+
+      const resolvedAdjustmentDateText = formatDateKey(parsedItemDate)
+      const compositeKey = `${normalizeSkuKey(validatedItem.sku)}::${resolvedAdjustmentDateText}::${validatedItem.quantity}::${type}`
+      if (dedupedItemsByCompositeKey.has(compositeKey)) {
         duplicateInInputCount += 1
       }
-      dedupedItemsBySkuKey.set(skuKey, validatedItem)
+      dedupedItemsByCompositeKey.set(compositeKey, {
+        ...validatedItem,
+        resolvedAdjustmentDateText,
+      })
     })
 
-    const items = Array.from(dedupedItemsBySkuKey.values())
+    const items = Array.from(dedupedItemsByCompositeKey.values())
     if (!items.length) {
       return NextResponse.json({
         error: failures.length > 0 ? '没有可保存的补货/调整数据' : 'SKU 不能为空',
@@ -245,6 +302,8 @@ export async function POST(request: NextRequest) {
         failureCount: failures.length,
         duplicateInInputCount,
         unmatchedSkuCount: 0,
+        usedItemDateCount: 0,
+        usedDefaultDateCount: 0,
         failures,
       }, { status: 400 })
     }
@@ -274,13 +333,15 @@ export async function POST(request: NextRequest) {
     })
 
     const unmatchedSkuCount = items.filter((item) => !knownSkuKeys.has(normalizeSkuKey(item.sku))).length
+    const usedItemDateCount = items.filter((item) => normalizeCell(item.adjustmentDate)).length
+    const usedDefaultDateCount = items.length - usedItemDateCount
 
     if (!Array.isArray(body?.items)) {
       const adjustment = await prisma.productStockAdjustment.create({
         data: {
           sku: items[0].sku,
           quantity: items[0].quantity,
-          adjustmentDate,
+          adjustmentDate: parseDateInput(items[0].resolvedAdjustmentDateText)!,
           type,
           note: note || null,
         },
@@ -292,6 +353,8 @@ export async function POST(request: NextRequest) {
         failureCount: failures.length,
         duplicateInInputCount,
         unmatchedSkuCount,
+        usedItemDateCount,
+        usedDefaultDateCount,
         failures,
       })
     }
@@ -300,7 +363,7 @@ export async function POST(request: NextRequest) {
       data: items.map((item) => ({
         sku: item.sku,
         quantity: item.quantity,
-        adjustmentDate,
+        adjustmentDate: parseDateInput(item.resolvedAdjustmentDateText)!,
         type,
         note: note || null,
       })),
@@ -311,6 +374,8 @@ export async function POST(request: NextRequest) {
       failureCount: failures.length,
       duplicateInInputCount,
       unmatchedSkuCount,
+      usedItemDateCount,
+      usedDefaultDateCount,
       failures,
     })
   } catch (error) {

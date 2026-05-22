@@ -89,6 +89,9 @@ interface ProductSalesRankSetting {
 interface BulkItemFailure {
   lineNumber: number
   sku: string
+  quantity?: number | null
+  date?: string
+  rawLine?: string
   reason: string
 }
 
@@ -99,6 +102,8 @@ interface BulkSaveSummary {
   failureCount: number
   duplicateInInputCount?: number
   unmatchedSkuCount?: number
+  usedItemDateCount?: number
+  usedDefaultDateCount?: number
   failures: BulkItemFailure[]
 }
 
@@ -307,8 +312,12 @@ const ADJUSTMENT_TYPE_OPTIONS = [
   { value: 'other', label: '其他' },
 ]
 
+function normalizeDateInput(value: string) {
+  return value.trim().replace(/\//g, '-')
+}
+
 function parseBulkSkuQuantityText(text: string) {
-  const items: Array<{ sku: string; quantity: number; lineNumber: number }> = []
+  const items: Array<{ sku: string; quantity: number; date?: string; lineNumber: number; rawLine: string }> = []
   const failures: BulkItemFailure[] = []
 
   text.split(/\r?\n/).forEach((rawLine, index) => {
@@ -316,23 +325,37 @@ function parseBulkSkuQuantityText(text: string) {
     const line = rawLine.trim()
     if (!line) return
 
-    const matched = line.match(/^(.*?)(?:,|\t|\s+)(-?\d+)\s*$/)
-    if (!matched) {
+    let parts: string[] = []
+    if (line.includes('\t')) {
+      parts = line.split('\t').map((part) => part.trim()).filter(Boolean)
+    } else if (line.includes(',')) {
+      parts = line.split(',').map((part) => part.trim()).filter(Boolean)
+    } else {
+      parts = line.split(/\s+/).filter(Boolean)
+    }
+
+    if (parts.length < 2 || parts.length > 3) {
       failures.push({
         lineNumber,
         sku: '',
+        rawLine: rawLine.trim(),
         reason: '格式不正确，请使用“SKU 数量”、“SKU,数量”或“SKU+Tab+数量”',
       })
       return
     }
 
-    const sku = matched[1].trim()
-    const quantity = Number(matched[2])
+    const sku = parts[0].trim()
+    const quantityText = parts[1]
+    const quantity = Number(quantityText)
+    const dateText = parts[2] ? normalizeDateInput(parts[2]) : ''
 
     if (!sku) {
       failures.push({
         lineNumber,
         sku: '',
+        quantity: Number.isFinite(quantity) ? quantity : null,
+        date: dateText,
+        rawLine: rawLine.trim(),
         reason: 'SKU 不能为空',
       })
       return
@@ -342,6 +365,9 @@ function parseBulkSkuQuantityText(text: string) {
       failures.push({
         lineNumber,
         sku,
+        quantity: null,
+        date: dateText,
+        rawLine: rawLine.trim(),
         reason: '数量必须是整数',
       })
       return
@@ -350,7 +376,9 @@ function parseBulkSkuQuantityText(text: string) {
     items.push({
       sku,
       quantity,
+      date: dateText,
       lineNumber,
+      rawLine: rawLine.trim(),
     })
   })
 
@@ -999,7 +1027,13 @@ export default function ProductSalesPage() {
         return
       }
       payload = {
-        items: parsed.items,
+        items: parsed.items.map((item) => ({
+          sku: item.sku,
+          quantity: item.quantity,
+          baselineDate: item.date || undefined,
+          lineNumber: item.lineNumber,
+          rawLine: item.rawLine,
+        })),
         baselineDate: baselineFormDate,
         note: baselineFormNote,
       }
@@ -1051,6 +1085,8 @@ export default function ProductSalesPage() {
         failureCount: (data.failureCount || 0) + bulkFailures.length,
         duplicateInInputCount: data.duplicateInInputCount,
         unmatchedSkuCount: data.unmatchedSkuCount,
+        usedItemDateCount: data.usedItemDateCount,
+        usedDefaultDateCount: data.usedDefaultDateCount,
         failures: [...bulkFailures, ...(Array.isArray(data.failures) ? data.failures : [])],
       }
 
@@ -1122,7 +1158,13 @@ export default function ProductSalesPage() {
         return
       }
       payload = {
-        items: parsed.items,
+        items: parsed.items.map((item) => ({
+          sku: item.sku,
+          quantity: item.quantity,
+          adjustmentDate: item.date || undefined,
+          lineNumber: item.lineNumber,
+          rawLine: item.rawLine,
+        })),
         adjustmentDate: adjustmentFormDate,
         type: adjustmentFormType,
         note: adjustmentFormNote,
@@ -1184,6 +1226,8 @@ export default function ProductSalesPage() {
         failureCount: (data.failureCount || 0) + bulkFailures.length,
         duplicateInInputCount: data.duplicateInInputCount,
         unmatchedSkuCount: data.unmatchedSkuCount,
+        usedItemDateCount: data.usedItemDateCount,
+        usedDefaultDateCount: data.usedDefaultDateCount,
         failures: [...bulkFailures, ...(Array.isArray(data.failures) ? data.failures : [])],
       }
 
@@ -2448,10 +2492,10 @@ export default function ProductSalesPage() {
                                 }}
                                 rows={8}
                                 className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
-                                placeholder={`SMH-12 100\nSM412-8 50\nRM4263 30`}
+                                placeholder={`SMH-12 100 2026-05-20\nSM412-8 50 2026-05-21\nRM4263 30`}
                                 disabled={savingBaseline}
                               />
-                              <p className="mt-1 text-xs text-slate-500">每行一个 SKU 和数量，支持空格、逗号或 Tab 分隔。</p>
+                              <p className="mt-1 text-xs text-slate-500">每行一个 SKU、数量，可选日期。支持空格、逗号或 Tab 分隔。如果不填日期，则使用下方统一基准日期。</p>
                             </div>
                           )}
 
@@ -2502,6 +2546,8 @@ export default function ProductSalesPage() {
                                 <span>失败 {baselineSaveSummary.failureCount}</span>
                                 <span>输入重复 {baselineSaveSummary.duplicateInInputCount || 0}</span>
                                 <span>未匹配 SKU {baselineSaveSummary.unmatchedSkuCount || 0}</span>
+                                <span>使用单独日期 {baselineSaveSummary.usedItemDateCount || 0}</span>
+                                <span>使用统一日期 {baselineSaveSummary.usedDefaultDateCount || 0}</span>
                               </div>
                               {baselineSaveSummary.failures.length > 0 && (
                                 <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
@@ -2509,7 +2555,10 @@ export default function ProductSalesPage() {
                                     <thead>
                                       <tr className="border-b border-slate-200 text-left text-slate-500">
                                         <th className="px-3 py-2">行号</th>
+                                        <th className="px-3 py-2">原始行</th>
                                         <th className="px-3 py-2">SKU</th>
+                                        <th className="px-3 py-2">数量</th>
+                                        <th className="px-3 py-2">日期</th>
                                         <th className="px-3 py-2">失败原因</th>
                                       </tr>
                                     </thead>
@@ -2517,7 +2566,10 @@ export default function ProductSalesPage() {
                                       {baselineSaveSummary.failures.map((item, index) => (
                                         <tr key={`${item.lineNumber}-${item.sku}-${index}`} className="border-b border-slate-100">
                                           <td className="px-3 py-2 text-slate-700">{item.lineNumber}</td>
+                                          <td className="px-3 py-2 text-slate-500">{item.rawLine || '-'}</td>
                                           <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.quantity ?? '-'}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.date || '-'}</td>
                                           <td className="px-3 py-2 text-rose-700">{item.reason}</td>
                                         </tr>
                                       ))}
@@ -2691,10 +2743,10 @@ export default function ProductSalesPage() {
                                 }}
                                 rows={8}
                                 className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
-                                placeholder={`SMH-12 50\nSM412-8 20\nRM4263 -5`}
+                                placeholder={`SMH-12 50 2026-05-20\nSM412-8 20 2026-05-21\nRM4263 -5 2026-05-22`}
                                 disabled={savingAdjustment}
                               />
-                              <p className="mt-1 text-xs text-slate-500">每行一个 SKU 和数量，支持空格、逗号或 Tab 分隔。</p>
+                              <p className="mt-1 text-xs text-slate-500">每行一个 SKU、数量，可选日期。支持空格、逗号或 Tab 分隔。如果不填日期，则使用下方统一变更日期。</p>
                             </div>
                           )}
 
@@ -2763,6 +2815,8 @@ export default function ProductSalesPage() {
                                 <span>失败 {adjustmentSaveSummary.failureCount}</span>
                                 <span>输入重复 {adjustmentSaveSummary.duplicateInInputCount || 0}</span>
                                 <span>未匹配 SKU {adjustmentSaveSummary.unmatchedSkuCount || 0}</span>
+                                <span>使用单独日期 {adjustmentSaveSummary.usedItemDateCount || 0}</span>
+                                <span>使用统一日期 {adjustmentSaveSummary.usedDefaultDateCount || 0}</span>
                               </div>
                               {adjustmentSaveSummary.failures.length > 0 && (
                                 <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
@@ -2770,7 +2824,10 @@ export default function ProductSalesPage() {
                                     <thead>
                                       <tr className="border-b border-slate-200 text-left text-slate-500">
                                         <th className="px-3 py-2">行号</th>
+                                        <th className="px-3 py-2">原始行</th>
                                         <th className="px-3 py-2">SKU</th>
+                                        <th className="px-3 py-2">数量</th>
+                                        <th className="px-3 py-2">日期</th>
                                         <th className="px-3 py-2">失败原因</th>
                                       </tr>
                                     </thead>
@@ -2778,7 +2835,10 @@ export default function ProductSalesPage() {
                                       {adjustmentSaveSummary.failures.map((item, index) => (
                                         <tr key={`${item.lineNumber}-${item.sku}-${index}`} className="border-b border-slate-100">
                                           <td className="px-3 py-2 text-slate-700">{item.lineNumber}</td>
+                                          <td className="px-3 py-2 text-slate-500">{item.rawLine || '-'}</td>
                                           <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.quantity ?? '-'}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.date || '-'}</td>
                                           <td className="px-3 py-2 text-rose-700">{item.reason}</td>
                                         </tr>
                                       ))}

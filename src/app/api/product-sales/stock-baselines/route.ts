@@ -8,12 +8,17 @@ export const dynamic = 'force-dynamic'
 type BaselinePayloadItem = {
   sku: string
   quantity: number
+  baselineDate?: string
   lineNumber?: number
+  rawLine?: string
 }
 
 type BaselineFailure = {
   lineNumber: number
   sku: string
+  quantity?: number | null
+  date?: string
+  rawLine?: string
   reason: string
 }
 
@@ -27,7 +32,8 @@ function normalizeSkuKey(value: string) {
 }
 
 function parseDateInput(value: string) {
-  const matched = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  const normalized = normalizeCell(value).replace(/\//g, '-')
+  const matched = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (!matched) return null
 
   const [, yearText, monthText, dayText] = matched
@@ -101,7 +107,9 @@ function validateBaselineItem(item: unknown, index: number): {
 } {
   const sku = normalizeCell((item as any)?.sku)
   const quantity = Number((item as any)?.quantity)
+  const baselineDate = normalizeCell((item as any)?.baselineDate)
   const rawLineNumber = Number((item as any)?.lineNumber)
+  const rawLine = normalizeCell((item as any)?.rawLine)
   const lineNumber = Number.isInteger(rawLineNumber) && rawLineNumber > 0 ? rawLineNumber : index + 1
 
   if (!sku) {
@@ -110,6 +118,9 @@ function validateBaselineItem(item: unknown, index: number): {
       failure: {
         lineNumber,
         sku: '',
+        quantity: Number.isFinite(quantity) ? quantity : null,
+        date: baselineDate,
+        rawLine,
         reason: 'SKU 不能为空',
       },
     }
@@ -121,6 +132,9 @@ function validateBaselineItem(item: unknown, index: number): {
       failure: {
         lineNumber,
         sku,
+        quantity: Number.isFinite(quantity) ? quantity : null,
+        date: baselineDate,
+        rawLine,
         reason: '初始库存必须是大于等于 0 的整数',
       },
     }
@@ -130,7 +144,9 @@ function validateBaselineItem(item: unknown, index: number): {
     item: {
       sku,
       quantity,
+      baselineDate,
       lineNumber,
+      rawLine,
     },
     failure: null,
   }
@@ -167,16 +183,19 @@ export async function POST(request: NextRequest) {
     if (error) return error
 
     const body = await request.json()
-    const baselineDateText = normalizeCell(body?.baselineDate)
+    const defaultBaselineDateText = normalizeCell(body?.baselineDate)
     const note = normalizeCell(body?.note)
+    const defaultBaselineDate = defaultBaselineDateText ? parseDateInput(defaultBaselineDateText) : null
 
-    if (!baselineDateText) {
-      return NextResponse.json({ error: '基准日期不能为空' }, { status: 400 })
-    }
-
-    const baselineDate = parseDateInput(baselineDateText)
-    if (!baselineDate) {
-      return NextResponse.json({ error: '基准日期格式必须为 YYYY-MM-DD' }, { status: 400 })
+    if (!Array.isArray(body?.items)) {
+      if (!defaultBaselineDateText) {
+        return NextResponse.json({ error: '基准日期不能为空' }, { status: 400 })
+      }
+      if (!defaultBaselineDate) {
+        return NextResponse.json({ error: '基准日期格式必须为 YYYY-MM-DD' }, { status: 400 })
+      }
+    } else if (defaultBaselineDateText && !defaultBaselineDate) {
+      return NextResponse.json({ error: '统一基准日期格式必须为 YYYY-MM-DD' }, { status: 400 })
     }
 
     const rawItems: unknown[] = Array.isArray(body?.items)
@@ -184,11 +203,12 @@ export async function POST(request: NextRequest) {
       : [{
           sku: body?.sku,
           quantity: body?.quantity,
+          baselineDate: body?.baselineDate,
           lineNumber: 1,
         }]
 
     const failures: BaselineFailure[] = []
-    const dedupedItemsBySkuKey = new Map<string, BaselinePayloadItem>()
+    const dedupedItemsBySkuDateKey = new Map<string, BaselinePayloadItem & { resolvedBaselineDateText: string }>()
     let duplicateInInputCount = 0
 
     rawItems.forEach((item, index) => {
@@ -199,14 +219,44 @@ export async function POST(request: NextRequest) {
       }
       if (!validatedItem) return
 
-      const skuKey = normalizeSkuKey(validatedItem.sku)
-      if (dedupedItemsBySkuKey.has(skuKey)) {
+      const effectiveDateText = normalizeCell(validatedItem.baselineDate) || defaultBaselineDateText
+      if (!effectiveDateText) {
+        failures.push({
+          lineNumber: validatedItem.lineNumber || index + 1,
+          sku: validatedItem.sku,
+          quantity: validatedItem.quantity,
+          date: '',
+          rawLine: validatedItem.rawLine || '',
+          reason: '缺少基准日期',
+        })
+        return
+      }
+
+      const parsedItemDate = parseDateInput(effectiveDateText)
+      if (!parsedItemDate) {
+        failures.push({
+          lineNumber: validatedItem.lineNumber || index + 1,
+          sku: validatedItem.sku,
+          quantity: validatedItem.quantity,
+          date: effectiveDateText,
+          rawLine: validatedItem.rawLine || '',
+          reason: '基准日期格式必须为 YYYY-MM-DD',
+        })
+        return
+      }
+
+      const resolvedBaselineDateText = formatDateKey(parsedItemDate)
+      const skuDateKey = `${normalizeSkuKey(validatedItem.sku)}::${resolvedBaselineDateText}`
+      if (dedupedItemsBySkuDateKey.has(skuDateKey)) {
         duplicateInInputCount += 1
       }
-      dedupedItemsBySkuKey.set(skuKey, validatedItem)
+      dedupedItemsBySkuDateKey.set(skuDateKey, {
+        ...validatedItem,
+        resolvedBaselineDateText,
+      })
     })
 
-    const items = Array.from(dedupedItemsBySkuKey.values())
+    const items = Array.from(dedupedItemsBySkuDateKey.values())
     if (!items.length) {
       return NextResponse.json({
         error: failures.length > 0 ? '没有可保存的库存基准数据' : 'SKU 不能为空',
@@ -216,6 +266,8 @@ export async function POST(request: NextRequest) {
         failureCount: failures.length,
         duplicateInInputCount,
         unmatchedSkuCount: 0,
+        usedItemDateCount: 0,
+        usedDefaultDateCount: 0,
         failures,
       }, { status: 400 })
     }
@@ -234,13 +286,14 @@ export async function POST(request: NextRequest) {
       }),
       prisma.productStockBaseline.findMany({
         where: {
-          sku: {
-            in: items.map((item) => item.sku),
-          },
-          baselineDate,
+          OR: items.map((item) => ({
+            sku: item.sku,
+            baselineDate: parseDateInput(item.resolvedBaselineDateText)!,
+          })),
         },
         select: {
           sku: true,
+          baselineDate: true,
         },
       }),
     ])
@@ -256,14 +309,16 @@ export async function POST(request: NextRequest) {
     })
 
     const unmatchedSkuCount = items.filter((item) => !knownSkuKeys.has(normalizeSkuKey(item.sku))).length
-    const existingSkuSet = new Set(existingBaselines.map((item) => item.sku))
+    const existingSkuDateSet = new Set(existingBaselines.map((item) => `${normalizeSkuKey(item.sku)}::${formatDateKey(item.baselineDate)}`))
+    const usedItemDateCount = items.filter((item) => normalizeCell(item.baselineDate)).length
+    const usedDefaultDateCount = items.length - usedItemDateCount
 
     const savedBaselines = await prisma.$transaction(items.map((item) => (
       prisma.productStockBaseline.upsert({
         where: {
           sku_baselineDate: {
             sku: item.sku,
-            baselineDate,
+            baselineDate: parseDateInput(item.resolvedBaselineDateText)!,
           },
         },
         update: {
@@ -273,13 +328,13 @@ export async function POST(request: NextRequest) {
         create: {
           sku: item.sku,
           quantity: item.quantity,
-          baselineDate,
+          baselineDate: parseDateInput(item.resolvedBaselineDateText)!,
           note: note || null,
         },
       })
     )))
 
-    const createdCount = items.filter((item) => !existingSkuSet.has(item.sku)).length
+    const createdCount = items.filter((item) => !existingSkuDateSet.has(`${normalizeSkuKey(item.sku)}::${item.resolvedBaselineDateText}`)).length
     const updatedCount = items.length - createdCount
 
     if (!Array.isArray(body?.items)) {
@@ -292,6 +347,8 @@ export async function POST(request: NextRequest) {
         failureCount: failures.length,
         duplicateInInputCount,
         unmatchedSkuCount,
+        usedItemDateCount,
+        usedDefaultDateCount,
         failures,
       })
     }
@@ -303,6 +360,8 @@ export async function POST(request: NextRequest) {
       failureCount: failures.length,
       duplicateInInputCount,
       unmatchedSkuCount,
+      usedItemDateCount,
+      usedDefaultDateCount,
       failures,
       baselines: savedBaselines.map(serializeBaseline),
     })
