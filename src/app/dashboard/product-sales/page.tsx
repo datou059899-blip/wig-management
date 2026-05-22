@@ -335,6 +335,38 @@ interface TrendSummary {
   refundAmount: number
 }
 
+interface SampleStatsRecipient {
+  buyerUsername: string
+  buyerNickname: string
+  recipient: string
+  sampleQty: number
+  sampleRows: number
+  skus: string[]
+}
+
+interface SampleStatsRecipientSku {
+  buyerUsername: string
+  buyerNickname: string
+  recipient: string
+  sku: string
+  sampleQty: number
+  sampleRows: number
+}
+
+interface SampleStatsData {
+  range: TrendRange
+  startDate: string
+  endDate: string
+  sku: string
+  sampleRows: number
+  totalSampleQty: number
+  sampleSkuCount: number
+  sampleRecipientCount: number
+  sampleBySku: OrderImportSampleBySku[]
+  sampleByRecipient: SampleStatsRecipient[]
+  sampleByRecipientAndSku: SampleStatsRecipientSku[]
+}
+
 interface SkuOption {
   sku: string
   label: string
@@ -465,9 +497,17 @@ export default function ProductSalesPage() {
     canceledQty: 0,
     refundAmount: 0,
   })
+  const [sampleStatsRange, setSampleStatsRange] = useState<TrendRange>('7')
+  const [sampleStatsStartDate, setSampleStatsStartDate] = useState('')
+  const [sampleStatsEndDate, setSampleStatsEndDate] = useState('')
+  const [sampleStatsCustomStartDate, setSampleStatsCustomStartDate] = useState(getTodayInputValue())
+  const [sampleStatsCustomEndDate, setSampleStatsCustomEndDate] = useState(getTodayInputValue())
+  const [sampleStatsSku, setSampleStatsSku] = useState('')
+  const [sampleStats, setSampleStats] = useState<SampleStatsData | null>(null)
 
   const [loading, setLoading] = useState(true)
   const [trendLoading, setTrendLoading] = useState(false)
+  const [sampleStatsLoading, setSampleStatsLoading] = useState(false)
   const [tableRangeLoading, setTableRangeLoading] = useState(false)
   const [importingInventory, setImportingInventory] = useState(false)
   const [importingOrders, setImportingOrders] = useState(false)
@@ -530,6 +570,7 @@ export default function ProductSalesPage() {
   const [ordersError, setOrdersError] = useState<string | null>(null)
   const [skuImportError, setSkuImportError] = useState<string | null>(null)
   const [trendFilterError, setTrendFilterError] = useState<string | null>(null)
+  const [sampleStatsError, setSampleStatsError] = useState<string | null>(null)
   const [expandedProductIds, setExpandedProductIds] = useState<string[]>([])
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
     key: 'salesRankPriority',
@@ -539,6 +580,24 @@ export default function ProductSalesPage() {
   const buildRangeParams = (range: TrendRange, startDate = trendStartDate, endDate = trendEndDate) => {
     const params = new URLSearchParams()
     params.set('range', range)
+    if (range === 'custom') {
+      params.set('startDate', startDate)
+      params.set('endDate', endDate)
+    }
+    return params
+  }
+
+  const buildSampleStatsParams = (
+    range: TrendRange,
+    sku = sampleStatsSku,
+    startDate = sampleStatsStartDate,
+    endDate = sampleStatsEndDate,
+  ) => {
+    const params = new URLSearchParams()
+    params.set('range', range)
+    if (sku) {
+      params.set('sku', sku)
+    }
     if (range === 'custom') {
       params.set('startDate', startDate)
       params.set('endDate', endDate)
@@ -694,6 +753,57 @@ export default function ProductSalesPage() {
     }
   }
 
+  const loadSampleStats = async (
+    range = sampleStatsRange,
+    sku = sampleStatsSku,
+    startDate = sampleStatsStartDate,
+    endDate = sampleStatsEndDate,
+    showLoading = true,
+  ) => {
+    try {
+      if (showLoading) {
+        setSampleStatsLoading(true)
+      }
+
+      const response = await fetch(`/api/product-sales/sample-stats?${buildSampleStatsParams(range, sku, startDate, endDate).toString()}`)
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || '获取样品统计失败')
+      }
+
+      setSampleStats({
+        range: (data.range as TrendRange) || '7',
+        startDate: data.startDate || '',
+        endDate: data.endDate || '',
+        sku: data.sku || '',
+        sampleRows: data.sampleRows || 0,
+        totalSampleQty: data.totalSampleQty || 0,
+        sampleSkuCount: data.sampleSkuCount || 0,
+        sampleRecipientCount: data.sampleRecipientCount || 0,
+        sampleBySku: Array.isArray(data.sampleBySku) ? data.sampleBySku : [],
+        sampleByRecipient: Array.isArray(data.sampleByRecipient) ? data.sampleByRecipient : [],
+        sampleByRecipientAndSku: Array.isArray(data.sampleByRecipientAndSku) ? data.sampleByRecipientAndSku : [],
+      })
+      setSampleStatsRange((data.range as TrendRange) || '7')
+      setSampleStatsStartDate(data.startDate || '')
+      setSampleStatsEndDate(data.endDate || '')
+      setSampleStatsSku(data.sku || '')
+      if (data.startDate) {
+        setSampleStatsCustomStartDate(data.startDate)
+      }
+      if (data.endDate) {
+        setSampleStatsCustomEndDate(data.endDate)
+      }
+      setSampleStatsError(null)
+    } catch (err) {
+      setSampleStatsError(err instanceof Error ? err.message : '获取样品统计失败')
+    } finally {
+      if (showLoading) {
+        setSampleStatsLoading(false)
+      }
+    }
+  }
+
   useEffect(() => {
     const initialize = async () => {
       try {
@@ -704,6 +814,7 @@ export default function ProductSalesPage() {
           loadGroups(),
           loadRankSettings(),
           loadTrendData('', '', '7', '', '', false),
+          loadSampleStats('7', '', '', '', false),
         ])
         setError(null)
       } catch (err) {
@@ -724,6 +835,7 @@ export default function ProductSalesPage() {
       loadGroups(),
       loadRankSettings(),
       loadTrendData(selectedSku, selectedGroupId, trendRange, trendStartDate, trendEndDate, false),
+      loadSampleStats(sampleStatsRange, sampleStatsSku, sampleStatsStartDate, sampleStatsEndDate, false),
     ])
     router.refresh()
   }
@@ -753,6 +865,26 @@ export default function ProductSalesPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : '更新时间筛选失败')
     }
+  }
+
+  const applySampleStatsRange = async (
+    nextRange: TrendRange,
+    nextStartDate: string,
+    nextEndDate: string,
+    nextSku = sampleStatsSku,
+  ) => {
+    if (nextRange === 'custom') {
+      if (!nextStartDate || !nextEndDate) {
+        setSampleStatsError('请选择开始日期和结束日期')
+        return
+      }
+      if (nextStartDate > nextEndDate) {
+        setSampleStatsError('开始日期不能大于结束日期')
+        return
+      }
+    }
+
+    await loadSampleStats(nextRange, nextSku, nextStartDate, nextEndDate, true)
   }
 
   const handleImportInventory = () => {
@@ -2561,6 +2693,228 @@ export default function ProductSalesPage() {
                     </div>
                   </div>
                 </div>
+              </div>
+
+              <div className="mb-8 rounded-lg border border-violet-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">样品统计</h2>
+                    <p className="mt-1 text-sm text-slate-600">从历史样品订单中长期统计寄样数量，刷新页面后仍会自动显示。</p>
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                    <select
+                      value={sampleStatsSku}
+                      onChange={(event) => {
+                        const nextSku = event.target.value
+                        setSampleStatsSku(nextSku)
+                        void loadSampleStats(sampleStatsRange, nextSku, sampleStatsStartDate, sampleStatsEndDate)
+                      }}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                    >
+                      <option value="">全部 SKU</option>
+                      {skuOptions.map((option) => (
+                        <option key={`persistent-sample-option-${option.sku}`} value={option.sku}>
+                          {option.sku}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="inline-flex rounded-lg border border-slate-300 p-1">
+                      <button
+                        onClick={() => void applySampleStatsRange('today', '', '', sampleStatsSku)}
+                        className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                          sampleStatsRange === 'today' ? 'bg-violet-700 text-white' : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        今日
+                      </button>
+                      <button
+                        onClick={() => void applySampleStatsRange('7', '', '', sampleStatsSku)}
+                        className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                          sampleStatsRange === '7' ? 'bg-violet-700 text-white' : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        最近 7 天
+                      </button>
+                      <button
+                        onClick={() => void applySampleStatsRange('30', '', '', sampleStatsSku)}
+                        className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                          sampleStatsRange === '30' ? 'bg-violet-700 text-white' : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        最近 30 天
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSampleStatsRange('custom')
+                          setSampleStatsError(null)
+                          if (sampleStatsStartDate) {
+                            setSampleStatsCustomStartDate(sampleStatsStartDate)
+                          }
+                          if (sampleStatsEndDate) {
+                            setSampleStatsCustomEndDate(sampleStatsEndDate)
+                          }
+                        }}
+                        className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                          sampleStatsRange === 'custom' ? 'bg-violet-700 text-white' : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        自定义时间
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {sampleStatsRange === 'custom' && (
+                  <div className="mt-4 flex flex-col gap-3 rounded-lg border border-violet-200 bg-violet-50 p-4 lg:flex-row lg:items-end">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-900">开始日期</label>
+                      <input
+                        type="date"
+                        value={sampleStatsCustomStartDate}
+                        onChange={(event) => {
+                          setSampleStatsCustomStartDate(event.target.value)
+                          setSampleStatsError(null)
+                        }}
+                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-900">结束日期</label>
+                      <input
+                        type="date"
+                        value={sampleStatsCustomEndDate}
+                        onChange={(event) => {
+                          setSampleStatsCustomEndDate(event.target.value)
+                          setSampleStatsError(null)
+                        }}
+                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      onClick={() => void applySampleStatsRange('custom', sampleStatsCustomStartDate, sampleStatsCustomEndDate, sampleStatsSku)}
+                      className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-medium text-white hover:bg-violet-800"
+                    >
+                      查询
+                    </button>
+                  </div>
+                )}
+
+                {sampleStatsError && (
+                  <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {sampleStatsError}
+                  </div>
+                )}
+
+                {sampleStatsLoading ? (
+                  <div className="mt-6 text-sm text-slate-500">样品统计加载中...</div>
+                ) : (
+                  <>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3">
+                        <div className="text-xs text-slate-500">样品订单行数</div>
+                        <div className="mt-1 text-2xl font-semibold text-slate-900">{sampleStats?.sampleRows || 0}</div>
+                      </div>
+                      <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3">
+                        <div className="text-xs text-slate-500">样品总数量</div>
+                        <div className="mt-1 text-2xl font-semibold text-slate-900">{sampleStats?.totalSampleQty || 0}</div>
+                      </div>
+                      <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3">
+                        <div className="text-xs text-slate-500">样品 SKU 数</div>
+                        <div className="mt-1 text-2xl font-semibold text-slate-900">{sampleStats?.sampleSkuCount || 0}</div>
+                      </div>
+                      <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3">
+                        <div className="text-xs text-slate-500">样品收件人/达人数量</div>
+                        <div className="mt-1 text-2xl font-semibold text-slate-900">{sampleStats?.sampleRecipientCount || 0}</div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <div className="mb-2 text-sm font-medium text-slate-900">按 SKU 样品统计</div>
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-200 text-left text-slate-500">
+                              <th className="px-3 py-2">SKU</th>
+                              <th className="px-3 py-2">样品数量</th>
+                              <th className="px-3 py-2">样品行数</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(sampleStats?.sampleBySku || []).slice(0, 20).map((item) => (
+                              <tr key={`persistent-sample-sku-${item.sku}`} className="border-b border-slate-100">
+                                <td className="px-3 py-2 text-slate-700">{item.sku}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.sampleQty}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.sampleRows}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <div className="mb-2 text-sm font-medium text-slate-900">按达人/收件账号统计</div>
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-200 text-left text-slate-500">
+                              <th className="px-3 py-2">Buyer Username</th>
+                              <th className="px-3 py-2">Buyer Nickname</th>
+                              <th className="px-3 py-2">Recipient</th>
+                              <th className="px-3 py-2">样品数量</th>
+                              <th className="px-3 py-2">样品行数</th>
+                              <th className="px-3 py-2">涉及 SKU</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(sampleStats?.sampleByRecipient || []).slice(0, 20).map((item, index) => (
+                              <tr key={`persistent-sample-recipient-${item.buyerUsername}-${item.recipient}-${index}`} className="border-b border-slate-100">
+                                <td className="px-3 py-2 text-slate-700">{item.buyerUsername || 'unknown'}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.buyerNickname || '-'}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.recipient || '未知收件人'}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.sampleQty}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.sampleRows}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.skus.join('、') || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {(sampleStats?.sampleByRecipientAndSku?.length || 0) > 0 && (
+                      <details className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <summary className="cursor-pointer text-sm font-medium text-slate-900">
+                          查看按达人 + SKU 明细
+                        </summary>
+                        <div className="mt-3 overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-slate-200 text-left text-slate-500">
+                                <th className="px-3 py-2">Buyer Username</th>
+                                <th className="px-3 py-2">Buyer Nickname</th>
+                                <th className="px-3 py-2">Recipient</th>
+                                <th className="px-3 py-2">SKU</th>
+                                <th className="px-3 py-2">样品数量</th>
+                                <th className="px-3 py-2">样品行数</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(sampleStats?.sampleByRecipientAndSku || []).slice(0, 20).map((item, index) => (
+                                <tr key={`persistent-sample-recipient-sku-${item.buyerUsername}-${item.recipient}-${item.sku}-${index}`} className="border-b border-slate-100">
+                                  <td className="px-3 py-2 text-slate-700">{item.buyerUsername || 'unknown'}</td>
+                                  <td className="px-3 py-2 text-slate-700">{item.buyerNickname || '-'}</td>
+                                  <td className="px-3 py-2 text-slate-700">{item.recipient || '未知收件人'}</td>
+                                  <td className="px-3 py-2 text-slate-700">{item.sku}</td>
+                                  <td className="px-3 py-2 text-slate-700">{item.sampleQty}</td>
+                                  <td className="px-3 py-2 text-slate-700">{item.sampleRows}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </details>
+                    )}
+                  </>
+                )}
               </div>
 
               {stockBaselineOpen && (

@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
+type RangeKey = 'today' | '7' | '30' | 'custom'
+
 function normalizeCell(value: unknown) {
   if (value === null || value === undefined) return ''
   return typeof value === 'string' ? value.trim() : String(value).trim()
@@ -21,6 +23,81 @@ function addDays(date: Date, days: number) {
   const next = new Date(date)
   next.setDate(next.getDate() + days)
   return next
+}
+
+function startOfDay(date: Date) {
+  const normalized = new Date(date)
+  normalized.setHours(0, 0, 0, 0)
+  return normalized
+}
+
+function formatDateKey(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function resolveRange(searchParams: URLSearchParams) {
+  const requestedRange = String(searchParams.get('range') || '7').trim()
+  const today = startOfDay(new Date())
+  const tomorrow = addDays(today, 1)
+
+  if (requestedRange === 'today') {
+    return {
+      range: 'today' as RangeKey,
+      startDate: today,
+      endDate: today,
+      endExclusive: tomorrow,
+      startDateText: formatDateKey(today),
+      endDateText: formatDateKey(today),
+    }
+  }
+
+  if (requestedRange === '30') {
+    const startDate = addDays(today, -29)
+    return {
+      range: '30' as RangeKey,
+      startDate,
+      endDate: today,
+      endExclusive: tomorrow,
+      startDateText: formatDateKey(startDate),
+      endDateText: formatDateKey(today),
+    }
+  }
+
+  if (requestedRange === 'custom') {
+    const startDateText = normalizeCell(searchParams.get('startDate'))
+    const endDateText = normalizeCell(searchParams.get('endDate'))
+    const startDate = parseDateInput(startDateText)
+    const endDate = parseDateInput(endDateText)
+
+    if (!startDate || !endDate) {
+      throw new Error('请提供有效的开始日期和结束日期')
+    }
+    if (startDate.getTime() > endDate.getTime()) {
+      throw new Error('开始日期不能大于结束日期')
+    }
+
+    return {
+      range: 'custom' as RangeKey,
+      startDate,
+      endDate,
+      endExclusive: addDays(endDate, 1),
+      startDateText,
+      endDateText,
+    }
+  }
+
+  const startDate = addDays(today, -6)
+  return {
+    range: '7' as RangeKey,
+    startDate,
+    endDate: today,
+    endExclusive: tomorrow,
+    startDateText: formatDateKey(startDate),
+    endDateText: formatDateKey(today),
+  }
 }
 
 function buildRecipientKey(item: {
@@ -47,27 +124,16 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const startDateText = normalizeCell(searchParams.get('startDate'))
-    const endDateText = normalizeCell(searchParams.get('endDate'))
     const requestedSku = normalizeCell(searchParams.get('sku'))
     const requestedBuyerUsername = normalizeCell(searchParams.get('buyerUsername'))
-
-    const startDate = parseDateInput(startDateText)
-    const endDate = parseDateInput(endDateText)
-
-    if (!startDate || !endDate) {
-      return NextResponse.json({ error: '请提供有效的开始日期和结束日期' }, { status: 400 })
-    }
-    if (startDate.getTime() > endDate.getTime()) {
-      return NextResponse.json({ error: '开始日期不能大于结束日期' }, { status: 400 })
-    }
+    const selectedRange = resolveRange(searchParams)
 
     const rows = await prisma.productOrderItem.findMany({
       where: {
         isSample: true,
         paidDate: {
-          gte: startDate,
-          lt: addDays(endDate, 1),
+          gte: selectedRange.startDate,
+          lt: selectedRange.endExclusive,
         },
         ...(requestedSku ? { sellerSku: requestedSku } : {}),
         ...(requestedBuyerUsername
@@ -187,12 +253,15 @@ export async function GET(request: NextRequest) {
       ))
 
     return NextResponse.json({
-      startDate: startDateText,
-      endDate: endDateText,
+      range: selectedRange.range,
+      startDate: selectedRange.startDateText,
+      endDate: selectedRange.endDateText,
       sku: requestedSku,
       buyerUsername: requestedBuyerUsername,
       totalSampleQty: rows.reduce((sum, item) => sum + (item.sampleQty || 0), 0),
       sampleRows: rows.length,
+      sampleSkuCount: sampleBySku.length,
+      sampleRecipientCount: sampleByRecipient.length,
       sampleBySku,
       sampleByRecipient,
       sampleByRecipientAndSku,
