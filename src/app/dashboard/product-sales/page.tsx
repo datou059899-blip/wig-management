@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import {
@@ -378,6 +378,7 @@ export default function ProductSalesPage() {
   const [ordersError, setOrdersError] = useState<string | null>(null)
   const [skuImportError, setSkuImportError] = useState<string | null>(null)
   const [trendFilterError, setTrendFilterError] = useState<string | null>(null)
+  const [expandedProductIds, setExpandedProductIds] = useState<string[]>([])
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
     key: 'sku',
     direction: 'asc',
@@ -1357,6 +1358,69 @@ export default function ProductSalesPage() {
       return <span className="text-slate-400 text-xs">⇅</span>
     }
     return <span className="text-pink-500 text-xs">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+  }
+
+  const toggleProductDetails = (productId: string) => {
+    setExpandedProductIds((prev) => (
+      prev.includes(productId)
+        ? prev.filter((item) => item !== productId)
+        : [...prev, productId]
+    ))
+  }
+
+  const getRankLabel = (rank: string) => {
+    switch (rank) {
+      case 'A':
+        return 'A 大爆品'
+      case 'B':
+        return 'B 小爆品'
+      case 'C':
+        return 'C 潜力'
+      case 'D':
+        return 'D 稳定'
+      case 'E':
+        return 'E 弱动销'
+      default:
+        return 'F 不出单'
+    }
+  }
+
+  const getRankBadgeClass = (rank: string) => {
+    switch (rank) {
+      case 'A':
+        return 'bg-rose-100 text-rose-700 border border-rose-200'
+      case 'B':
+        return 'bg-orange-100 text-orange-700 border border-orange-200'
+      case 'C':
+        return 'bg-sky-100 text-sky-700 border border-sky-200'
+      case 'D':
+        return 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+      case 'E':
+        return 'bg-amber-100 text-amber-700 border border-amber-200'
+      default:
+        return 'bg-slate-100 text-slate-700 border border-slate-200'
+    }
+  }
+
+  const getStockStatusLabel = (stockStatus: string) => {
+    if (stockStatus === '断货') return '缺货'
+    return stockStatus
+  }
+
+  const getStockStatusBadgeClass = (stockStatus: string) => {
+    if (stockStatus === '断货') {
+      return 'bg-red-100 text-red-700 border border-red-200'
+    }
+    if (stockStatus === '低库存') {
+      return 'bg-amber-100 text-amber-700 border border-amber-200'
+    }
+    return 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+  }
+
+  const getEstimatedStockTextClass = (estimatedStock: number) => {
+    if (estimatedStock === 0) return 'text-red-700'
+    if (estimatedStock <= 10) return 'text-orange-700'
+    return 'text-slate-900'
   }
 
   const filteredBaselines = stockBaselines.filter((item) => !baselineFormSku || item.sku === baselineFormSku)
@@ -2880,10 +2944,10 @@ export default function ProductSalesPage() {
                       {tableRangeLoading && <span className="text-slate-500">筛选期销量刷新中...</span>}
                     </div>
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
+                      <table className="min-w-[1220px] w-full text-sm">
                         <thead>
                           <tr className="bg-slate-50 border-b border-slate-200">
-                            <th className="px-6 py-3 text-left">
+                            <th className="sticky top-0 left-0 z-30 min-w-[120px] bg-slate-50 px-6 py-3 text-left">
                               <button
                                 onClick={() => handleSort('sku')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
@@ -2891,47 +2955,7 @@ export default function ProductSalesPage() {
                                 SKU <SortIcon columnKey="sku" />
                               </button>
                             </th>
-                            <th className="px-6 py-3 text-center">
-                              <button
-                                onClick={() => handleSort('todaySales')}
-                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                              >
-                                今日销量 <SortIcon columnKey="todaySales" />
-                              </button>
-                            </th>
-                            <th className="px-6 py-3 text-center">
-                              <button
-                                onClick={() => handleSort('yesterdaySales')}
-                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                              >
-                                昨日销量 <SortIcon columnKey="yesterdaySales" />
-                              </button>
-                            </th>
-                            <th className="px-6 py-3 text-center">
-                              <button
-                                onClick={() => handleSort('weekSales')}
-                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                              >
-                                近7天销量 <SortIcon columnKey="weekSales" />
-                              </button>
-                            </th>
-                            <th className="px-6 py-3 text-center">
-                              <button
-                                onClick={() => handleSort('monthSales')}
-                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                              >
-                                近30天销量 <SortIcon columnKey="monthSales" />
-                              </button>
-                            </th>
-                            <th className="px-6 py-3 text-center">
-                              <button
-                                onClick={() => handleSort('selectedRangeSales')}
-                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                              >
-                                筛选期销量 <SortIcon columnKey="selectedRangeSales" />
-                              </button>
-                            </th>
-                            <th className="px-6 py-3 text-center">
+                            <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
                               <button
                                 onClick={() => handleSort('estimatedStock')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
@@ -2939,42 +2963,39 @@ export default function ProductSalesPage() {
                                 预计库存 <SortIcon columnKey="estimatedStock" />
                               </button>
                             </th>
-                            <th className="px-6 py-3 text-center">
+                            <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('weekSales')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                7天销量 <SortIcon columnKey="weekSales" />
+                              </button>
+                            </th>
+                            <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
                               <button
                                 onClick={() => handleSort('avgDailySales')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
-                                近7天日均销量 <SortIcon columnKey="avgDailySales" />
+                                7天均销 <SortIcon columnKey="avgDailySales" />
                               </button>
                             </th>
-                            <th className="px-6 py-3 text-center">
+                            <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
                               <button
                                 onClick={() => handleSort('activeSalesDays')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
-                                近7天出单天数 <SortIcon columnKey="activeSalesDays" />
+                                出单天数 <SortIcon columnKey="activeSalesDays" />
                               </button>
                             </th>
-                            <th className="px-6 py-3 text-center">
+                            <th className="sticky top-0 z-20 min-w-[120px] bg-slate-50 px-6 py-3 text-center">
                               <button
                                 onClick={() => handleSort('salesRank')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
-                                动销等级 <SortIcon columnKey="salesRank" />
+                                等级 <SortIcon columnKey="salesRank" />
                               </button>
                             </th>
-                            <th className="px-6 py-3 text-left font-semibold text-slate-900">
-                              等级原因
-                            </th>
-                            <th className="px-6 py-3 text-center">
-                              <button
-                                onClick={() => handleSort('stock')}
-                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                              >
-                                当前库存 <SortIcon columnKey="stock" />
-                              </button>
-                            </th>
-                            <th className="px-6 py-3 text-center">
+                            <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
                               <button
                                 onClick={() => handleSort('stockStatus')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
@@ -2982,7 +3003,7 @@ export default function ProductSalesPage() {
                                 库存状态 <SortIcon columnKey="stockStatus" />
                               </button>
                             </th>
-                            <th className="px-6 py-3 text-left">
+                            <th className="sticky top-0 z-20 min-w-[140px] bg-slate-50 px-6 py-3 text-left">
                               <button
                                 onClick={() => handleSort('updatedAt')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
@@ -2990,7 +3011,7 @@ export default function ProductSalesPage() {
                                 更新时间 <SortIcon columnKey="updatedAt" />
                               </button>
                             </th>
-                            <th className="px-6 py-3 text-center font-semibold text-slate-900">
+                            <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center font-semibold text-slate-900">
                               操作
                             </th>
                           </tr>
@@ -2998,65 +3019,125 @@ export default function ProductSalesPage() {
                         <tbody>
                           {sortedProducts.length === 0 ? (
                             <tr>
-                              <td colSpan={15} className="px-6 py-8 text-center text-slate-500">
+                              <td colSpan={9} className="px-6 py-8 text-center text-slate-500">
                                 暂无产品数据
                               </td>
                             </tr>
                           ) : (
-                            sortedProducts.map((product) => (
-                              <tr key={product.id} className="border-b border-slate-200 hover:bg-slate-50 transition-colors">
-                                <td className="px-6 py-4 text-sm font-medium text-slate-900">{product.sku}</td>
-                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.todaySales}</td>
-                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.yesterdaySales}</td>
-                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.weekSales}</td>
-                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.monthSales}</td>
-                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.selectedRangeSales}</td>
-                                <td className="px-6 py-4 text-sm text-center font-medium text-pink-700">{product.estimatedStock}</td>
-                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.avgDailySales}</td>
-                                <td className="px-6 py-4 text-sm text-center text-slate-700">{product.activeSalesDays}</td>
-                                <td className="px-6 py-4 text-sm text-center">
-                                  <span className="inline-block rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-800">
-                                    {product.salesRank}
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4 text-sm text-slate-600">{product.salesRankReason}</td>
-                                <td className="px-6 py-4 text-sm text-center font-medium text-slate-900">{product.stock}</td>
-                                <td className="px-6 py-4 text-sm text-center">
-                                  <span
-                                    className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${
-                                      product.stockStatus === '断货'
-                                        ? 'bg-red-100 text-red-700'
-                                        : product.stockStatus === '低库存'
-                                          ? 'bg-yellow-100 text-yellow-700'
-                                          : 'bg-green-100 text-green-700'
-                                    }`}
-                                  >
-                                    {product.stockStatus}
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4 text-sm text-slate-600">
-                                  {new Date(product.updatedAt).toLocaleString('zh-CN')}
-                                </td>
-                                <td className="px-6 py-4 text-center">
-                                  <div className="flex items-center justify-center gap-2">
-                                    <button
-                                      onClick={() => handleEditStock(product)}
-                                      className="inline-flex items-center justify-center rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                      disabled={editingStockSku === product.sku || deletingStockSku === product.sku || product.sku === '-'}
-                                    >
-                                      {editingStockSku === product.sku ? '保存中...' : '编辑库存'}
-                                    </button>
-                                    <button
-                                      onClick={() => void handleDeleteInventory(product)}
-                                      className="inline-flex items-center justify-center rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                      disabled={deletingStockSku === product.sku || editingStockSku === product.sku || product.sku === '-'}
-                                    >
-                                      {deletingStockSku === product.sku ? '删除中...' : '删除库存'}
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))
+                            sortedProducts.map((product) => {
+                              const expanded = expandedProductIds.includes(product.id)
+
+                              return (
+                                <Fragment key={product.id}>
+                                  <tr className="border-b border-slate-200 hover:bg-slate-50 transition-colors">
+                                    <td className="sticky left-0 z-10 min-w-[120px] bg-white px-6 py-4 text-sm font-medium text-slate-900">
+                                      {product.sku}
+                                    </td>
+                                    <td className={`min-w-[100px] px-6 py-4 text-sm text-center font-bold ${getEstimatedStockTextClass(product.estimatedStock)}`}>
+                                      {product.estimatedStock}
+                                    </td>
+                                    <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.weekSales}</td>
+                                    <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.avgDailySales}</td>
+                                    <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.activeSalesDays}</td>
+                                    <td className="min-w-[120px] px-6 py-4 text-sm text-center">
+                                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getRankBadgeClass(product.salesRank)}`}>
+                                        {getRankLabel(product.salesRank)}
+                                      </span>
+                                    </td>
+                                    <td className="min-w-[100px] px-6 py-4 text-sm text-center">
+                                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStockStatusBadgeClass(product.stockStatus)}`}>
+                                        {getStockStatusLabel(product.stockStatus)}
+                                      </span>
+                                    </td>
+                                    <td className="min-w-[140px] px-6 py-4 text-sm text-slate-600">
+                                      {new Date(product.updatedAt).toLocaleString('zh-CN')}
+                                    </td>
+                                    <td className="min-w-[100px] px-6 py-4 text-center">
+                                      <button
+                                        onClick={() => toggleProductDetails(product.id)}
+                                        className="inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-900 hover:bg-slate-50"
+                                      >
+                                        {expanded ? '收起详情' : '详情'}
+                                      </button>
+                                    </td>
+                                  </tr>
+                                  {expanded && (
+                                    <tr className="border-b border-slate-200 bg-slate-50/70">
+                                      <td colSpan={9} className="px-6 py-5">
+                                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                            <div>
+                                              <div className="text-sm font-semibold text-slate-900">SKU：{product.sku}</div>
+                                              <div className="mt-1 text-xs text-slate-500">等级原因与次要指标放在这里，主表保持简洁。</div>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                              <button
+                                                onClick={() => handleEditStock(product)}
+                                                className="inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                                                disabled={editingStockSku === product.sku || deletingStockSku === product.sku || product.sku === '-'}
+                                              >
+                                                {editingStockSku === product.sku ? '保存中...' : '编辑库存'}
+                                              </button>
+                                              <button
+                                                onClick={() => void handleDeleteInventory(product)}
+                                                className="inline-flex items-center justify-center rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                disabled={deletingStockSku === product.sku || editingStockSku === product.sku || product.sku === '-'}
+                                              >
+                                                {deletingStockSku === product.sku ? '删除中...' : '删除库存'}
+                                              </button>
+                                            </div>
+                                          </div>
+                                          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">今日销量</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.todaySales}</div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">昨日销量</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.yesterdaySales}</div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">近30天销量</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.monthSales}</div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">筛选期销量</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.selectedRangeSales}</div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">当前库存</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.stock}</div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">预计库存</div>
+                                              <div className={`mt-1 text-sm font-semibold ${getEstimatedStockTextClass(product.estimatedStock)}`}>{product.estimatedStock}</div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">等级</div>
+                                              <div className="mt-1">
+                                                <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getRankBadgeClass(product.salesRank)}`}>
+                                                  {getRankLabel(product.salesRank)}
+                                                </span>
+                                              </div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">更新时间</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">
+                                                {new Date(product.updatedAt).toLocaleString('zh-CN')}
+                                              </div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3 sm:col-span-2 xl:col-span-4">
+                                              <div className="text-xs text-slate-500">等级原因</div>
+                                              <div className="mt-1 text-sm leading-6 text-slate-700">{product.salesRankReason}</div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </Fragment>
+                              )
+                            })
                           )}
                         </tbody>
                       </table>
