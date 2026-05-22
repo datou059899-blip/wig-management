@@ -202,6 +202,32 @@ model ProductStockBaseline {
   @@index([baselineDate])
 }
 
+model ProductStockAdjustment {
+  id             String   @id @default(cuid())
+  sku            String
+  quantity       Int
+  adjustmentDate DateTime
+  type           String
+  note           String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([sku])
+  @@index([adjustmentDate])
+}
+
+model ProductSalesRankSetting {
+  id                   String   @id @default(cuid())
+  aDailySalesThreshold Int      @default(20)
+  bDailySalesThreshold Int      @default(10)
+  cStockRatioThreshold Float    @default(0.1)
+  cOrderRatioThreshold Float    @default(0.2)
+  dActiveDaysThreshold Int      @default(3)
+  windowDays           Int      @default(7)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
 model ProductSalesGroup {
   id        String   @id @default(cuid())
   name      String   @unique
