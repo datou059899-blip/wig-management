@@ -47,6 +47,15 @@ type BaselineRow = {
   note: string | null
 }
 
+type AdjustmentRow = {
+  id: string
+  sku: string
+  quantity: number
+  adjustmentDate: Date
+  type: string
+  note: string | null
+}
+
 function startOfDay(date: Date) {
   const normalized = new Date(date)
   normalized.setHours(0, 0, 0, 0)
@@ -213,43 +222,59 @@ function buildBaselineStockSeries(params: {
   totalDays: number
   baselineDate: Date
   baselineQty: number
+  adjustmentsByDate: Map<string, number>
   consumedByDate: Map<string, number>
 }) {
-  const { startDate, totalDays, baselineDate, baselineQty, consumedByDate } = params
+  const { startDate, totalDays, baselineDate, baselineQty, adjustmentsByDate, consumedByDate } = params
   const series = new Map<string, number>()
   const endDate = addDays(startDate, totalDays - 1)
   const startDateMs = startDate.getTime()
   const endDateMs = endDate.getTime()
   const normalizedBaselineDate = startOfDay(baselineDate)
-  const baselineMs = normalizedBaselineDate.getTime()
   const safeBaselineQty = Math.max(baselineQty, 0)
 
-  let forwardStartStock = safeBaselineQty
+  for (let currentDate = startDate; currentDate.getTime() < normalizedBaselineDate.getTime() && currentDate.getTime() <= endDateMs; currentDate = addDays(currentDate, 1)) {
+    const dateKey = formatDateKey(currentDate)
+    series.set(dateKey, 0)
+  }
+
+  if (normalizedBaselineDate.getTime() > endDateMs) {
+    return series
+  }
+
+  let currentStartStock = safeBaselineQty
   for (let currentDate = normalizedBaselineDate; currentDate.getTime() <= endDateMs; currentDate = addDays(currentDate, 1)) {
     const dateKey = formatDateKey(currentDate)
-    const endStock = Math.max(forwardStartStock - (consumedByDate.get(dateKey) || 0), 0)
+    const endStock = Math.max(
+      currentStartStock + (adjustmentsByDate.get(dateKey) || 0) - (consumedByDate.get(dateKey) || 0),
+      0,
+    )
     if (currentDate.getTime() >= startDateMs) {
       series.set(dateKey, endStock)
     }
-    forwardStartStock = endStock
+    currentStartStock = endStock
   }
 
-  let nextDayStartStock = safeBaselineQty
-  for (let currentDate = addDays(normalizedBaselineDate, -1); currentDate.getTime() >= startDateMs; currentDate = addDays(currentDate, -1)) {
-    const dateKey = formatDateKey(currentDate)
-    series.set(dateKey, Math.max(nextDayStartStock, 0))
-    nextDayStartStock = Math.max(nextDayStartStock + (consumedByDate.get(dateKey) || 0), 0)
-  }
-
-  for (let currentDate = startDate; currentDate.getTime() <= endDateMs; currentDate = addDays(currentDate, 1)) {
-    const dateKey = formatDateKey(currentDate)
-    if (!series.has(dateKey)) {
-      series.set(dateKey, 0)
+  if (normalizedBaselineDate.getTime() < startDateMs) {
+    let simulatedStartStock = safeBaselineQty
+    for (let currentDate = normalizedBaselineDate; currentDate.getTime() < startDateMs; currentDate = addDays(currentDate, 1)) {
+      const dateKey = formatDateKey(currentDate)
+      simulatedStartStock = Math.max(
+        simulatedStartStock + (adjustmentsByDate.get(dateKey) || 0) - (consumedByDate.get(dateKey) || 0),
+        0,
+      )
     }
-  }
 
-  if (baselineMs < startDateMs) {
-    return series
+    let currentRangeStartStock = simulatedStartStock
+    for (let currentDate = startDate; currentDate.getTime() <= endDateMs; currentDate = addDays(currentDate, 1)) {
+      const dateKey = formatDateKey(currentDate)
+      const endStock = Math.max(
+        currentRangeStartStock + (adjustmentsByDate.get(dateKey) || 0) - (consumedByDate.get(dateKey) || 0),
+        0,
+      )
+      series.set(dateKey, endStock)
+      currentRangeStartStock = endStock
+    }
   }
 
   return series
@@ -741,6 +766,50 @@ export async function GET(request: NextRequest) {
       registerBaseline(baseline.sku, row)
     })
 
+    const adjustmentRows = baselineSkuList.length
+      ? await prisma.productStockAdjustment.findMany({
+          where: {
+            sku: {
+              in: baselineSkuList,
+            },
+            adjustmentDate: {
+              lt: selectedRange.endExclusive,
+            },
+          },
+          orderBy: [
+            { adjustmentDate: 'asc' },
+            { createdAt: 'asc' },
+          ],
+        })
+      : []
+
+    const exactAdjustmentMap = new Map<string, AdjustmentRow[]>()
+    const normalizedAdjustmentMap = new Map<string, AdjustmentRow[]>()
+    const registerAdjustment = (key: string, row: AdjustmentRow) => {
+      if (!key) return
+      const bucket = exactAdjustmentMap.get(key) || []
+      bucket.push(row)
+      exactAdjustmentMap.set(key, bucket)
+
+      const normalizedKey = normalizeSkuForCompare(key)
+      if (!normalizedKey) return
+      const normalizedBucket = normalizedAdjustmentMap.get(normalizedKey) || []
+      normalizedBucket.push(row)
+      normalizedAdjustmentMap.set(normalizedKey, normalizedBucket)
+    }
+
+    adjustmentRows.forEach((adjustment) => {
+      const row: AdjustmentRow = {
+        id: adjustment.id,
+        sku: adjustment.sku,
+        quantity: adjustment.quantity,
+        adjustmentDate: startOfDay(new Date(adjustment.adjustmentDate)),
+        type: adjustment.type,
+        note: adjustment.note,
+      }
+      registerAdjustment(adjustment.sku, row)
+    })
+
     const snapshotSkuList = Array.from(new Set(
       inventoryTargets.flatMap((target) => target.snapshotCandidateSkus.map((sku) => normalizeCell(sku)).filter(Boolean)),
     ))
@@ -824,6 +893,17 @@ export async function GET(request: NextRequest) {
         ? baselineCandidates[baselineCandidates.length - 1]
         : null
 
+      const adjustmentCandidates = Array.from(new Map(
+        target.baselineCandidateSkus.flatMap((sku) => {
+          const normalizedSku = normalizeSkuForCompare(sku)
+          const rows = [
+            ...(exactAdjustmentMap.get(sku) || []),
+            ...(normalizedSku ? (normalizedAdjustmentMap.get(normalizedSku) || []) : []),
+          ]
+          return rows.map((row) => [`${row.id}`, row] as const)
+        }),
+      ).values()).sort((a, b) => a.adjustmentDate.getTime() - b.adjustmentDate.getTime())
+
       return {
         target,
         fallbackStock: target.fallbackStock,
@@ -831,6 +911,7 @@ export async function GET(request: NextRequest) {
         lastSnapshot: allSnapshots[allSnapshots.length - 1] || null,
         resolvedSnapshots,
         activeBaseline,
+        adjustmentCandidates,
       }
     })
 
@@ -898,12 +979,18 @@ export async function GET(request: NextRequest) {
 
     inventoryStates.forEach((targetState) => {
       const consumedByDate = stockConsumedByTargetMap.get(targetState.target.key) || new Map<string, number>()
+      const adjustmentsByDate = new Map<string, number>()
+      targetState.adjustmentCandidates.forEach((adjustment) => {
+        const dateKey = formatDateKey(adjustment.adjustmentDate)
+        adjustmentsByDate.set(dateKey, (adjustmentsByDate.get(dateKey) || 0) + adjustment.quantity)
+      })
       const targetSeries = targetState.activeBaseline
         ? buildBaselineStockSeries({
             startDate: selectedRange.startDate,
             totalDays,
             baselineDate: targetState.activeBaseline.baselineDate,
             baselineQty: targetState.activeBaseline.quantity,
+            adjustmentsByDate,
             consumedByDate,
           })
         : buildFallbackStockSeries({
@@ -968,6 +1055,11 @@ export async function GET(request: NextRequest) {
         inventoryConsumptionStartDate: formatDateKey(inventoryConsumptionStartDate),
         performanceRows: debugPerformanceRows,
         consumedByDate: Array.from(debugConsumedByDate.entries()).map(([date, qty]) => ({ date, qty })),
+        adjustments: (debugTarget?.adjustmentCandidates || []).map((item) => ({
+          date: formatDateKey(item.adjustmentDate),
+          quantity: item.quantity,
+          type: item.type,
+        })),
         snapshotCount: debugTarget?.resolvedSnapshots.length || 0,
         firstSnapshot: debugTarget?.firstSnapshot
           ? {

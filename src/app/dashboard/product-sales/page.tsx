@@ -52,6 +52,17 @@ interface ProductStockBaseline {
   updatedAt: string
 }
 
+interface ProductStockAdjustment {
+  id: string
+  sku: string
+  quantity: number
+  adjustmentDate: string
+  type: string
+  note: string
+  createdAt: string
+  updatedAt: string
+}
+
 interface ImportFailure {
   row: number
   sku: string
@@ -249,6 +260,13 @@ interface ProductSalesGroup {
 type StockEditMode = 'set' | 'increase' | 'decrease'
 type TrendRange = 'today' | '7' | '30' | 'custom'
 
+const ADJUSTMENT_TYPE_OPTIONS = [
+  { value: 'replenish', label: '补货' },
+  { value: 'manual_adjust', label: '手动调整' },
+  { value: 'damage', label: '损耗' },
+  { value: 'other', label: '其他' },
+]
+
 function getTodayInputValue() {
   const now = new Date()
   const year = now.getFullYear()
@@ -307,6 +325,16 @@ export default function ProductSalesPage() {
   const [baselineFormNote, setBaselineFormNote] = useState('')
   const [baselineError, setBaselineError] = useState<string | null>(null)
   const [savingBaseline, setSavingBaseline] = useState(false)
+  const [stockAdjustmentOpen, setStockAdjustmentOpen] = useState(false)
+  const [stockAdjustments, setStockAdjustments] = useState<ProductStockAdjustment[]>([])
+  const [adjustmentFormSku, setAdjustmentFormSku] = useState('')
+  const [adjustmentFormQuantity, setAdjustmentFormQuantity] = useState('')
+  const [adjustmentFormDate, setAdjustmentFormDate] = useState(getTodayInputValue())
+  const [adjustmentFormType, setAdjustmentFormType] = useState('replenish')
+  const [adjustmentFormNote, setAdjustmentFormNote] = useState('')
+  const [adjustmentError, setAdjustmentError] = useState<string | null>(null)
+  const [savingAdjustment, setSavingAdjustment] = useState(false)
+  const [deletingAdjustmentId, setDeletingAdjustmentId] = useState<string | null>(null)
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [groupFormId, setGroupFormId] = useState<string | null>(null)
   const [groupFormName, setGroupFormName] = useState('')
@@ -388,6 +416,21 @@ export default function ProductSalesPage() {
     }
 
     setStockBaselines(Array.isArray(data.baselines) ? data.baselines : [])
+  }
+
+  const loadAdjustments = async (sku = '') => {
+    const params = new URLSearchParams()
+    if (sku) {
+      params.set('sku', sku)
+    }
+
+    const response = await fetch(`/api/product-sales/stock-adjustments${params.toString() ? `?${params.toString()}` : ''}`)
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.error || '获取补货/调整记录失败')
+    }
+
+    setStockAdjustments(Array.isArray(data.adjustments) ? data.adjustments : [])
   }
 
   const loadTrendData = async (
@@ -478,6 +521,7 @@ export default function ProductSalesPage() {
     await Promise.all([
       loadPageData(trendRange, trendStartDate, trendEndDate),
       loadBaselines(baselineFormSku),
+      loadAdjustments(adjustmentFormSku),
       loadGroups(),
       loadTrendData(selectedSku, selectedGroupId, trendRange, trendStartDate, trendEndDate, false),
     ])
@@ -856,6 +900,125 @@ export default function ProductSalesPage() {
     }
   }
 
+  const resetAdjustmentForm = (sku = '') => {
+    setAdjustmentFormSku(sku)
+    setAdjustmentFormQuantity('')
+    setAdjustmentFormDate(getTodayInputValue())
+    setAdjustmentFormType('replenish')
+    setAdjustmentFormNote('')
+    setAdjustmentError(null)
+  }
+
+  const openStockAdjustmentModal = async () => {
+    const nextSku = selectedSku || skuOptions[0]?.sku || ''
+    resetAdjustmentForm(nextSku)
+    setStockAdjustmentOpen(true)
+    try {
+      await loadAdjustments(nextSku)
+    } catch (err) {
+      setAdjustmentError(err instanceof Error ? err.message : '获取补货/调整记录失败')
+    }
+  }
+
+  const handleSaveAdjustment = async () => {
+    const sku = adjustmentFormSku.trim()
+    if (!sku) {
+      setAdjustmentError('请选择 SKU')
+      return
+    }
+
+    const quantity = Number(adjustmentFormQuantity.trim())
+    if (!Number.isInteger(quantity) || quantity === 0) {
+      setAdjustmentError('调整数量必须是非 0 整数')
+      return
+    }
+
+    if (adjustmentFormType === 'replenish' && quantity < 0) {
+      setAdjustmentError('补货数量必须为正数')
+      return
+    }
+
+    if (adjustmentFormType === 'damage' && quantity > 0) {
+      setAdjustmentError('损耗数量必须为负数')
+      return
+    }
+
+    if (!adjustmentFormDate) {
+      setAdjustmentError('请选择调整日期')
+      return
+    }
+
+    try {
+      setSavingAdjustment(true)
+      setAdjustmentError(null)
+      setError(null)
+
+      const response = await fetch('/api/product-sales/stock-adjustments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sku,
+          quantity,
+          adjustmentDate: adjustmentFormDate,
+          type: adjustmentFormType,
+          note: adjustmentFormNote,
+        }),
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '保存补货/调整记录失败')
+      }
+
+      await refreshAfterMutation()
+      await loadAdjustments(sku)
+      resetAdjustmentForm(sku)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '保存补货/调整记录失败'
+      setAdjustmentError(message)
+      setError(message)
+    } finally {
+      setSavingAdjustment(false)
+    }
+  }
+
+  const handleDeleteAdjustment = async (adjustment: ProductStockAdjustment) => {
+    const confirmed = window.confirm(`确认删除 ${adjustment.sku} 在 ${adjustment.adjustmentDate} 的这条补货/调整记录吗？`)
+    if (!confirmed) return
+
+    try {
+      setDeletingAdjustmentId(adjustment.id)
+      setAdjustmentError(null)
+      setError(null)
+
+      const response = await fetch('/api/product-sales/stock-adjustments', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: adjustment.id,
+        }),
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || '删除补货/调整记录失败')
+      }
+
+      await refreshAfterMutation()
+      await loadAdjustments(adjustmentFormSku)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '删除补货/调整记录失败'
+      setAdjustmentError(message)
+      setError(message)
+    } finally {
+      setDeletingAdjustmentId(null)
+    }
+  }
+
   const handleEditStock = (product: ProductData) => {
     if (!product.sku || product.sku === '-') {
       setError('该产品缺少 SKU，无法修改库存')
@@ -1078,6 +1241,7 @@ export default function ProductSalesPage() {
   }
 
   const filteredBaselines = stockBaselines.filter((item) => !baselineFormSku || item.sku === baselineFormSku)
+  const filteredAdjustments = stockAdjustments.filter((item) => !adjustmentFormSku || item.sku === adjustmentFormSku)
 
   return (
     <PageGuard>
@@ -1103,6 +1267,13 @@ export default function ProductSalesPage() {
                   disabled={loading || savingBaseline}
                 >
                   设置初始库存
+                </button>
+                <button
+                  onClick={() => void openStockAdjustmentModal()}
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                  disabled={loading || savingAdjustment}
+                >
+                  补货/调整库存
                 </button>
                 <button
                   onClick={handleImportSkus}
@@ -1930,6 +2101,197 @@ export default function ProductSalesPage() {
                                     <td className="px-3 py-2 text-slate-700">{baseline.baselineDate}</td>
                                     <td className="px-3 py-2 text-slate-700">{baseline.quantity}</td>
                                     <td className="px-3 py-2 text-slate-500">{baseline.note || '-'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {stockAdjustmentOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+                  <div className="w-full max-w-4xl rounded-xl bg-white p-6 shadow-xl">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900">补货/调整库存</h3>
+                        <p className="mt-1 text-sm text-slate-600">补货和调整只参与预计库存计算，不会直接修改 Product.stock。</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (savingAdjustment) return
+                          setStockAdjustmentOpen(false)
+                          setAdjustmentError(null)
+                        }}
+                        className="text-sm text-slate-500 hover:text-slate-700"
+                        disabled={savingAdjustment}
+                      >
+                        关闭
+                      </button>
+                    </div>
+
+                    <div className="mt-5 grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
+                      <div className="rounded-lg border border-slate-200 p-4">
+                        <div className="space-y-4">
+                          <div>
+                            <label className="mb-2 block text-sm font-medium text-slate-900">SKU</label>
+                            <select
+                              value={adjustmentFormSku}
+                              onChange={(event) => {
+                                const nextSku = event.target.value
+                                setAdjustmentFormSku(nextSku)
+                                setAdjustmentError(null)
+                                void loadAdjustments(nextSku)
+                              }}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                              disabled={savingAdjustment}
+                            >
+                              <option value="">请选择 SKU</option>
+                              {skuOptions.map((option) => (
+                                <option key={option.sku} value={option.sku}>
+                                  {option.sku}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="mb-2 block text-sm font-medium text-slate-900">调整数量</label>
+                            <input
+                              type="number"
+                              step="1"
+                              inputMode="numeric"
+                              value={adjustmentFormQuantity}
+                              onChange={(event) => {
+                                setAdjustmentFormQuantity(event.target.value)
+                                setAdjustmentError(null)
+                              }}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                              placeholder="补货填正数，损耗填负数"
+                              disabled={savingAdjustment}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="mb-2 block text-sm font-medium text-slate-900">调整日期</label>
+                            <input
+                              type="date"
+                              value={adjustmentFormDate}
+                              onChange={(event) => {
+                                setAdjustmentFormDate(event.target.value)
+                                setAdjustmentError(null)
+                              }}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                              disabled={savingAdjustment}
+                            />
+                            <p className="mt-1 text-xs text-slate-500">补货日期当天开始计入预计库存。</p>
+                          </div>
+
+                          <div>
+                            <label className="mb-2 block text-sm font-medium text-slate-900">类型</label>
+                            <select
+                              value={adjustmentFormType}
+                              onChange={(event) => {
+                                setAdjustmentFormType(event.target.value)
+                                setAdjustmentError(null)
+                              }}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                              disabled={savingAdjustment}
+                            >
+                              {ADJUSTMENT_TYPE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="mb-2 block text-sm font-medium text-slate-900">备注</label>
+                            <textarea
+                              value={adjustmentFormNote}
+                              onChange={(event) => {
+                                setAdjustmentFormNote(event.target.value)
+                                setAdjustmentError(null)
+                              }}
+                              rows={3}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                              placeholder="可选，例如：618 前补货"
+                              disabled={savingAdjustment}
+                            />
+                          </div>
+
+                          {adjustmentError && (
+                            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                              {adjustmentError}
+                            </div>
+                          )}
+
+                          <div className="flex justify-end gap-3">
+                            <button
+                              onClick={() => resetAdjustmentForm(adjustmentFormSku)}
+                              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                              disabled={savingAdjustment}
+                            >
+                              重置
+                            </button>
+                            <button
+                              onClick={handleSaveAdjustment}
+                              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+                              disabled={savingAdjustment}
+                            >
+                              {savingAdjustment ? '保存中...' : '保存'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-slate-200 p-4">
+                        <div className="mb-3">
+                          <div className="text-sm font-semibold text-slate-900">当前 SKU 的补货/调整记录</div>
+                          <div className="mt-1 text-xs text-slate-500">补货为正数，损耗为负数，都会进入预计库存计算。</div>
+                        </div>
+
+                        {filteredAdjustments.length === 0 ? (
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                            {adjustmentFormSku ? '这个 SKU 还没有补货/调整记录。' : '请先选择 SKU。'}
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-slate-200 text-left text-slate-500">
+                                  <th className="px-3 py-2">日期</th>
+                                  <th className="px-3 py-2">数量</th>
+                                  <th className="px-3 py-2">类型</th>
+                                  <th className="px-3 py-2">备注</th>
+                                  <th className="px-3 py-2 text-right">操作</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filteredAdjustments.map((adjustment) => (
+                                  <tr key={adjustment.id} className="border-b border-slate-100">
+                                    <td className="px-3 py-2 text-slate-700">{adjustment.adjustmentDate}</td>
+                                    <td className={`px-3 py-2 font-medium ${adjustment.quantity >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                      {adjustment.quantity > 0 ? `+${adjustment.quantity}` : adjustment.quantity}
+                                    </td>
+                                    <td className="px-3 py-2 text-slate-700">
+                                      {ADJUSTMENT_TYPE_OPTIONS.find((option) => option.value === adjustment.type)?.label || adjustment.type}
+                                    </td>
+                                    <td className="px-3 py-2 text-slate-500">{adjustment.note || '-'}</td>
+                                    <td className="px-3 py-2 text-right">
+                                      <button
+                                        onClick={() => void handleDeleteAdjustment(adjustment)}
+                                        className="text-xs text-red-600 hover:text-red-700 disabled:opacity-60"
+                                        disabled={deletingAdjustmentId === adjustment.id}
+                                      >
+                                        {deletingAdjustmentId === adjustment.id ? '删除中...' : '删除'}
+                                      </button>
+                                    </td>
                                   </tr>
                                 ))}
                               </tbody>

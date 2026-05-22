@@ -11,6 +11,13 @@ type BaselineRow = {
   baselineDate: Date
 }
 
+type AdjustmentRow = {
+  sku: string
+  quantity: number
+  adjustmentDate: Date
+  type: string
+}
+
 function startOfDay(date: Date) {
   const normalized = new Date(date)
   normalized.setHours(0, 0, 0, 0)
@@ -286,8 +293,33 @@ export async function GET(request: NextRequest) {
         })
       : []
 
+    const adjustments = baselineSkuList.length
+      ? await prisma.productStockAdjustment.findMany({
+          where: {
+            sku: {
+              in: baselineSkuList,
+            },
+            adjustmentDate: {
+              lt: tomorrow,
+            },
+          },
+          select: {
+            sku: true,
+            quantity: true,
+            adjustmentDate: true,
+            type: true,
+          },
+          orderBy: [
+            { adjustmentDate: 'asc' },
+            { createdAt: 'asc' },
+          ],
+        })
+      : []
+
     const exactBaselineMap = new Map<string, BaselineRow[]>()
     const normalizedBaselineMap = new Map<string, BaselineRow[]>()
+    const exactAdjustmentMap = new Map<string, AdjustmentRow[]>()
+    const normalizedAdjustmentMap = new Map<string, AdjustmentRow[]>()
     const registerBaseline = (sku: string, row: BaselineRow) => {
       const exactBucket = exactBaselineMap.get(sku) || []
       exactBucket.push(row)
@@ -299,12 +331,32 @@ export async function GET(request: NextRequest) {
       normalizedBucket.push(row)
       normalizedBaselineMap.set(normalizedSku, normalizedBucket)
     }
+    const registerAdjustment = (sku: string, row: AdjustmentRow) => {
+      const exactBucket = exactAdjustmentMap.get(sku) || []
+      exactBucket.push(row)
+      exactAdjustmentMap.set(sku, exactBucket)
+
+      const normalizedSku = normalizeSkuForCompare(sku)
+      if (!normalizedSku) return
+      const normalizedBucket = normalizedAdjustmentMap.get(normalizedSku) || []
+      normalizedBucket.push(row)
+      normalizedAdjustmentMap.set(normalizedSku, normalizedBucket)
+    }
 
     baselines.forEach((baseline) => {
       registerBaseline(baseline.sku, {
         sku: baseline.sku,
         quantity: baseline.quantity,
         baselineDate: startOfDay(new Date(baseline.baselineDate)),
+      })
+    })
+
+    adjustments.forEach((adjustment) => {
+      registerAdjustment(adjustment.sku, {
+        sku: adjustment.sku,
+        quantity: adjustment.quantity,
+        adjustmentDate: startOfDay(new Date(adjustment.adjustmentDate)),
+        type: adjustment.type,
       })
     })
 
@@ -427,11 +479,28 @@ export async function GET(request: NextRequest) {
         ? baselineCandidates[baselineCandidates.length - 1]
         : null
 
+      const adjustmentCandidates = Array.from(new Map(
+        Array.from(relatedSkuSetByProductId.get(product.id) || []).flatMap((sku) => {
+          const normalizedSku = normalizeSkuForCompare(sku)
+          const rows = [
+            ...(exactAdjustmentMap.get(sku) || []),
+            ...(normalizedSku ? (normalizedAdjustmentMap.get(normalizedSku) || []) : []),
+          ]
+          return rows.map((row) => [`${row.sku}:${row.adjustmentDate.getTime()}:${row.quantity}:${row.type}`, row] as const)
+        }),
+      ).values()).sort((a, b) => a.adjustmentDate.getTime() - b.adjustmentDate.getTime())
+
       const estimatedStock = activeBaseline
         ? Math.max(
-            activeBaseline.quantity - (consumedRowsByProductId.get(product.id) || []).reduce((sum, row) => (
-              row.date >= activeBaseline.baselineDate && row.date < tomorrow ? sum + row.qty : sum
-            ), 0),
+            activeBaseline.quantity
+              + adjustmentCandidates.reduce((sum, row) => (
+                row.adjustmentDate >= activeBaseline.baselineDate && row.adjustmentDate < tomorrow
+                  ? sum + row.quantity
+                  : sum
+              ), 0)
+              - (consumedRowsByProductId.get(product.id) || []).reduce((sum, row) => (
+                row.date >= activeBaseline.baselineDate && row.date < tomorrow ? sum + row.qty : sum
+              ), 0),
             0,
           )
         : currentStock
