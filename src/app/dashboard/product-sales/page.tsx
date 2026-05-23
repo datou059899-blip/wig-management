@@ -529,11 +529,14 @@ function preprocessBulkStockItems(
       bucket.forEach((item) => {
         if (item.mainSku === preferredMainSku) return
         item.saveSku = preferredMainSku
+        const correctedMainSku = item.mainSku.replace(/^SHM-/i, 'SMH-')
         warningRows.push({
           rawLine: item.rawLine,
           originalSku: item.originalSku,
           normalizedSku: preferredMainSku,
-          reason: `同一别称 ${item.aliasSku} 已存在主 SKU ${preferredMainSku}，已自动归并`,
+          reason: /^SHM-/i.test(item.mainSku) && correctedMainSku === preferredMainSku
+            ? `${item.mainSku} 已按疑似拼写错误修正为 ${preferredMainSku}。`
+            : `同一别称 ${item.aliasSku} 已存在主 SKU ${preferredMainSku}，已自动归并`,
         })
       })
       return
@@ -552,9 +555,9 @@ function preprocessBulkStockItems(
   })
 
   const duplicateRows: BulkDuplicateRow[] = []
-    const dedupedItems = new Map<string, BulkParsedItem & ReturnType<typeof normalizeBulkStockSku> & { normalizedDate: string }>()
-    const invalidLineNumbers = new Set(failures.map((item) => item.lineNumber))
-    let autoCorrectedCount = warningRows.length
+  const dedupedItems = new Map<string, BulkParsedItem & ReturnType<typeof normalizeBulkStockSku> & { normalizedDate: string }>()
+  const invalidLineNumbers = new Set(failures.map((item) => item.lineNumber))
+  let autoCorrectedCount = 0
 
   normalizedItems.forEach((item) => {
     if (invalidLineNumbers.has(item.lineNumber)) return
@@ -567,7 +570,7 @@ function preprocessBulkStockItems(
           rawLine: item.rawLine,
           originalSku: item.originalSku,
           normalizedSku: correctedMainSku,
-          reason: `${item.mainSku} 已按可能拼写错误修正为 ${correctedMainSku}`,
+          reason: `${item.mainSku} 已按疑似拼写错误修正为 ${correctedMainSku}。`,
         })
         autoCorrectedCount += 1
       }
@@ -585,9 +588,26 @@ function preprocessBulkStockItems(
       }
     }
 
+    const normalizedSaveSkuKey = item.saveSku.replace(/\s+/g, '').toUpperCase()
+    const isKnownMainSku = context.mainSkuSet.has(normalizedSaveSkuKey)
+    const isKnownAnySku = context.allKnownSkuSet.has(normalizedSaveSkuKey)
+
+    if (!isKnownMainSku && !isKnownAnySku) {
+      failures.push({
+        lineNumber: item.lineNumber,
+        sku: item.saveSku,
+        quantity: item.quantity,
+        date: item.normalizedDate,
+        rawLine: item.rawLine,
+        reason: '标准化 SKU 未匹配到现有产品或别称，未保存',
+      })
+      invalidLineNumbers.add(item.lineNumber)
+      return
+    }
+
     const duplicateKey = mode === 'adjustment'
-      ? `${item.saveSku.replace(/\s+/g, '').toUpperCase()}::${item.normalizedDate}::${item.quantity}::${adjustmentType || ''}`
-      : `${item.saveSku.replace(/\s+/g, '').toUpperCase()}::${item.normalizedDate}`
+      ? `${normalizedSaveSkuKey}::${item.normalizedDate}::${item.quantity}::${adjustmentType || ''}`
+      : `${normalizedSaveSkuKey}::${item.normalizedDate}`
 
     if (dedupedItems.has(duplicateKey)) {
       duplicateRows.push({
@@ -3300,7 +3320,7 @@ export default function ProductSalesPage() {
 
               {stockBaselineOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-3xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
+                  <div className="w-full max-w-6xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">设置初始库存</h3>
@@ -3319,7 +3339,8 @@ export default function ProductSalesPage() {
                       </button>
                     </div>
 
-                    <div className="mt-5 grid max-h-[calc(100vh-10rem)] gap-6 overflow-y-auto pr-1 lg:grid-cols-[340px_minmax(0,1fr)]">
+                    <div className="mt-5 max-h-[calc(100vh-10rem)] overflow-y-auto pr-1">
+                      <div className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
                       <div className="rounded-lg border border-slate-200 p-4">
                         <div className="space-y-4">
                           <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
@@ -3446,104 +3467,6 @@ export default function ProductSalesPage() {
                             </div>
                           )}
 
-                          {baselineSaveSummary && (
-                            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
-                              <div className="flex flex-wrap gap-3">
-                                <span>原始行数 {baselineSaveSummary.rawRowCount || 0}</span>
-                                <span>有效解析 {baselineSaveSummary.parsedCount || 0}</span>
-                                <span>成功 {baselineSaveSummary.successCount}</span>
-                                <span>更新 {baselineSaveSummary.updatedCount || 0}</span>
-                                <span>新增 {(baselineSaveSummary.createdCount ?? Math.max(baselineSaveSummary.successCount - (baselineSaveSummary.updatedCount || 0), 0))}</span>
-                                <span>失败 {baselineSaveSummary.failureCount}</span>
-                                <span>输入重复 {baselineSaveSummary.duplicateInInputCount || 0}</span>
-                                <span>自动合并 {baselineSaveSummary.mergedCount || 0}</span>
-                                <span>自动修正 {baselineSaveSummary.autoCorrectedCount || 0}</span>
-                                <span>疑似异常 {baselineSaveSummary.suspiciousCount || 0}</span>
-                                <span>未匹配 SKU {baselineSaveSummary.unmatchedSkuCount || 0}</span>
-                                <span>使用单独日期 {baselineSaveSummary.usedItemDateCount || 0}</span>
-                                <span>使用统一日期 {baselineSaveSummary.usedDefaultDateCount || 0}</span>
-                              </div>
-                              {(baselineSaveSummary.duplicateRows?.length || 0) > 0 && (
-                                <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
-                                  <div className="border-b border-slate-200 px-3 py-2 text-xs font-medium text-slate-700">重复行（保留最后一条）</div>
-                                  <table className="w-full text-xs">
-                                    <thead>
-                                      <tr className="border-b border-slate-200 text-left text-slate-500">
-                                        <th className="px-3 py-2">原始行</th>
-                                        <th className="px-3 py-2">标准化 SKU</th>
-                                        <th className="px-3 py-2">日期</th>
-                                        <th className="px-3 py-2">处理方式</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {baselineSaveSummary.duplicateRows?.map((item, index) => (
-                                        <tr key={`${item.rawLine}-${item.normalizedSku}-${index}`} className="border-b border-slate-100">
-                                          <td className="px-3 py-2 text-slate-500">{item.rawLine}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.normalizedSku}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.date || '-'}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.action}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              )}
-                              {(baselineSaveSummary.warningRows?.length || 0) > 0 && (
-                                <div className="mt-3 overflow-x-auto rounded-lg border border-amber-200 bg-amber-50">
-                                  <div className="border-b border-amber-200 px-3 py-2 text-xs font-medium text-amber-800">警告 / 自动修正</div>
-                                  <table className="w-full text-xs">
-                                    <thead>
-                                      <tr className="border-b border-amber-200 text-left text-amber-700">
-                                        <th className="px-3 py-2">原始行</th>
-                                        <th className="px-3 py-2">修正前 SKU</th>
-                                        <th className="px-3 py-2">修正后 SKU</th>
-                                        <th className="px-3 py-2">原因</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {baselineSaveSummary.warningRows?.map((item, index) => (
-                                        <tr key={`${item.rawLine}-${item.originalSku}-${index}`} className="border-b border-amber-100">
-                                          <td className="px-3 py-2 text-slate-600">{item.rawLine}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.originalSku}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.normalizedSku}</td>
-                                          <td className="px-3 py-2 text-amber-800">{item.reason}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              )}
-                              {baselineSaveSummary.failures.length > 0 && (
-                                <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
-                                  <table className="w-full text-xs">
-                                    <thead>
-                                      <tr className="border-b border-slate-200 text-left text-slate-500">
-                                        <th className="px-3 py-2">行号</th>
-                                        <th className="px-3 py-2">原始行</th>
-                                        <th className="px-3 py-2">SKU</th>
-                                        <th className="px-3 py-2">数量</th>
-                                        <th className="px-3 py-2">日期</th>
-                                        <th className="px-3 py-2">失败原因</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {baselineSaveSummary.failures.map((item, index) => (
-                                        <tr key={`${item.lineNumber}-${item.sku}-${index}`} className="border-b border-slate-100">
-                                          <td className="px-3 py-2 text-slate-700">{item.lineNumber}</td>
-                                          <td className="px-3 py-2 text-slate-500">{item.rawLine || '-'}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.quantity ?? '-'}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.date || '-'}</td>
-                                          <td className="px-3 py-2 text-rose-700">{item.reason}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
                           <div className="flex justify-end gap-3">
                             <button
                               onClick={() => resetBaselineForm(baselineFormSku)}
@@ -3598,6 +3521,115 @@ export default function ProductSalesPage() {
                           </div>
                         )}
                       </div>
+                      </div>
+
+                      {baselineSaveSummary && (
+                        <div className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
+                          <div className="flex flex-wrap gap-3">
+                            <span>原始行数 {baselineSaveSummary.rawRowCount || 0}</span>
+                            <span>有效解析 {baselineSaveSummary.parsedCount || 0}</span>
+                            <span>成功 {baselineSaveSummary.successCount}</span>
+                            <span>更新 {baselineSaveSummary.updatedCount || 0}</span>
+                            <span>新增 {(baselineSaveSummary.createdCount ?? Math.max(baselineSaveSummary.successCount - (baselineSaveSummary.updatedCount || 0), 0))}</span>
+                            <span>失败 {baselineSaveSummary.failureCount}</span>
+                            <span>输入重复 {baselineSaveSummary.duplicateInInputCount || 0}</span>
+                            <span>自动合并 {baselineSaveSummary.mergedCount || 0}</span>
+                            <span>自动修正 {baselineSaveSummary.autoCorrectedCount || 0}</span>
+                            <span>疑似异常 {baselineSaveSummary.suspiciousCount || 0}</span>
+                            <span>未匹配 SKU {baselineSaveSummary.unmatchedSkuCount || 0}</span>
+                            <span>使用单独日期 {baselineSaveSummary.usedItemDateCount || 0}</span>
+                            <span>使用统一日期 {baselineSaveSummary.usedDefaultDateCount || 0}</span>
+                          </div>
+
+                          {(baselineSaveSummary.duplicateRows?.length || 0) > 0 && (
+                            <details className="mt-4 rounded-lg border border-emerald-200 bg-white" open>
+                              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-900">重复行明细（保留最后一条）</summary>
+                              <div className="overflow-x-auto border-t border-slate-200">
+                                <table className="min-w-[880px] w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-slate-200 text-left text-slate-500">
+                                      <th className="px-3 py-2 whitespace-nowrap">原始行</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">标准化 SKU</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">日期</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">处理方式</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {baselineSaveSummary.duplicateRows?.map((item, index) => (
+                                      <tr key={`${item.rawLine}-${item.normalizedSku}-${index}`} className="border-b border-slate-100 align-top">
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-600">{item.rawLine}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.normalizedSku}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.date || '-'}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.action}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </details>
+                          )}
+
+                          {(baselineSaveSummary.warningRows?.length || 0) > 0 && (
+                            <details className="mt-4 rounded-lg border border-amber-200 bg-amber-50" open>
+                              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-amber-900">疑似异常 / 自动修正明细</summary>
+                              <div className="overflow-x-auto border-t border-amber-200">
+                                <table className="min-w-[980px] w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-amber-200 text-left text-amber-800">
+                                      <th className="px-3 py-2 whitespace-nowrap">原始行</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">修正前 SKU</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">修正后 SKU</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">原因</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {baselineSaveSummary.warningRows?.map((item, index) => (
+                                      <tr key={`${item.rawLine}-${item.originalSku}-${index}`} className="border-b border-amber-100 align-top">
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-600">{item.rawLine}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.originalSku}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.normalizedSku}</td>
+                                        <td className="px-3 py-2 min-w-[280px] text-amber-900">{item.reason}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </details>
+                          )}
+
+                          {baselineSaveSummary.failures.length > 0 && (
+                            <details className="mt-4 rounded-lg border border-rose-200 bg-white" open>
+                              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-rose-800">失败 / 未匹配明细</summary>
+                              <div className="overflow-x-auto border-t border-slate-200">
+                                <table className="min-w-[1100px] w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-slate-200 text-left text-slate-500">
+                                      <th className="px-3 py-2 whitespace-nowrap">行号</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">原始行</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">标准化 SKU</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">数量</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">日期</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">失败原因</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {baselineSaveSummary.failures.map((item, index) => (
+                                      <tr key={`${item.lineNumber}-${item.sku}-${index}`} className="border-b border-slate-100 align-top">
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.lineNumber}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-600">{item.rawLine || '-'}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.sku || '-'}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.quantity ?? '-'}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.date || '-'}</td>
+                                        <td className="px-3 py-2 min-w-[320px] text-rose-700">{item.reason}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -3605,7 +3637,7 @@ export default function ProductSalesPage() {
 
               {stockAdjustmentOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-4xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
+                  <div className="w-full max-w-6xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">补货/调整库存</h3>
@@ -3624,8 +3656,9 @@ export default function ProductSalesPage() {
                       </button>
                     </div>
 
-                    <div className="mt-5 grid max-h-[calc(100vh-10rem)] gap-6 overflow-y-auto pr-1 lg:grid-cols-[360px_minmax(0,1fr)]">
-                      <div className="rounded-lg border border-slate-200 p-4">
+                    <div className="mt-5 max-h-[calc(100vh-10rem)] overflow-y-auto pr-1">
+                      <div className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
+                        <div className="rounded-lg border border-slate-200 p-4">
                         <div className="space-y-4">
                           <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
                             <button
@@ -3772,102 +3805,6 @@ export default function ProductSalesPage() {
                             </div>
                           )}
 
-                          {adjustmentSaveSummary && (
-                            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
-                              <div className="flex flex-wrap gap-3">
-                                <span>原始行数 {adjustmentSaveSummary.rawRowCount || 0}</span>
-                                <span>有效解析 {adjustmentSaveSummary.parsedCount || 0}</span>
-                                <span>成功 {adjustmentSaveSummary.successCount}</span>
-                                <span>失败 {adjustmentSaveSummary.failureCount}</span>
-                                <span>输入重复 {adjustmentSaveSummary.duplicateInInputCount || 0}</span>
-                                <span>自动合并 {adjustmentSaveSummary.mergedCount || 0}</span>
-                                <span>自动修正 {adjustmentSaveSummary.autoCorrectedCount || 0}</span>
-                                <span>疑似异常 {adjustmentSaveSummary.suspiciousCount || 0}</span>
-                                <span>未匹配 SKU {adjustmentSaveSummary.unmatchedSkuCount || 0}</span>
-                                <span>使用单独日期 {adjustmentSaveSummary.usedItemDateCount || 0}</span>
-                                <span>使用统一日期 {adjustmentSaveSummary.usedDefaultDateCount || 0}</span>
-                              </div>
-                              {(adjustmentSaveSummary.duplicateRows?.length || 0) > 0 && (
-                                <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
-                                  <div className="border-b border-slate-200 px-3 py-2 text-xs font-medium text-slate-700">重复行（保留最后一条）</div>
-                                  <table className="w-full text-xs">
-                                    <thead>
-                                      <tr className="border-b border-slate-200 text-left text-slate-500">
-                                        <th className="px-3 py-2">原始行</th>
-                                        <th className="px-3 py-2">标准化 SKU</th>
-                                        <th className="px-3 py-2">日期</th>
-                                        <th className="px-3 py-2">处理方式</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {adjustmentSaveSummary.duplicateRows?.map((item, index) => (
-                                        <tr key={`${item.rawLine}-${item.normalizedSku}-${index}`} className="border-b border-slate-100">
-                                          <td className="px-3 py-2 text-slate-500">{item.rawLine}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.normalizedSku}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.date || '-'}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.action}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              )}
-                              {(adjustmentSaveSummary.warningRows?.length || 0) > 0 && (
-                                <div className="mt-3 overflow-x-auto rounded-lg border border-amber-200 bg-amber-50">
-                                  <div className="border-b border-amber-200 px-3 py-2 text-xs font-medium text-amber-800">警告 / 自动修正</div>
-                                  <table className="w-full text-xs">
-                                    <thead>
-                                      <tr className="border-b border-amber-200 text-left text-amber-700">
-                                        <th className="px-3 py-2">原始行</th>
-                                        <th className="px-3 py-2">修正前 SKU</th>
-                                        <th className="px-3 py-2">修正后 SKU</th>
-                                        <th className="px-3 py-2">原因</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {adjustmentSaveSummary.warningRows?.map((item, index) => (
-                                        <tr key={`${item.rawLine}-${item.originalSku}-${index}`} className="border-b border-amber-100">
-                                          <td className="px-3 py-2 text-slate-600">{item.rawLine}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.originalSku}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.normalizedSku}</td>
-                                          <td className="px-3 py-2 text-amber-800">{item.reason}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              )}
-                              {adjustmentSaveSummary.failures.length > 0 && (
-                                <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
-                                  <table className="w-full text-xs">
-                                    <thead>
-                                      <tr className="border-b border-slate-200 text-left text-slate-500">
-                                        <th className="px-3 py-2">行号</th>
-                                        <th className="px-3 py-2">原始行</th>
-                                        <th className="px-3 py-2">SKU</th>
-                                        <th className="px-3 py-2">数量</th>
-                                        <th className="px-3 py-2">日期</th>
-                                        <th className="px-3 py-2">失败原因</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {adjustmentSaveSummary.failures.map((item, index) => (
-                                        <tr key={`${item.lineNumber}-${item.sku}-${index}`} className="border-b border-slate-100">
-                                          <td className="px-3 py-2 text-slate-700">{item.lineNumber}</td>
-                                          <td className="px-3 py-2 text-slate-500">{item.rawLine || '-'}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.quantity ?? '-'}</td>
-                                          <td className="px-3 py-2 text-slate-700">{item.date || '-'}</td>
-                                          <td className="px-3 py-2 text-rose-700">{item.reason}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
                           <div className="flex justify-end gap-3">
                             <button
                               onClick={() => resetAdjustmentForm(adjustmentFormSku)}
@@ -3936,6 +3873,113 @@ export default function ProductSalesPage() {
                           </div>
                         )}
                       </div>
+                      </div>
+
+                      {adjustmentSaveSummary && (
+                        <div className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
+                          <div className="flex flex-wrap gap-3">
+                            <span>原始行数 {adjustmentSaveSummary.rawRowCount || 0}</span>
+                            <span>有效解析 {adjustmentSaveSummary.parsedCount || 0}</span>
+                            <span>成功 {adjustmentSaveSummary.successCount}</span>
+                            <span>失败 {adjustmentSaveSummary.failureCount}</span>
+                            <span>输入重复 {adjustmentSaveSummary.duplicateInInputCount || 0}</span>
+                            <span>自动合并 {adjustmentSaveSummary.mergedCount || 0}</span>
+                            <span>自动修正 {adjustmentSaveSummary.autoCorrectedCount || 0}</span>
+                            <span>疑似异常 {adjustmentSaveSummary.suspiciousCount || 0}</span>
+                            <span>未匹配 SKU {adjustmentSaveSummary.unmatchedSkuCount || 0}</span>
+                            <span>使用单独日期 {adjustmentSaveSummary.usedItemDateCount || 0}</span>
+                            <span>使用统一日期 {adjustmentSaveSummary.usedDefaultDateCount || 0}</span>
+                          </div>
+
+                          {(adjustmentSaveSummary.duplicateRows?.length || 0) > 0 && (
+                            <details className="mt-4 rounded-lg border border-emerald-200 bg-white" open>
+                              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-900">重复行明细（保留最后一条）</summary>
+                              <div className="overflow-x-auto border-t border-slate-200">
+                                <table className="min-w-[880px] w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-slate-200 text-left text-slate-500">
+                                      <th className="px-3 py-2 whitespace-nowrap">原始行</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">标准化 SKU</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">日期</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">处理方式</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {adjustmentSaveSummary.duplicateRows?.map((item, index) => (
+                                      <tr key={`${item.rawLine}-${item.normalizedSku}-${index}`} className="border-b border-slate-100 align-top">
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-600">{item.rawLine}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.normalizedSku}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.date || '-'}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.action}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </details>
+                          )}
+
+                          {(adjustmentSaveSummary.warningRows?.length || 0) > 0 && (
+                            <details className="mt-4 rounded-lg border border-amber-200 bg-amber-50" open>
+                              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-amber-900">疑似异常 / 自动修正明细</summary>
+                              <div className="overflow-x-auto border-t border-amber-200">
+                                <table className="min-w-[980px] w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-amber-200 text-left text-amber-800">
+                                      <th className="px-3 py-2 whitespace-nowrap">原始行</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">修正前 SKU</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">修正后 SKU</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">原因</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {adjustmentSaveSummary.warningRows?.map((item, index) => (
+                                      <tr key={`${item.rawLine}-${item.originalSku}-${index}`} className="border-b border-amber-100 align-top">
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-600">{item.rawLine}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.originalSku}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.normalizedSku}</td>
+                                        <td className="px-3 py-2 min-w-[280px] text-amber-900">{item.reason}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </details>
+                          )}
+
+                          {adjustmentSaveSummary.failures.length > 0 && (
+                            <details className="mt-4 rounded-lg border border-rose-200 bg-white" open>
+                              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-rose-800">失败 / 未匹配明细</summary>
+                              <div className="overflow-x-auto border-t border-slate-200">
+                                <table className="min-w-[1100px] w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-slate-200 text-left text-slate-500">
+                                      <th className="px-3 py-2 whitespace-nowrap">行号</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">原始行</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">标准化 SKU</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">数量</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">日期</th>
+                                      <th className="px-3 py-2 whitespace-nowrap">失败原因</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {adjustmentSaveSummary.failures.map((item, index) => (
+                                      <tr key={`${item.lineNumber}-${item.sku}-${index}`} className="border-b border-slate-100 align-top">
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.lineNumber}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-600">{item.rawLine || '-'}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.sku || '-'}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.quantity ?? '-'}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-slate-700">{item.date || '-'}</td>
+                                        <td className="px-3 py-2 min-w-[320px] text-rose-700">{item.reason}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
