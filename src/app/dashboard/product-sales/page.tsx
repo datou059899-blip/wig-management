@@ -95,15 +95,36 @@ interface BulkItemFailure {
   reason: string
 }
 
+interface BulkDuplicateRow {
+  rawLine: string
+  normalizedSku: string
+  date: string
+  action: string
+}
+
+interface BulkWarningRow {
+  rawLine: string
+  originalSku: string
+  normalizedSku: string
+  reason: string
+}
+
 interface BulkSaveSummary {
   successCount: number
   createdCount?: number
   updatedCount?: number
   failureCount: number
+  rawRowCount?: number
+  parsedCount?: number
   duplicateInInputCount?: number
+  mergedCount?: number
+  autoCorrectedCount?: number
+  suspiciousCount?: number
   unmatchedSkuCount?: number
   usedItemDateCount?: number
   usedDefaultDateCount?: number
+  duplicateRows?: BulkDuplicateRow[]
+  warningRows?: BulkWarningRow[]
   failures: BulkItemFailure[]
 }
 
@@ -431,14 +452,184 @@ function normalizeFlexibleDateToken(value: string) {
   return `${yearText}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 
-function parseBulkSkuQuantityText(text: string) {
+function normalizeBulkStockSku(rawSku: string) {
+  const trimmed = rawSku.trim().replace(/（/g, '(').replace(/）/g, ')').replace(/\s+/g, ' ')
+  const parenthesisMatched = trimmed.match(/^(.+?)\s*\(\s*([^()]+?)\s*\)$/)
+
+  if (!parenthesisMatched) {
+    return {
+      originalSku: rawSku.trim(),
+      normalizedInputSku: trimmed,
+      mainSku: trimmed,
+      aliasSku: '',
+      saveSku: trimmed,
+    }
+  }
+
+  const mainSku = parenthesisMatched[1].trim().replace(/\s+/g, ' ')
+  const aliasSku = parenthesisMatched[2].trim().replace(/\s+/g, ' ')
+
+  return {
+    originalSku: rawSku.trim(),
+    normalizedInputSku: `${mainSku} (${aliasSku})`,
+    mainSku,
+    aliasSku,
+    saveSku: mainSku,
+  }
+}
+
+type BulkParsedItem = {
+  sku: string
+  quantity: number
+  date?: string
+  lineNumber: number
+  rawLine: string
+}
+
+type BulkPreprocessContext = {
+  mainSkuSet: Set<string>
+  allKnownSkuSet: Set<string>
+}
+
+function preprocessBulkStockItems(
+  parsedItems: BulkParsedItem[],
+  mode: 'baseline' | 'adjustment',
+  context: BulkPreprocessContext,
+  adjustmentType?: string,
+) {
+  const failures: BulkItemFailure[] = []
+  const warningRows: BulkWarningRow[] = []
+  const aliasBuckets = new Map<string, Array<BulkParsedItem & ReturnType<typeof normalizeBulkStockSku> & { normalizedDate: string }>>()
+  const normalizedItems = parsedItems.map((item) => {
+    const normalizedSku = normalizeBulkStockSku(item.sku)
+    const normalizedDate = item.date || ''
+    const combined = {
+      ...item,
+      ...normalizedSku,
+      normalizedDate,
+    }
+
+    if (normalizedSku.aliasSku) {
+      const aliasKey = normalizedSku.aliasSku.replace(/\s+/g, '').toUpperCase()
+      const bucket = aliasBuckets.get(aliasKey) || []
+      bucket.push(combined)
+      aliasBuckets.set(aliasKey, bucket)
+    }
+
+    return combined
+  })
+
+  aliasBuckets.forEach((bucket, aliasKey) => {
+    const uniqueMainSkus = Array.from(new Set(bucket.map((item) => item.mainSku)))
+    if (uniqueMainSkus.length <= 1) return
+
+    const existingMainSkus = uniqueMainSkus.filter((mainSku) => context.mainSkuSet.has(mainSku.toUpperCase()))
+    if (existingMainSkus.length === 1) {
+      const preferredMainSku = existingMainSkus[0]
+      bucket.forEach((item) => {
+        if (item.mainSku === preferredMainSku) return
+        item.saveSku = preferredMainSku
+        warningRows.push({
+          rawLine: item.rawLine,
+          originalSku: item.originalSku,
+          normalizedSku: preferredMainSku,
+          reason: `同一别称 ${item.aliasSku} 已存在主 SKU ${preferredMainSku}，已自动归并`,
+        })
+      })
+      return
+    }
+
+    bucket.forEach((item) => {
+      failures.push({
+        lineNumber: item.lineNumber,
+        sku: item.originalSku,
+        quantity: item.quantity,
+        date: item.normalizedDate,
+        rawLine: item.rawLine,
+        reason: `别称 ${item.aliasSku} 对应多个主 SKU（${uniqueMainSkus.join(' / ')}），无法自动确定`,
+      })
+    })
+  })
+
+  const duplicateRows: BulkDuplicateRow[] = []
+    const dedupedItems = new Map<string, BulkParsedItem & ReturnType<typeof normalizeBulkStockSku> & { normalizedDate: string }>()
+    const invalidLineNumbers = new Set(failures.map((item) => item.lineNumber))
+    let autoCorrectedCount = warningRows.length
+
+  normalizedItems.forEach((item) => {
+    if (invalidLineNumbers.has(item.lineNumber)) return
+
+    if (item.mainSku.toUpperCase().startsWith('SHM-')) {
+      const correctedMainSku = item.mainSku.replace(/^SHM-/i, 'SMH-')
+      if (context.mainSkuSet.has(correctedMainSku.toUpperCase())) {
+        item.saveSku = correctedMainSku
+        warningRows.push({
+          rawLine: item.rawLine,
+          originalSku: item.originalSku,
+          normalizedSku: correctedMainSku,
+          reason: `${item.mainSku} 已按可能拼写错误修正为 ${correctedMainSku}`,
+        })
+        autoCorrectedCount += 1
+      }
+    }
+
+    if (item.aliasSku && /^C/i.test(item.aliasSku) && !/^LC/i.test(item.aliasSku)) {
+      const lcAlias = `L${item.aliasSku}`
+      if (context.allKnownSkuSet.has(lcAlias.toUpperCase())) {
+        warningRows.push({
+          rawLine: item.rawLine,
+          originalSku: item.originalSku,
+          normalizedSku: `${item.saveSku}${item.aliasSku ? ` (${lcAlias})` : ''}`,
+          reason: `${item.aliasSku} 疑似 ${lcAlias}`,
+        })
+      }
+    }
+
+    const duplicateKey = mode === 'adjustment'
+      ? `${item.saveSku.replace(/\s+/g, '').toUpperCase()}::${item.normalizedDate}::${item.quantity}::${adjustmentType || ''}`
+      : `${item.saveSku.replace(/\s+/g, '').toUpperCase()}::${item.normalizedDate}`
+
+    if (dedupedItems.has(duplicateKey)) {
+      duplicateRows.push({
+        rawLine: item.rawLine,
+        normalizedSku: item.saveSku,
+        date: item.normalizedDate,
+        action: '保留最后一条',
+      })
+    }
+    dedupedItems.set(duplicateKey, item)
+  })
+
+  return {
+    items: Array.from(dedupedItems.values()).map((item) => ({
+      sku: item.saveSku,
+      quantity: item.quantity,
+      date: item.normalizedDate,
+      lineNumber: item.lineNumber,
+      rawLine: item.rawLine,
+    })),
+    duplicateRows,
+    warningRows,
+    failures,
+    rawRowCount: parsedItems.length + failures.filter((item) => item.rawLine).length,
+    parsedCount: parsedItems.length,
+    duplicateInInputCount: duplicateRows.length,
+    mergedCount: duplicateRows.length,
+    autoCorrectedCount,
+    suspiciousCount: failures.length,
+  }
+}
+
+function parseBulkSkuQuantityText(text: string, context?: BulkPreprocessContext, mode: 'baseline' | 'adjustment' = 'baseline', adjustmentType?: string) {
   const items: Array<{ sku: string; quantity: number; date?: string; lineNumber: number; rawLine: string }> = []
   const failures: BulkItemFailure[] = []
+  let rawRowCount = 0
 
   text.split(/\r?\n/).forEach((rawLine, index) => {
     const lineNumber = index + 1
     const line = rawLine.trim()
     if (!line) return
+    rawRowCount += 1
 
     let sku = ''
     let quantityText = ''
@@ -446,7 +637,16 @@ function parseBulkSkuQuantityText(text: string) {
 
     if (line.includes('\t')) {
       const parts = line.split('\t').map((part) => part.trim()).filter(Boolean)
-      if (parts.length < 2 || parts.length > 3) {
+      if (parts.length < 2) {
+        failures.push({
+          lineNumber,
+          sku: parts[0] || '',
+          rawLine: rawLine.trim(),
+          reason: '缺少数量',
+        })
+        return
+      }
+      if (parts.length > 3) {
         failures.push({
           lineNumber,
           sku: '',
@@ -459,7 +659,16 @@ function parseBulkSkuQuantityText(text: string) {
       dateText = parts[2] || ''
     } else if (line.includes(',')) {
       const parts = line.split(',').map((part) => part.trim()).filter(Boolean)
-      if (parts.length < 2 || parts.length > 3) {
+      if (parts.length < 2) {
+        failures.push({
+          lineNumber,
+          sku: parts[0] || '',
+          rawLine: rawLine.trim(),
+          reason: '缺少数量',
+        })
+        return
+      }
+      if (parts.length > 3) {
         failures.push({
           lineNumber,
           sku: '',
@@ -475,9 +684,9 @@ function parseBulkSkuQuantityText(text: string) {
       if (parts.length < 2) {
         failures.push({
           lineNumber,
-          sku: '',
+          sku: parts[0] || '',
           rawLine: rawLine.trim(),
-          reason: '格式不正确，请使用“SKU 数量 可选日期”',
+          reason: '缺少数量',
         })
         return
       }
@@ -551,7 +760,23 @@ function parseBulkSkuQuantityText(text: string) {
     })
   })
 
-  return { items, failures }
+  if (!context) {
+    return { items, failures, rawRowCount }
+  }
+
+  const preprocessed = preprocessBulkStockItems(items, mode, context, adjustmentType)
+  return {
+    items: preprocessed.items,
+    failures: [...failures, ...preprocessed.failures],
+    rawRowCount,
+    duplicateRows: preprocessed.duplicateRows,
+    warningRows: preprocessed.warningRows,
+    duplicateInInputCount: preprocessed.duplicateInInputCount,
+    mergedCount: preprocessed.mergedCount,
+    autoCorrectedCount: preprocessed.autoCorrectedCount,
+    suspiciousCount: preprocessed.suspiciousCount,
+    parsedCount: preprocessed.parsedCount,
+  }
 }
 
 function getTodayInputValue() {
@@ -705,6 +930,19 @@ export default function ProductSalesPage() {
     }
     return params
   }
+
+  const getBulkPreprocessContext = (): BulkPreprocessContext => ({
+    mainSkuSet: new Set(
+      products
+        .map((item) => item.sku.trim().toUpperCase())
+        .filter((sku) => sku && sku !== '-'),
+    ),
+    allKnownSkuSet: new Set(
+      skuOptions
+        .map((item) => item.sku.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  })
 
   const loadPageData = async (
     range = trendRange,
@@ -1311,10 +1549,12 @@ export default function ProductSalesPage() {
 
     let payload: Record<string, unknown>
     let bulkFailures: BulkItemFailure[] = []
+    let localBulkSummary: any = null
 
     if (baselineFormMode === 'bulk') {
-      const parsed = parseBulkSkuQuantityText(baselineBulkText)
+      const parsed = parseBulkSkuQuantityText(baselineBulkText, getBulkPreprocessContext(), 'baseline')
       bulkFailures = parsed.failures
+      localBulkSummary = parsed
       if (parsed.items.some((item) => item.quantity < 0)) {
         setBaselineError('初始库存必须是大于等于 0 的整数')
         return
@@ -1379,11 +1619,18 @@ export default function ProductSalesPage() {
         successCount: data.successCount || 0,
         createdCount: data.createdCount,
         updatedCount: data.updatedCount,
+        rawRowCount: localBulkSummary?.rawRowCount,
+        parsedCount: localBulkSummary?.parsedCount ?? (data.successCount || 0),
         failureCount: (data.failureCount || 0) + bulkFailures.length,
-        duplicateInInputCount: data.duplicateInInputCount,
+        duplicateInInputCount: localBulkSummary?.duplicateInInputCount ?? data.duplicateInInputCount,
+        mergedCount: localBulkSummary?.mergedCount || 0,
+        autoCorrectedCount: localBulkSummary?.autoCorrectedCount || 0,
+        suspiciousCount: localBulkSummary?.suspiciousCount || 0,
         unmatchedSkuCount: data.unmatchedSkuCount,
         usedItemDateCount: data.usedItemDateCount,
         usedDefaultDateCount: data.usedDefaultDateCount,
+        duplicateRows: localBulkSummary?.duplicateRows || [],
+        warningRows: localBulkSummary?.warningRows || [],
         failures: [...bulkFailures, ...(Array.isArray(data.failures) ? data.failures : [])],
       }
 
@@ -1434,10 +1681,12 @@ export default function ProductSalesPage() {
 
     let payload: Record<string, unknown>
     let bulkFailures: BulkItemFailure[] = []
+    let localBulkSummary: any = null
 
     if (adjustmentFormMode === 'bulk') {
-      const parsed = parseBulkSkuQuantityText(adjustmentBulkText)
+      const parsed = parseBulkSkuQuantityText(adjustmentBulkText, getBulkPreprocessContext(), 'adjustment', adjustmentFormType)
       bulkFailures = parsed.failures
+      localBulkSummary = parsed
       if (parsed.items.some((item) => item.quantity === 0)) {
         setAdjustmentError('调整数量必须是非 0 整数')
         return
@@ -1520,11 +1769,18 @@ export default function ProductSalesPage() {
       await refreshAfterMutation()
       const resultSummary: BulkSaveSummary = {
         successCount: data.successCount || 0,
+        rawRowCount: localBulkSummary?.rawRowCount,
+        parsedCount: localBulkSummary?.parsedCount ?? (data.successCount || 0),
         failureCount: (data.failureCount || 0) + bulkFailures.length,
-        duplicateInInputCount: data.duplicateInInputCount,
+        duplicateInInputCount: localBulkSummary?.duplicateInInputCount ?? data.duplicateInInputCount,
+        mergedCount: localBulkSummary?.mergedCount || 0,
+        autoCorrectedCount: localBulkSummary?.autoCorrectedCount || 0,
+        suspiciousCount: localBulkSummary?.suspiciousCount || 0,
         unmatchedSkuCount: data.unmatchedSkuCount,
         usedItemDateCount: data.usedItemDateCount,
         usedDefaultDateCount: data.usedDefaultDateCount,
+        duplicateRows: localBulkSummary?.duplicateRows || [],
+        warningRows: localBulkSummary?.warningRows || [],
         failures: [...bulkFailures, ...(Array.isArray(data.failures) ? data.failures : [])],
       }
 
@@ -3193,15 +3449,70 @@ export default function ProductSalesPage() {
                           {baselineSaveSummary && (
                             <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
                               <div className="flex flex-wrap gap-3">
+                                <span>原始行数 {baselineSaveSummary.rawRowCount || 0}</span>
+                                <span>有效解析 {baselineSaveSummary.parsedCount || 0}</span>
                                 <span>成功 {baselineSaveSummary.successCount}</span>
                                 <span>更新 {baselineSaveSummary.updatedCount || 0}</span>
                                 <span>新增 {(baselineSaveSummary.createdCount ?? Math.max(baselineSaveSummary.successCount - (baselineSaveSummary.updatedCount || 0), 0))}</span>
                                 <span>失败 {baselineSaveSummary.failureCount}</span>
                                 <span>输入重复 {baselineSaveSummary.duplicateInInputCount || 0}</span>
+                                <span>自动合并 {baselineSaveSummary.mergedCount || 0}</span>
+                                <span>自动修正 {baselineSaveSummary.autoCorrectedCount || 0}</span>
+                                <span>疑似异常 {baselineSaveSummary.suspiciousCount || 0}</span>
                                 <span>未匹配 SKU {baselineSaveSummary.unmatchedSkuCount || 0}</span>
                                 <span>使用单独日期 {baselineSaveSummary.usedItemDateCount || 0}</span>
                                 <span>使用统一日期 {baselineSaveSummary.usedDefaultDateCount || 0}</span>
                               </div>
+                              {(baselineSaveSummary.duplicateRows?.length || 0) > 0 && (
+                                <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
+                                  <div className="border-b border-slate-200 px-3 py-2 text-xs font-medium text-slate-700">重复行（保留最后一条）</div>
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                                        <th className="px-3 py-2">原始行</th>
+                                        <th className="px-3 py-2">标准化 SKU</th>
+                                        <th className="px-3 py-2">日期</th>
+                                        <th className="px-3 py-2">处理方式</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {baselineSaveSummary.duplicateRows?.map((item, index) => (
+                                        <tr key={`${item.rawLine}-${item.normalizedSku}-${index}`} className="border-b border-slate-100">
+                                          <td className="px-3 py-2 text-slate-500">{item.rawLine}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.normalizedSku}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.date || '-'}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.action}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                              {(baselineSaveSummary.warningRows?.length || 0) > 0 && (
+                                <div className="mt-3 overflow-x-auto rounded-lg border border-amber-200 bg-amber-50">
+                                  <div className="border-b border-amber-200 px-3 py-2 text-xs font-medium text-amber-800">警告 / 自动修正</div>
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="border-b border-amber-200 text-left text-amber-700">
+                                        <th className="px-3 py-2">原始行</th>
+                                        <th className="px-3 py-2">修正前 SKU</th>
+                                        <th className="px-3 py-2">修正后 SKU</th>
+                                        <th className="px-3 py-2">原因</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {baselineSaveSummary.warningRows?.map((item, index) => (
+                                        <tr key={`${item.rawLine}-${item.originalSku}-${index}`} className="border-b border-amber-100">
+                                          <td className="px-3 py-2 text-slate-600">{item.rawLine}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.originalSku}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.normalizedSku}</td>
+                                          <td className="px-3 py-2 text-amber-800">{item.reason}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
                               {baselineSaveSummary.failures.length > 0 && (
                                 <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
                                   <table className="w-full text-xs">
@@ -3464,13 +3775,68 @@ export default function ProductSalesPage() {
                           {adjustmentSaveSummary && (
                             <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
                               <div className="flex flex-wrap gap-3">
+                                <span>原始行数 {adjustmentSaveSummary.rawRowCount || 0}</span>
+                                <span>有效解析 {adjustmentSaveSummary.parsedCount || 0}</span>
                                 <span>成功 {adjustmentSaveSummary.successCount}</span>
                                 <span>失败 {adjustmentSaveSummary.failureCount}</span>
                                 <span>输入重复 {adjustmentSaveSummary.duplicateInInputCount || 0}</span>
+                                <span>自动合并 {adjustmentSaveSummary.mergedCount || 0}</span>
+                                <span>自动修正 {adjustmentSaveSummary.autoCorrectedCount || 0}</span>
+                                <span>疑似异常 {adjustmentSaveSummary.suspiciousCount || 0}</span>
                                 <span>未匹配 SKU {adjustmentSaveSummary.unmatchedSkuCount || 0}</span>
                                 <span>使用单独日期 {adjustmentSaveSummary.usedItemDateCount || 0}</span>
                                 <span>使用统一日期 {adjustmentSaveSummary.usedDefaultDateCount || 0}</span>
                               </div>
+                              {(adjustmentSaveSummary.duplicateRows?.length || 0) > 0 && (
+                                <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
+                                  <div className="border-b border-slate-200 px-3 py-2 text-xs font-medium text-slate-700">重复行（保留最后一条）</div>
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                                        <th className="px-3 py-2">原始行</th>
+                                        <th className="px-3 py-2">标准化 SKU</th>
+                                        <th className="px-3 py-2">日期</th>
+                                        <th className="px-3 py-2">处理方式</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {adjustmentSaveSummary.duplicateRows?.map((item, index) => (
+                                        <tr key={`${item.rawLine}-${item.normalizedSku}-${index}`} className="border-b border-slate-100">
+                                          <td className="px-3 py-2 text-slate-500">{item.rawLine}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.normalizedSku}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.date || '-'}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.action}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                              {(adjustmentSaveSummary.warningRows?.length || 0) > 0 && (
+                                <div className="mt-3 overflow-x-auto rounded-lg border border-amber-200 bg-amber-50">
+                                  <div className="border-b border-amber-200 px-3 py-2 text-xs font-medium text-amber-800">警告 / 自动修正</div>
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="border-b border-amber-200 text-left text-amber-700">
+                                        <th className="px-3 py-2">原始行</th>
+                                        <th className="px-3 py-2">修正前 SKU</th>
+                                        <th className="px-3 py-2">修正后 SKU</th>
+                                        <th className="px-3 py-2">原因</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {adjustmentSaveSummary.warningRows?.map((item, index) => (
+                                        <tr key={`${item.rawLine}-${item.originalSku}-${index}`} className="border-b border-amber-100">
+                                          <td className="px-3 py-2 text-slate-600">{item.rawLine}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.originalSku}</td>
+                                          <td className="px-3 py-2 text-slate-700">{item.normalizedSku}</td>
+                                          <td className="px-3 py-2 text-amber-800">{item.reason}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
                               {adjustmentSaveSummary.failures.length > 0 && (
                                 <div className="mt-3 overflow-x-auto rounded-lg border border-emerald-100 bg-white">
                                   <table className="w-full text-xs">
