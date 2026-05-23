@@ -26,6 +26,51 @@ interface Product {
   updatedAt?: string
 }
 
+interface ProductBulkReviewRow {
+  rowNumber: number
+  inputSku: string
+  resolvedSku: string
+  currentSummary: string
+  nextSummary: string
+  changedFields: string[]
+  mode: 'update' | 'fill-empty' | 'skip'
+  reason: string
+}
+
+interface ProductBulkIssueRow {
+  rowNumber: number
+  rawLine: string
+  sku: string
+  resolvedSku?: string
+  reason: string
+}
+
+interface ProductBulkDuplicateRow {
+  rowNumber: number
+  rawLine: string
+  sku: string
+  normalizedSku: string
+  action: string
+}
+
+interface ProductBulkUpdateResult {
+  dryRun: boolean
+  allowOverwrite: boolean
+  totalRows: number
+  parsedCount: number
+  duplicateInInputCount: number
+  matchedCount: number
+  updateCount: number
+  skippedCount: number
+  notFoundCount: number
+  conflictCount: number
+  previewRows: ProductBulkReviewRow[]
+  duplicateRows: ProductBulkDuplicateRow[]
+  notFoundRows: ProductBulkIssueRow[]
+  conflictRows: ProductBulkIssueRow[]
+  parseIssueRows: ProductBulkIssueRow[]
+}
+
 const STYLE_OPTIONS = [
   { value: '', label: '请选择' },
   { value: 'Straight', label: 'Straight (直发)' },
@@ -63,10 +108,15 @@ export default function ProductsPage() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [productToDelete, setProductToDelete] = useState<Product | null>(null)
+  const [showBulkUpdateModal, setShowBulkUpdateModal] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [recentlyUpdated, setRecentlyUpdated] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [bulkUpdateText, setBulkUpdateText] = useState('')
+  const [bulkUpdateAllowOverwrite, setBulkUpdateAllowOverwrite] = useState(false)
+  const [bulkUpdateLoading, setBulkUpdateLoading] = useState(false)
+  const [bulkUpdateResult, setBulkUpdateResult] = useState<ProductBulkUpdateResult | null>(null)
   
   // 图片预览状态
   const [previewProduct, setPreviewProduct] = useState<Product | null>(null)
@@ -151,6 +201,51 @@ export default function ProductsPage() {
     })
     setPreviewUrl(null)
     setShowAddModal(true)
+  }
+
+  const handleOpenBulkUpdateModal = () => {
+    setBulkUpdateText('SKU,Name,Color,Length,Style\nSMH-6,STORMY,TWILIGHT SWIRL,18INCH,Water Wave\nSMH-7,VIVIAN,MOCHA BERRY SWIRL,18INCH,Water Wave')
+    setBulkUpdateAllowOverwrite(false)
+    setBulkUpdateResult(null)
+    setShowBulkUpdateModal(true)
+  }
+
+  const handleRunBulkUpdate = async (dryRun: boolean) => {
+    if (!bulkUpdateText.trim()) {
+      setToast({ message: '请先粘贴批量更新内容', type: 'error' })
+      return
+    }
+
+    try {
+      setBulkUpdateLoading(true)
+      const res = await fetch('/api/products/bulk-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: bulkUpdateText,
+          dryRun,
+          allowOverwrite: bulkUpdateAllowOverwrite,
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || '批量更新失败')
+      }
+
+      setBulkUpdateResult(data)
+      if (!dryRun) {
+        await fetchProducts()
+        setToast({
+          message: data.updateCount > 0 ? `已更新 ${data.updateCount} 个产品字段` : '没有需要更新的产品字段',
+          type: 'success',
+        })
+      }
+    } catch (error: any) {
+      setToast({ message: error.message || '批量更新失败', type: 'error' })
+    } finally {
+      setBulkUpdateLoading(false)
+    }
   }
 
   // 处理编辑
@@ -394,15 +489,26 @@ export default function ProductsPage() {
         </div>
 
         {canEdit && (
-          <button
-            onClick={handleAdd}
-            className="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 whitespace-nowrap"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            新增产品
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={handleOpenBulkUpdateModal}
+              className="px-4 py-3 border border-blue-200 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-2 whitespace-nowrap"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h10" />
+              </svg>
+              批量更新产品信息
+            </button>
+            <button
+              onClick={handleAdd}
+              className="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 whitespace-nowrap"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              新增产品
+            </button>
+          </div>
         )}
       </div>
 
@@ -649,6 +755,250 @@ export default function ProductsPage() {
             </div>
           )}
         </>
+      )}
+
+      {showBulkUpdateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-gray-200 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold">批量更新产品信息</h2>
+                <p className="mt-1 text-sm text-gray-500">按 SKU 精准匹配产品，支持先 dryRun 预览，再确认更新。默认仅补空字段；勾选允许覆盖后，适合清洗测试库中的长标题和属性。</p>
+              </div>
+              <button
+                onClick={() => setShowBulkUpdateModal(false)}
+                className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
+                disabled={bulkUpdateLoading}
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
+                <div className="rounded-lg border border-gray-200 p-4 space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">批量内容</label>
+                    <textarea
+                      value={bulkUpdateText}
+                      onChange={(e) => {
+                        setBulkUpdateText(e.target.value)
+                        setBulkUpdateResult(null)
+                      }}
+                      rows={14}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm text-gray-900 focus:ring-2 focus:ring-blue-500"
+                      placeholder={`SKU,Name,Color,Length,Style\nSMH-6,STORMY,TWILIGHT SWIRL,18INCH,Water Wave\nSMH-7,VIVIAN,MOCHA BERRY SWIRL,18INCH,Water Wave`}
+                    />
+                    <p className="mt-2 text-xs text-gray-500">必须包含表头。支持 `SKU,Name,Color,Length,Style,Image` 或 Tab 分隔。只会更新你提供的列，不会改动库存、销售、订单、ID 等字段。</p>
+                  </div>
+
+                  <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                    <input
+                      type="checkbox"
+                      checked={bulkUpdateAllowOverwrite}
+                      onChange={(e) => {
+                        setBulkUpdateAllowOverwrite(e.target.checked)
+                        setBulkUpdateResult(null)
+                      }}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="font-medium">允许覆盖已存在字段</span>
+                      <span className="block mt-1 text-xs text-amber-800">关闭时只补空字段，适合正式库保护；开启后会按你提供的 Name / Color / Length / Style / Image 覆盖现有值，适合测试库清洗。</span>
+                    </span>
+                  </label>
+
+                  <div className="flex justify-end gap-3">
+                    <button
+                      onClick={() => void handleRunBulkUpdate(true)}
+                      disabled={bulkUpdateLoading}
+                      className="px-4 py-2 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      {bulkUpdateLoading ? '处理中...' : '先 Dry Run'}
+                    </button>
+                    <button
+                      onClick={() => void handleRunBulkUpdate(false)}
+                      disabled={bulkUpdateLoading}
+                      className="px-4 py-2 rounded-lg bg-blue-600 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      确认更新
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 p-4">
+                  {!bulkUpdateResult ? (
+                    <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-10 text-sm text-gray-500">
+                      先点“Dry Run”查看将更新哪些 SKU、当前值是什么、哪些行找不到或有重复风险。
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap gap-3 text-sm text-gray-700">
+                        <span>原始行数 {bulkUpdateResult.totalRows}</span>
+                        <span>有效解析 {bulkUpdateResult.parsedCount}</span>
+                        <span>命中产品 {bulkUpdateResult.matchedCount}</span>
+                        <span>将更新 {bulkUpdateResult.updateCount}</span>
+                        <span>无需更新 {bulkUpdateResult.skippedCount}</span>
+                        <span>输入重复 {bulkUpdateResult.duplicateInInputCount}</span>
+                        <span>找不到 SKU {bulkUpdateResult.notFoundCount}</span>
+                        <span>重复风险 {bulkUpdateResult.conflictCount}</span>
+                        <span>{bulkUpdateResult.dryRun ? '当前模式：Dry Run' : '当前模式：已执行更新'}</span>
+                        <span>{bulkUpdateResult.allowOverwrite ? '覆盖模式：允许覆盖' : '覆盖模式：仅补空字段'}</span>
+                      </div>
+
+                      <div className="overflow-x-auto rounded-lg border border-gray-200">
+                        <table className="min-w-[1180px] w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-gray-200 bg-gray-50 text-left text-gray-500">
+                              <th className="px-3 py-2 whitespace-nowrap">行号</th>
+                              <th className="px-3 py-2 whitespace-nowrap">输入 SKU</th>
+                              <th className="px-3 py-2 whitespace-nowrap">命中 SKU</th>
+                              <th className="px-3 py-2 whitespace-nowrap">当前值</th>
+                              <th className="px-3 py-2 whitespace-nowrap">新值</th>
+                              <th className="px-3 py-2 whitespace-nowrap">变更字段</th>
+                              <th className="px-3 py-2 whitespace-nowrap">状态</th>
+                              <th className="px-3 py-2 whitespace-nowrap">说明</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {bulkUpdateResult.previewRows.map((row) => (
+                              <tr key={`${row.rowNumber}-${row.inputSku}`} className="border-b border-gray-100 align-top">
+                                <td className="px-3 py-2 whitespace-nowrap text-gray-700">{row.rowNumber}</td>
+                                <td className="px-3 py-2 whitespace-nowrap font-mono text-gray-700">{row.inputSku}</td>
+                                <td className="px-3 py-2 whitespace-nowrap font-mono text-gray-700">{row.resolvedSku}</td>
+                                <td className="px-3 py-2 min-w-[260px] text-gray-600">{row.currentSummary}</td>
+                                <td className="px-3 py-2 min-w-[260px] text-gray-900">{row.nextSummary}</td>
+                                <td className="px-3 py-2 whitespace-nowrap text-gray-700">{row.changedFields.join(', ') || '-'}</td>
+                                <td className="px-3 py-2 whitespace-nowrap text-gray-700">{row.mode}</td>
+                                <td className="px-3 py-2 min-w-[240px] text-gray-600">{row.reason}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {bulkUpdateResult.duplicateRows.length > 0 && (
+                        <details className="rounded-lg border border-emerald-200 bg-emerald-50" open>
+                          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-emerald-900">输入重复明细</summary>
+                          <div className="overflow-x-auto border-t border-emerald-200">
+                            <table className="min-w-[900px] w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-emerald-200 text-left text-emerald-900">
+                                  <th className="px-3 py-2 whitespace-nowrap">行号</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">原始行</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">标准化 SKU</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">处理方式</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {bulkUpdateResult.duplicateRows.map((row, index) => (
+                                  <tr key={`${row.rowNumber}-${index}`} className="border-b border-emerald-100">
+                                    <td className="px-3 py-2 whitespace-nowrap">{row.rowNumber}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap font-mono">{row.rawLine}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap font-mono">{row.normalizedSku}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap">{row.action}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </details>
+                      )}
+
+                      {bulkUpdateResult.notFoundRows.length > 0 && (
+                        <details className="rounded-lg border border-rose-200 bg-white" open>
+                          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-rose-800">找不到 SKU 明细</summary>
+                          <div className="overflow-x-auto border-t border-rose-200">
+                            <table className="min-w-[980px] w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-rose-200 text-left text-rose-900">
+                                  <th className="px-3 py-2 whitespace-nowrap">行号</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">原始行</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">输入 SKU</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">标准化 SKU</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">原因</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {bulkUpdateResult.notFoundRows.map((row, index) => (
+                                  <tr key={`${row.rowNumber}-${index}`} className="border-b border-rose-100">
+                                    <td className="px-3 py-2 whitespace-nowrap">{row.rowNumber}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap font-mono">{row.rawLine}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap font-mono">{row.sku || '-'}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap font-mono">{row.resolvedSku || '-'}</td>
+                                    <td className="px-3 py-2 min-w-[280px]">{row.reason}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </details>
+                      )}
+
+                      {bulkUpdateResult.conflictRows.length > 0 && (
+                        <details className="rounded-lg border border-amber-200 bg-amber-50" open>
+                          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-amber-900">重复风险 / 异常明细</summary>
+                          <div className="overflow-x-auto border-t border-amber-200">
+                            <table className="min-w-[980px] w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-amber-200 text-left text-amber-900">
+                                  <th className="px-3 py-2 whitespace-nowrap">行号</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">原始行</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">输入 SKU</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">标准化 SKU</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">原因</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {bulkUpdateResult.conflictRows.map((row, index) => (
+                                  <tr key={`${row.rowNumber}-${index}`} className="border-b border-amber-100">
+                                    <td className="px-3 py-2 whitespace-nowrap">{row.rowNumber}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap font-mono">{row.rawLine}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap font-mono">{row.sku || '-'}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap font-mono">{row.resolvedSku || '-'}</td>
+                                    <td className="px-3 py-2 min-w-[280px]">{row.reason}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </details>
+                      )}
+
+                      {bulkUpdateResult.parseIssueRows.length > 0 && (
+                        <details className="rounded-lg border border-rose-200 bg-white">
+                          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-rose-800">解析失败明细</summary>
+                          <div className="overflow-x-auto border-t border-rose-200">
+                            <table className="min-w-[900px] w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-rose-200 text-left text-rose-900">
+                                  <th className="px-3 py-2 whitespace-nowrap">行号</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">原始行</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">SKU</th>
+                                  <th className="px-3 py-2 whitespace-nowrap">原因</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {bulkUpdateResult.parseIssueRows.map((row, index) => (
+                                  <tr key={`${row.rowNumber}-${index}`} className="border-b border-rose-100">
+                                    <td className="px-3 py-2 whitespace-nowrap">{row.rowNumber}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap font-mono">{row.rawLine}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap font-mono">{row.sku || '-'}</td>
+                                    <td className="px-3 py-2 min-w-[280px]">{row.reason}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 新增产品弹窗 */}
