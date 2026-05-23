@@ -320,6 +320,19 @@ function hasSampleStats(result: OrderImportResult | null) {
   )
 }
 
+function formatTrendRangeLabel(range: TrendRange, startDate?: string, endDate?: string) {
+  if (range === 'today') return '今日'
+  if (range === '7') return '最近7天'
+  if (range === '30') return '最近30天'
+  if (range === 'custom') {
+    if (startDate && endDate) {
+      return `${startDate} ~ ${endDate}`
+    }
+    return '自定义时间'
+  }
+  return '最近7天'
+}
+
 interface TrendPoint {
   date: string
   label: string
@@ -504,6 +517,7 @@ export default function ProductSalesPage() {
   const [sampleStatsCustomEndDate, setSampleStatsCustomEndDate] = useState(getTodayInputValue())
   const [sampleStatsSku, setSampleStatsSku] = useState('')
   const [sampleStats, setSampleStats] = useState<SampleStatsData | null>(null)
+  const [sampleStatsExpanded, setSampleStatsExpanded] = useState(false)
 
   const [loading, setLoading] = useState(true)
   const [trendLoading, setTrendLoading] = useState(false)
@@ -2696,12 +2710,66 @@ export default function ProductSalesPage() {
               </div>
 
               <div className="mb-8 rounded-lg border border-violet-200 bg-white p-5 shadow-sm">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <h2 className="text-lg font-semibold text-slate-900">样品统计</h2>
-                    <p className="mt-1 text-sm text-slate-600">从历史样品订单中长期统计寄样数量，刷新页面后仍会自动显示。</p>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="text-base font-semibold text-slate-900">样品统计</div>
+                    <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 ring-1 ring-violet-200">
+                      {formatTrendRangeLabel(sampleStatsRange, sampleStatsStartDate, sampleStatsEndDate)}
+                    </span>
+                    <span className="text-sm text-slate-600">样品 {sampleStats?.totalSampleQty || 0} 件</span>
+                    <span className="text-sm text-slate-600">订单行 {sampleStats?.sampleRows || 0} 行</span>
                   </div>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                  <button
+                    onClick={() => setSampleStatsExpanded((value) => !value)}
+                    className="inline-flex items-center justify-center rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    {sampleStatsExpanded ? '收起' : '展开'}
+                  </button>
+                </div>
+
+                {sampleStatsExpanded && sampleStatsRange === 'custom' && (
+                  <div className="mt-4 flex flex-col gap-3 rounded-lg border border-violet-200 bg-violet-50 p-4 lg:flex-row lg:items-end">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-900">开始日期</label>
+                      <input
+                        type="date"
+                        value={sampleStatsCustomStartDate}
+                        onChange={(event) => {
+                          setSampleStatsCustomStartDate(event.target.value)
+                          setSampleStatsError(null)
+                        }}
+                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-900">结束日期</label>
+                      <input
+                        type="date"
+                        value={sampleStatsCustomEndDate}
+                        onChange={(event) => {
+                          setSampleStatsCustomEndDate(event.target.value)
+                          setSampleStatsError(null)
+                        }}
+                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      onClick={() => void applySampleStatsRange('custom', sampleStatsCustomStartDate, sampleStatsCustomEndDate, sampleStatsSku)}
+                      className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-medium text-white hover:bg-violet-800"
+                    >
+                      查询
+                    </button>
+                  </div>
+                )}
+
+                {sampleStatsError && (
+                  <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {sampleStatsError}
+                  </div>
+                )}
+
+                {sampleStatsExpanded && (
+                  <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
                     <select
                       value={sampleStatsSku}
                       onChange={(event) => {
@@ -2762,52 +2830,11 @@ export default function ProductSalesPage() {
                       </button>
                     </div>
                   </div>
-                </div>
-
-                {sampleStatsRange === 'custom' && (
-                  <div className="mt-4 flex flex-col gap-3 rounded-lg border border-violet-200 bg-violet-50 p-4 lg:flex-row lg:items-end">
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-900">开始日期</label>
-                      <input
-                        type="date"
-                        value={sampleStatsCustomStartDate}
-                        onChange={(event) => {
-                          setSampleStatsCustomStartDate(event.target.value)
-                          setSampleStatsError(null)
-                        }}
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-900">结束日期</label>
-                      <input
-                        type="date"
-                        value={sampleStatsCustomEndDate}
-                        onChange={(event) => {
-                          setSampleStatsCustomEndDate(event.target.value)
-                          setSampleStatsError(null)
-                        }}
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
-                      />
-                    </div>
-                    <button
-                      onClick={() => void applySampleStatsRange('custom', sampleStatsCustomStartDate, sampleStatsCustomEndDate, sampleStatsSku)}
-                      className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-medium text-white hover:bg-violet-800"
-                    >
-                      查询
-                    </button>
-                  </div>
                 )}
 
-                {sampleStatsError && (
-                  <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {sampleStatsError}
-                  </div>
-                )}
-
-                {sampleStatsLoading ? (
+                {sampleStatsExpanded && sampleStatsLoading ? (
                   <div className="mt-6 text-sm text-slate-500">样品统计加载中...</div>
-                ) : (
+                ) : sampleStatsExpanded ? (
                   <>
                     <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                       <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3">
@@ -2914,7 +2941,7 @@ export default function ProductSalesPage() {
                       </details>
                     )}
                   </>
-                )}
+                ) : null}
               </div>
 
               {stockBaselineOpen && (
