@@ -405,6 +405,32 @@ function normalizeDateInput(value: string) {
   return value.trim().replace(/\//g, '-')
 }
 
+function normalizeFlexibleDateToken(value: string) {
+  const normalized = normalizeDateInput(value)
+  const matched = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+  if (!matched) return null
+
+  const [, yearText, monthText, dayText] = matched
+  const year = Number(yearText)
+  const month = Number(monthText)
+  const day = Number(dayText)
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null
+
+  const date = new Date(year, month - 1, day, 0, 0, 0, 0)
+  if (
+    Number.isNaN(date.getTime())
+    || date.getFullYear() !== year
+    || date.getMonth() !== month - 1
+    || date.getDate() !== day
+  ) {
+    return null
+  }
+
+  return `${yearText}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
 function parseBulkSkuQuantityText(text: string) {
   const items: Array<{ sku: string; quantity: number; date?: string; lineNumber: number; rawLine: string }> = []
   const failures: BulkItemFailure[] = []
@@ -414,36 +440,78 @@ function parseBulkSkuQuantityText(text: string) {
     const line = rawLine.trim()
     if (!line) return
 
-    let parts: string[] = []
+    let sku = ''
+    let quantityText = ''
+    let dateText = ''
+
     if (line.includes('\t')) {
-      parts = line.split('\t').map((part) => part.trim()).filter(Boolean)
+      const parts = line.split('\t').map((part) => part.trim()).filter(Boolean)
+      if (parts.length < 2 || parts.length > 3) {
+        failures.push({
+          lineNumber,
+          sku: '',
+          rawLine: rawLine.trim(),
+          reason: 'Tab 格式不正确，请使用“SKU + 数量 + 可选日期”',
+        })
+        return
+      }
+      ;[sku, quantityText] = parts
+      dateText = parts[2] || ''
     } else if (line.includes(',')) {
-      parts = line.split(',').map((part) => part.trim()).filter(Boolean)
+      const parts = line.split(',').map((part) => part.trim()).filter(Boolean)
+      if (parts.length < 2 || parts.length > 3) {
+        failures.push({
+          lineNumber,
+          sku: '',
+          rawLine: rawLine.trim(),
+          reason: '逗号格式不正确，请使用“SKU,数量,可选日期”',
+        })
+        return
+      }
+      ;[sku, quantityText] = parts
+      dateText = parts[2] || ''
     } else {
-      parts = line.split(/\s+/).filter(Boolean)
+      const parts = line.split(/\s+/).filter(Boolean)
+      if (parts.length < 2) {
+        failures.push({
+          lineNumber,
+          sku: '',
+          rawLine: rawLine.trim(),
+          reason: '格式不正确，请使用“SKU 数量 可选日期”',
+        })
+        return
+      }
+
+      const lastTokenAsDate = normalizeFlexibleDateToken(parts[parts.length - 1])
+      if (lastTokenAsDate) {
+        if (parts.length < 3) {
+          failures.push({
+            lineNumber,
+            sku: '',
+            date: lastTokenAsDate,
+            rawLine: rawLine.trim(),
+            reason: '缺少数量，无法解析批量数据',
+          })
+          return
+        }
+        dateText = parts[parts.length - 1]
+        quantityText = parts[parts.length - 2]
+        sku = parts.slice(0, -2).join(' ').trim()
+      } else {
+        quantityText = parts[parts.length - 1]
+        sku = parts.slice(0, -1).join(' ').trim()
+      }
     }
 
-    if (parts.length < 2 || parts.length > 3) {
-      failures.push({
-        lineNumber,
-        sku: '',
-        rawLine: rawLine.trim(),
-        reason: '格式不正确，请使用“SKU 数量”、“SKU,数量”或“SKU+Tab+数量”',
-      })
-      return
-    }
-
-    const sku = parts[0].trim()
-    const quantityText = parts[1]
     const quantity = Number(quantityText)
-    const dateText = parts[2] ? normalizeDateInput(parts[2]) : ''
+    const normalizedDateText = dateText ? normalizeFlexibleDateToken(dateText) : ''
 
     if (!sku) {
       failures.push({
         lineNumber,
         sku: '',
         quantity: Number.isFinite(quantity) ? quantity : null,
-        date: dateText,
+        date: normalizedDateText || normalizeDateInput(dateText),
         rawLine: rawLine.trim(),
         reason: 'SKU 不能为空',
       })
@@ -455,9 +523,21 @@ function parseBulkSkuQuantityText(text: string) {
         lineNumber,
         sku,
         quantity: null,
-        date: dateText,
+        date: normalizedDateText || normalizeDateInput(dateText),
         rawLine: rawLine.trim(),
         reason: '数量必须是整数',
+      })
+      return
+    }
+
+    if (dateText && !normalizedDateText) {
+      failures.push({
+        lineNumber,
+        sku,
+        quantity,
+        date: normalizeDateInput(dateText),
+        rawLine: rawLine.trim(),
+        reason: '日期格式无效，请使用 YYYY-MM-DD 或 YYYY/MM/DD',
       })
       return
     }
@@ -465,7 +545,7 @@ function parseBulkSkuQuantityText(text: string) {
     items.push({
       sku,
       quantity,
-      date: dateText,
+      date: normalizedDateText || undefined,
       lineNumber,
       rawLine: rawLine.trim(),
     })
@@ -590,6 +670,13 @@ export default function ProductSalesPage() {
     key: 'salesRankPriority',
     direction: 'asc',
   })
+  const anyModalOpen = (
+    stockBaselineOpen
+    || stockAdjustmentOpen
+    || rankSettingsOpen
+    || Boolean(stockEditTarget)
+    || groupManagerOpen
+  )
 
   const buildRangeParams = (range: TrendRange, startDate = trendStartDate, endDate = trendEndDate) => {
     const params = new URLSearchParams()
@@ -840,6 +927,17 @@ export default function ProductSalesPage() {
 
     void initialize()
   }, [])
+
+  useEffect(() => {
+    if (!anyModalOpen) return
+
+    const originalOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = originalOverflow
+    }
+  }, [anyModalOpen])
 
   const refreshAfterMutation = async () => {
     await Promise.all([
@@ -2946,7 +3044,7 @@ export default function ProductSalesPage() {
 
               {stockBaselineOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-3xl rounded-xl bg-white p-6 shadow-xl">
+                  <div className="w-full max-w-3xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">设置初始库存</h3>
@@ -2965,7 +3063,7 @@ export default function ProductSalesPage() {
                       </button>
                     </div>
 
-                    <div className="mt-5 grid gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
+                    <div className="mt-5 grid max-h-[calc(100vh-10rem)] gap-6 overflow-y-auto pr-1 lg:grid-cols-[340px_minmax(0,1fr)]">
                       <div className="rounded-lg border border-slate-200 p-4">
                         <div className="space-y-4">
                           <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
@@ -3196,7 +3294,7 @@ export default function ProductSalesPage() {
 
               {stockAdjustmentOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-4xl rounded-xl bg-white p-6 shadow-xl">
+                  <div className="w-full max-w-4xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">补货/调整库存</h3>
@@ -3215,7 +3313,7 @@ export default function ProductSalesPage() {
                       </button>
                     </div>
 
-                    <div className="mt-5 grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
+                    <div className="mt-5 grid max-h-[calc(100vh-10rem)] gap-6 overflow-y-auto pr-1 lg:grid-cols-[360px_minmax(0,1fr)]">
                       <div className="rounded-lg border border-slate-200 p-4">
                         <div className="space-y-4">
                           <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
@@ -3479,7 +3577,7 @@ export default function ProductSalesPage() {
 
               {rankSettingsOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-xl">
+                  <div className="w-full max-w-2xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">等级设置</h3>
@@ -3498,7 +3596,7 @@ export default function ProductSalesPage() {
                       </button>
                     </div>
 
-                    <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                    <div className="mt-5 grid max-h-[calc(100vh-10rem)] gap-4 overflow-y-auto pr-1 sm:grid-cols-2">
                       <div>
                         <label className="mb-2 block text-sm font-medium text-slate-900">A 日均销量阈值</label>
                         <input
@@ -3612,7 +3710,7 @@ export default function ProductSalesPage() {
 
               {stockEditTarget && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+                  <div className="w-full max-w-md max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">编辑库存</h3>
@@ -3632,7 +3730,7 @@ export default function ProductSalesPage() {
                       </button>
                     </div>
 
-                    <div className="mt-5 space-y-4">
+                    <div className="mt-5 max-h-[calc(100vh-10rem)] space-y-4 overflow-y-auto pr-1">
                       <div>
                         <div className="mb-2 text-sm font-medium text-slate-900">修改方式</div>
                         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -3715,7 +3813,7 @@ export default function ProductSalesPage() {
 
               {groupManagerOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-5xl rounded-xl bg-white p-6 shadow-xl">
+                  <div className="w-full max-w-5xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">分组管理</h3>
@@ -3734,7 +3832,7 @@ export default function ProductSalesPage() {
                       </button>
                     </div>
 
-                    <div className="mt-5 grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+                    <div className="mt-5 grid max-h-[calc(100vh-10rem)] gap-6 overflow-y-auto pr-1 lg:grid-cols-[280px_minmax(0,1fr)]">
                       <div className="rounded-lg border border-slate-200 p-4">
                         <div className="mb-3 flex items-center justify-between">
                           <div className="text-sm font-semibold text-slate-900">已有分组</div>
