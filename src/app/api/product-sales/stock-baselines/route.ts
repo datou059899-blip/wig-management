@@ -28,7 +28,27 @@ function normalizeCell(value: unknown) {
 }
 
 function normalizeSkuKey(value: string) {
-  return normalizeCell(value).replace(/\s+/g, '').toUpperCase()
+  return normalizeCell(value).replace(/（/g, '(').replace(/）/g, ')').replace(/\s+/g, '').toUpperCase()
+}
+
+function extractMainSkuFromText(value: string | null | undefined) {
+  const text = normalizeCell(value).replace(/（/g, '(').replace(/）/g, ')')
+  const matched = text.match(/^(.+?)\s*\(\s*([^()]+?)\s*\)$/)
+  return matched ? normalizeCell(matched[1]) : ''
+}
+
+function buildKnownSkuMatchKeys(value: string | null | undefined) {
+  const keys = new Set<string>()
+  const text = normalizeCell(value)
+  if (!text) return []
+
+  keys.add(text)
+  const mainSku = extractMainSkuFromText(text)
+  if (mainSku) {
+    keys.add(mainSku)
+  }
+  extractAliasSkusFromText(text).forEach((aliasSku) => keys.add(aliasSku))
+  return Array.from(keys)
 }
 
 function parseDateInput(value: string) {
@@ -300,9 +320,8 @@ export async function POST(request: NextRequest) {
 
     const knownSkuKeys = new Set<string>()
     products.forEach((product) => {
-      knownSkuKeys.add(normalizeSkuKey(product.sku || ''))
-      extractAliasSkusFromText(product.sku).forEach((aliasSku) => knownSkuKeys.add(normalizeSkuKey(aliasSku)))
-      extractAliasSkusFromText(product.name).forEach((aliasSku) => knownSkuKeys.add(normalizeSkuKey(aliasSku)))
+      buildKnownSkuMatchKeys(product.sku).forEach((sku) => knownSkuKeys.add(normalizeSkuKey(sku)))
+      buildKnownSkuMatchKeys(product.name).forEach((sku) => knownSkuKeys.add(normalizeSkuKey(sku)))
     })
     aliases.forEach((alias) => {
       knownSkuKeys.add(normalizeSkuKey(alias.aliasSku))

@@ -478,6 +478,24 @@ function normalizeBulkStockSku(rawSku: string) {
   }
 }
 
+function extractBulkAliasSkusFromText(value: string | null | undefined) {
+  const aliases = new Set<string>()
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (!text) return []
+
+  const pattern = /[（(]\s*([^()（）]+?)\s*[)）]/g
+  let match = pattern.exec(text)
+  while (match) {
+    const alias = match[1]?.trim()
+    if (alias) {
+      aliases.add(alias)
+    }
+    match = pattern.exec(text)
+  }
+
+  return Array.from(aliases)
+}
+
 type BulkParsedItem = {
   sku: string
   quantity: number
@@ -489,6 +507,27 @@ type BulkParsedItem = {
 type BulkPreprocessContext = {
   mainSkuSet: Set<string>
   allKnownSkuSet: Set<string>
+  resolvedSkuByKey: Map<string, string>
+}
+
+function normalizeBulkSkuCompareKey(value: string) {
+  return value.trim().replace(/（/g, '(').replace(/）/g, ')').replace(/\s+/g, '').toUpperCase()
+}
+
+function buildBulkSkuMatchKeys(value: string | null | undefined) {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (!text) return []
+
+  const normalized = normalizeBulkStockSku(text)
+  const candidates = [
+    text,
+    normalized.normalizedInputSku,
+    normalized.mainSku,
+    normalized.aliasSku,
+    ...extractBulkAliasSkusFromText(text),
+  ]
+
+  return Array.from(new Set(candidates.map((item) => item.trim()).filter(Boolean)))
 }
 
 function preprocessBulkStockItems(
@@ -588,7 +627,34 @@ function preprocessBulkStockItems(
       }
     }
 
-    const normalizedSaveSkuKey = item.saveSku.replace(/\s+/g, '').toUpperCase()
+    const candidateKeys = [
+      normalizeBulkSkuCompareKey(item.mainSku),
+      item.aliasSku ? normalizeBulkSkuCompareKey(item.aliasSku) : '',
+      normalizeBulkSkuCompareKey(item.originalSku),
+      normalizeBulkSkuCompareKey(item.normalizedInputSku),
+    ].filter(Boolean)
+
+    const resolvedMatchedSku = candidateKeys
+      .map((key) => context.resolvedSkuByKey.get(key))
+      .find((value): value is string => Boolean(value))
+
+    if (resolvedMatchedSku) {
+      item.saveSku = resolvedMatchedSku
+      if (
+        item.aliasSku
+        && !/^SHM-/i.test(item.mainSku)
+        && normalizeBulkSkuCompareKey(item.originalSku) !== normalizeBulkSkuCompareKey(item.saveSku)
+      ) {
+        warningRows.push({
+          rawLine: item.rawLine,
+          originalSku: item.originalSku,
+          normalizedSku: item.saveSku,
+          reason: `${item.originalSku} 已按主 SKU ${item.saveSku} 保存。`,
+        })
+      }
+    }
+
+    const normalizedSaveSkuKey = normalizeBulkSkuCompareKey(item.saveSku)
     const isKnownMainSku = context.mainSkuSet.has(normalizedSaveSkuKey)
     const isKnownAnySku = context.allKnownSkuSet.has(normalizedSaveSkuKey)
 
@@ -952,16 +1018,44 @@ export default function ProductSalesPage() {
   }
 
   const getBulkPreprocessContext = (): BulkPreprocessContext => ({
-    mainSkuSet: new Set(
-      products
-        .map((item) => item.sku.trim().toUpperCase())
-        .filter((sku) => sku && sku !== '-'),
-    ),
-    allKnownSkuSet: new Set(
-      skuOptions
-        .map((item) => item.sku.trim().toUpperCase())
-        .filter(Boolean),
-    ),
+    ...(() => {
+      const mainSkuSet = new Set<string>()
+      const allKnownSkuSet = new Set<string>()
+      const resolvedSkuByKey = new Map<string, string>()
+
+      const registerResolvedSku = (value: string, resolvedSku: string) => {
+        const normalizedKey = normalizeBulkSkuCompareKey(value)
+        if (!normalizedKey || !resolvedSku) return
+        allKnownSkuSet.add(normalizedKey)
+        if (!resolvedSkuByKey.has(normalizedKey)) {
+          resolvedSkuByKey.set(normalizedKey, resolvedSku)
+        }
+      }
+
+      products.forEach((item) => {
+        const rawSku = item.sku.trim()
+        if (!rawSku || rawSku === '-') return
+
+        const normalizedSku = normalizeBulkStockSku(rawSku)
+        const resolvedMainSku = normalizedSku.mainSku || rawSku
+        mainSkuSet.add(normalizeBulkSkuCompareKey(resolvedMainSku))
+
+        buildBulkSkuMatchKeys(rawSku).forEach((key) => registerResolvedSku(key, resolvedMainSku))
+        buildBulkSkuMatchKeys(item.name).forEach((key) => registerResolvedSku(key, resolvedMainSku))
+      })
+
+      skuOptions.forEach((item) => {
+        const optionSku = item.sku.trim()
+        if (!optionSku) return
+        registerResolvedSku(optionSku, resolvedSkuByKey.get(normalizeBulkSkuCompareKey(optionSku)) || optionSku)
+      })
+
+      return {
+        mainSkuSet,
+        allKnownSkuSet,
+        resolvedSkuByKey,
+      }
+    })(),
   })
 
   const loadPageData = async (
