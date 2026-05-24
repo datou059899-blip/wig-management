@@ -4,6 +4,7 @@ import { getServerSession } from 'next-auth'
 import { Prisma } from '@prisma/client'
 import * as XLSX from 'xlsx'
 import { authOptions } from '@/lib/auth'
+import { buildImportRowRecords, parseImportFile } from '@/lib/import-file-parser'
 import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
@@ -398,95 +399,6 @@ function buildDedupeKey(orderId: string, skuId: string | null, sellerSku: string
   if (skuId) return `${orderId}::${skuId}`
   if (sellerSku) return `${orderId}::${sellerSku}`
   return null
-}
-
-function getNormalizedRowsFromSheet(sheet: XLSX.WorkSheet) {
-  const rawRows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
-    header: 1,
-    defval: '',
-  })
-
-  if (!rawRows.length) return []
-
-  const headerRow = Array.isArray(rawRows[0]) ? rawRows[0] : []
-  const headers = headerRow.map((cell) => normalizeHeader(cell))
-
-  return rawRows.slice(1).map((row, index) => {
-    const record = headers.reduce<Record<string, unknown>>((acc, header, headerIndex) => {
-      if (header) {
-        acc[header] = Array.isArray(row) ? row[headerIndex] : ''
-      }
-      return acc
-    }, {})
-
-    return {
-      rowNumber: index + 2,
-      record,
-    }
-  })
-}
-
-function parseCsvText(text: string) {
-  const rows: string[][] = []
-  let currentRow: string[] = []
-  let currentCell = ''
-  let inQuotes = false
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index]
-    const nextChar = text[index + 1]
-
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        currentCell += '"'
-        index += 1
-      } else {
-        inQuotes = !inQuotes
-      }
-      continue
-    }
-
-    if (char === ',' && !inQuotes) {
-      currentRow.push(currentCell)
-      currentCell = ''
-      continue
-    }
-
-    if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && nextChar === '\n') {
-        index += 1
-      }
-      currentRow.push(currentCell)
-      rows.push(currentRow)
-      currentRow = []
-      currentCell = ''
-      continue
-    }
-
-    currentCell += char
-  }
-
-  if (currentCell.length > 0 || currentRow.length > 0) {
-    currentRow.push(currentCell)
-    rows.push(currentRow)
-  }
-
-  if (!rows.length) return []
-
-  const headers = (rows[0] || []).map((cell) => normalizeHeader(cell))
-  return rows.slice(1).map((row, index) => {
-    const record = headers.reduce<Record<string, unknown>>((acc, header, headerIndex) => {
-      if (header) {
-        acc[header] = row[headerIndex] ?? ''
-      }
-      return acc
-    }, {})
-
-    return {
-      rowNumber: index + 2,
-      record,
-    }
-  })
 }
 
 function chunkArray<T>(items: T[], size: number) {
@@ -999,9 +911,7 @@ export async function POST(request: NextRequest) {
     }
 
     const sourceFileName = String(file.name || '').trim()
-    const normalizedFileName = sourceFileName.toLowerCase()
-    const bytes = await file.arrayBuffer()
-    const fileSize = bytes.byteLength
+    const fileSize = typeof file.size === 'number' ? file.size : 0
 
     console.log('[import-orders] start', {
       fileName: sourceFileName,
@@ -1017,32 +927,19 @@ export async function POST(request: NextRequest) {
     let rows: Array<{ rowNumber: number; record: Record<string, unknown> }> = []
 
     try {
-      if (normalizedFileName.endsWith('.csv')) {
-        const text = new TextDecoder('utf-8').decode(bytes)
-        rows = parseCsvText(text)
-      } else {
-        const workbook = XLSX.read(bytes, { type: 'array' })
-        const targetSheetName = workbook.SheetNames.includes('OrderSKUList')
-          ? 'OrderSKUList'
-          : workbook.SheetNames[0]
-
-        if (!targetSheetName) {
-          return NextResponse.json(
-            {
-              error: '订单文件没有可读取的工作表',
-              stage,
-            },
-            { status: 400 },
-          )
-        }
-
-        rows = getNormalizedRowsFromSheet(workbook.Sheets[targetSheetName])
-      }
+      const parsed = await parseImportFile(file, {
+        preferredSheetNames: ['OrderSKUList'],
+      })
+      const built = buildImportRowRecords(parsed.rawRows, {
+        headerRowIndex: 0,
+        dataStartRowIndex: parsed.fileType === 'csv' ? 1 : 2,
+      })
+      rows = built.rowRecords as Array<{ rowNumber: number; record: Record<string, unknown> }>
     } catch (parseError) {
       console.error('解析订单文件失败:', parseError)
       return NextResponse.json(
         {
-          error: '导入订单表失败',
+          error: parseError instanceof Error ? parseError.message : '导入订单表失败',
           detail: `解析订单文件失败：${String((parseError as Error)?.message || parseError)}`,
           stage,
         },

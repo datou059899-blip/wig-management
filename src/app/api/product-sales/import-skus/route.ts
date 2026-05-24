@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import * as XLSX from 'xlsx'
 import { authOptions } from '@/lib/auth'
+import { parseImportFile } from '@/lib/import-file-parser'
 import { prisma } from '@/lib/prisma'
 
 type ImportStage = 'parse-file' | 'check-products' | 'write-products' | 'done'
@@ -119,95 +119,6 @@ function addParentheticalAliasLookup(
   )
   dedupedBucket.push(lookup)
   normalizedAliasLookupMap.set(normalizedAlias, dedupedBucket)
-}
-
-function getNormalizedRowsFromSheet(sheet: XLSX.WorkSheet) {
-  const rawRows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
-    header: 1,
-    defval: '',
-  })
-
-  if (!rawRows.length) return []
-
-  const headerRow = Array.isArray(rawRows[0]) ? rawRows[0] : []
-  const headers = headerRow.map((cell) => normalizeHeader(cell))
-
-  return rawRows.slice(1).map((row, index) => {
-    const record = headers.reduce<Record<string, unknown>>((acc, header, headerIndex) => {
-      if (header) {
-        acc[header] = Array.isArray(row) ? row[headerIndex] : ''
-      }
-      return acc
-    }, {})
-
-    return {
-      rowNumber: index + 2,
-      record,
-    }
-  })
-}
-
-function parseCsvText(text: string) {
-  const rows: string[][] = []
-  let currentRow: string[] = []
-  let currentCell = ''
-  let inQuotes = false
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index]
-    const nextChar = text[index + 1]
-
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        currentCell += '"'
-        index += 1
-      } else {
-        inQuotes = !inQuotes
-      }
-      continue
-    }
-
-    if (char === ',' && !inQuotes) {
-      currentRow.push(currentCell)
-      currentCell = ''
-      continue
-    }
-
-    if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && nextChar === '\n') {
-        index += 1
-      }
-      currentRow.push(currentCell)
-      rows.push(currentRow)
-      currentRow = []
-      currentCell = ''
-      continue
-    }
-
-    currentCell += char
-  }
-
-  if (currentCell.length > 0 || currentRow.length > 0) {
-    currentRow.push(currentCell)
-    rows.push(currentRow)
-  }
-
-  if (!rows.length) return []
-
-  const headers = (rows[0] || []).map((cell) => normalizeHeader(cell))
-  return rows.slice(1).map((row, index) => {
-    const record = headers.reduce<Record<string, unknown>>((acc, header, headerIndex) => {
-      if (header) {
-        acc[header] = row[headerIndex] ?? ''
-      }
-      return acc
-    }, {})
-
-    return {
-      rowNumber: index + 2,
-      record,
-    }
-  })
 }
 
 function pickSku(record: Record<string, unknown>) {
@@ -451,30 +362,19 @@ export async function POST(request: NextRequest) {
     }
 
     const fileName = String(file.name || '').trim()
-    const lowerFileName = fileName.toLowerCase()
-    const bytes = await file.arrayBuffer()
-
     let rows: Array<{ rowNumber: number; record: Record<string, unknown> }> = []
 
     try {
-      if (lowerFileName.endsWith('.csv')) {
-        const text = new TextDecoder('utf-8').decode(bytes)
-        rows = parseCsvText(text)
-      } else {
-        const workbook = XLSX.read(bytes, { type: 'array' })
-        const targetSheetName = workbook.SheetNames.includes('OrderSKUList')
-          ? 'OrderSKUList'
-          : workbook.SheetNames[0]
-
-        if (!targetSheetName) {
-          return NextResponse.json({ error: '文件没有可读取的工作表' }, { status: 400 })
-        }
-
-        rows = getNormalizedRowsFromSheet(workbook.Sheets[targetSheetName])
-      }
+      const parsed = await parseImportFile(file, {
+        preferredSheetNames: ['OrderSKUList'],
+      })
+      rows = parsed.rowRecords as Array<{ rowNumber: number; record: Record<string, unknown> }>
     } catch (error) {
       console.error('解析 SKU 导入文件失败:', error)
-      return NextResponse.json({ error: '解析文件失败，请检查格式' }, { status: 400 })
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : '解析文件失败，请检查格式' },
+        { status: 400 },
+      )
     }
 
     if (!rows.length) {

@@ -475,12 +475,13 @@ export default function MaterialsPage() {
               </button>
             </div>
           </div>
+          <div className="mt-3 text-xs text-slate-500">导入物料表支持 CSV / XLSX / XLS。</div>
         </div>
 
         <input
           ref={importInputRef}
           type="file"
-          accept=".xlsx,.xls"
+          accept=".xlsx,.xls,.csv"
           className="hidden"
           onChange={handleImportFileChange}
         />

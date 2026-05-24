@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import * as XLSX from 'xlsx'
 import { authOptions } from '@/lib/auth'
+import { buildImportRowRecords, parseImportFile } from '@/lib/import-file-parser'
 import { prisma } from '@/lib/prisma'
 
 type InventoryFailure = {
@@ -114,45 +114,37 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file')
 
     if (!file || typeof file === 'string') {
-      return NextResponse.json({ error: '请上传库存 Excel 文件' }, { status: 400 })
+      return NextResponse.json({ error: '请上传库存文件' }, { status: 400 })
     }
 
-    const bytes = await file.arrayBuffer()
-    const workbook = XLSX.read(bytes, { type: 'array' })
-    const firstSheetName = workbook.SheetNames[0]
-
-    if (!firstSheetName) {
-      return NextResponse.json({ error: 'Excel 文件没有可读取的工作表' }, { status: 400 })
+    let parsedFile: Awaited<ReturnType<typeof parseImportFile>>
+    try {
+      parsedFile = await parseImportFile(file)
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : '解析库存文件失败' },
+        { status: 400 },
+      )
     }
-
-    const sheet = workbook.Sheets[firstSheetName]
-    const rawRows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
-      header: 1,
-      defval: '',
-    })
+    const rawRows = parsedFile.rawRows
 
     if (rawRows.length < 4) {
       return NextResponse.json({ error: '库存文件中没有可导入的数据' }, { status: 400 })
     }
 
-    const headerRow = Array.isArray(rawRows[0]) ? rawRows[0] : []
-    const headers = headerRow.map((cell) => normalizeHeader(cell))
+    const { headers, rowRecords } = buildImportRowRecords(rawRows, {
+      headerRowIndex: 0,
+      dataStartRowIndex: 3,
+    })
     const dataRows = rawRows.slice(3)
 
-    if (!headers.length || !dataRows.length) {
+    if (!headers.length || !rowRecords.length || !dataRows.length) {
       return NextResponse.json({ error: '库存文件中没有可导入的数据' }, { status: 400 })
     }
 
     const failures: InventoryFailure[] = []
-    const candidates = dataRows.map((row, index) => {
-      const record = headers.reduce<Record<string, unknown>>((acc, header, headerIndex) => {
-        if (header) {
-          acc[header] = Array.isArray(row) ? row[headerIndex] : ''
-        }
-        return acc
-      }, {})
-
-      const excelRowNumber = index + 4
+    const candidates = rowRecords.map(({ rowNumber, record }) => {
+      const excelRowNumber = rowNumber
       const productName = String(getCell(record, '商品名称') || '').trim()
       const platformSku = String(getCell(record, 'SKU') || '').trim()
       const sku = String(getCell(record, '商家 SKU') || '').trim()

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import * as XLSX from 'xlsx'
 import { authOptions } from '@/lib/auth'
+import { parseImportFile } from '@/lib/import-file-parser'
 import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
@@ -109,18 +109,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '请上传物料表文件' }, { status: 400 })
     }
 
-    const bytes = await file.arrayBuffer()
-    const workbook = XLSX.read(bytes, { type: 'array' })
-    const firstSheetName = workbook.SheetNames[0]
-    if (!firstSheetName) {
-      return NextResponse.json({ error: 'Excel 文件没有可读取的工作表' }, { status: 400 })
+    let parsedFile: Awaited<ReturnType<typeof parseImportFile>>
+    try {
+      parsedFile = await parseImportFile(file)
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : '解析物料表文件失败' },
+        { status: 400 },
+      )
     }
-
-    const sheet = workbook.Sheets[firstSheetName]
-    const rawRows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
-      header: 1,
-      defval: '',
-    })
+    const rawRows = parsedFile.rawRows
     if (!rawRows.length) {
       return NextResponse.json({ error: '物料表中没有可导入的数据' }, { status: 400 })
     }

@@ -2404,13 +2404,16 @@ export default function ProductSalesPage() {
                   {importingOrders ? '检测中...' : '检测订单 SKU 匹配'}
                 </button>
               </div>
+              <div className="mt-3 text-xs text-slate-500">
+                导入订单表、库存表、SKU 补齐均支持 CSV / XLSX / XLS。
+              </div>
             </div>
           </div>
 
           <input
             ref={inventoryInputRef}
             type="file"
-            accept=".xlsx,.xls"
+            accept=".xlsx,.xls,.csv"
             className="hidden"
             onChange={handleInventoryFileChange}
           />
