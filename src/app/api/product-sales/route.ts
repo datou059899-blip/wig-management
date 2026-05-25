@@ -18,6 +18,12 @@ type AdjustmentRow = {
   type: string
 }
 
+type InventoryConsumptionRow = {
+  date: Date
+  qty: number
+  sampleQty: number
+}
+
 type RankSettings = {
   aDailySalesThreshold: number
   bDailySalesThreshold: number
@@ -463,6 +469,7 @@ export async function GET(request: NextRequest) {
       select: {
         sku: true,
         stockConsumedQty: true,
+        sampleQty: true,
         date: true,
       },
     })
@@ -496,7 +503,7 @@ export async function GET(request: NextRequest) {
       }
     })
 
-    const consumedRowsByProductId = new Map<string, Array<{ date: Date; qty: number }>>()
+    const consumedRowsByProductId = new Map<string, InventoryConsumptionRow[]>()
     const rankDailySalesByProductId = new Map<string, Map<string, number>>()
     const storeSalesByDate = new Map<string, number>()
 
@@ -538,6 +545,7 @@ export async function GET(request: NextRequest) {
       bucket.push({
         date: perfDate,
         qty: perf.stockConsumedQty || 0,
+        sampleQty: perf.sampleQty || 0,
       })
       consumedRowsByProductId.set(productId, bucket)
     })
@@ -612,6 +620,25 @@ export async function GET(request: NextRequest) {
             0,
           )
         : currentStock
+      const baselineQty = activeBaseline ? activeBaseline.quantity : 0
+      const adjustmentTotal = activeBaseline
+        ? adjustmentCandidates.reduce((sum, row) => (
+            row.adjustmentDate >= activeBaseline.baselineDate && row.adjustmentDate < tomorrow
+              ? sum + row.quantity
+              : sum
+          ), 0)
+        : 0
+      const cumulativeStockConsumedQty = activeBaseline
+        ? (consumedRowsByProductId.get(product.id) || []).reduce((sum, row) => (
+            row.date >= activeBaseline.baselineDate && row.date < tomorrow ? sum + row.qty : sum
+          ), 0)
+        : 0
+      const sampleConsumedQty = activeBaseline
+        ? (consumedRowsByProductId.get(product.id) || []).reduce((sum, row) => (
+            row.date >= activeBaseline.baselineDate && row.date < tomorrow ? sum + row.sampleQty : sum
+          ), 0)
+        : 0
+      const inventoryDiff = currentStock - estimatedStock
 
       const rankDailySales = rankDailySalesByProductId.get(product.id) || new Map<string, number>()
       const orderedRankDailySales = Array.from(rankDailySales.entries()).sort((a, b) => a[0].localeCompare(b[0]))
@@ -719,7 +746,13 @@ export async function GET(request: NextRequest) {
         monthSales: sales.month,
         selectedRangeSales: sales.selectedRange,
         stock: currentStock,
+        platformCurrentStock: currentStock,
         estimatedStock,
+        inventoryDiff,
+        baselineQty,
+        adjustmentTotal,
+        cumulativeStockConsumedQty,
+        sampleConsumedQty,
         recent3DaySales,
         sevenDaySales,
         sevenDayAvgSales,
@@ -765,6 +798,8 @@ export async function GET(request: NextRequest) {
       product.stock || 0,
     ))
     const totalStock = effectiveStocks.reduce((sum, stock) => sum + stock, 0)
+    const estimatedTotalStock = tableData.reduce((sum, product) => sum + product.estimatedStock, 0)
+    const inventoryDiff = totalStock - estimatedTotalStock
     const lowStockCount = effectiveStocks.filter((stock) => stock > 0 && stock <= 10).length
     const outOfStockCount = effectiveStocks.filter((stock) => stock === 0).length
 
@@ -775,6 +810,9 @@ export async function GET(request: NextRequest) {
         weekSales: totalWeekSales,
         monthSales: totalMonthSales,
         totalStock,
+        platformCurrentStock: totalStock,
+        estimatedTotalStock,
+        inventoryDiff,
         lowStockCount,
         outOfStockCount,
       },

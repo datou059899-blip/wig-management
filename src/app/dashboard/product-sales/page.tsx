@@ -21,6 +21,9 @@ interface SummaryData {
   weekSales: number
   monthSales: number
   totalStock: number
+  platformCurrentStock: number
+  estimatedTotalStock: number
+  inventoryDiff: number
   lowStockCount: number
   outOfStockCount: number
 }
@@ -37,7 +40,13 @@ interface ProductData {
   monthSales: number
   selectedRangeSales: number
   stock: number
+  platformCurrentStock: number
   estimatedStock: number
+  inventoryDiff: number
+  baselineQty: number
+  adjustmentTotal: number
+  cumulativeStockConsumedQty: number
+  sampleConsumedQty: number
   recent3DaySales: number
   sevenDaySales: number
   sevenDayAvgSales: number
@@ -978,9 +987,10 @@ export default function ProductSalesPage() {
   const [sampleStatsError, setSampleStatsError] = useState<string | null>(null)
   const [expandedProductIds, setExpandedProductIds] = useState<string[]>([])
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
-    key: 'salesRankPriority',
-    direction: 'asc',
+    key: 'inventoryDiff',
+    direction: 'desc',
   })
+  const [showOnlyDifferenceSkus, setShowOnlyDifferenceSkus] = useState(false)
   const anyModalOpen = (
     stockBaselineOpen
     || stockAdjustmentOpen
@@ -2258,6 +2268,9 @@ export default function ProductSalesPage() {
 
     return 0
   })
+  const visibleProducts = sortedProducts.filter((product) => (
+    !showOnlyDifferenceSkus || product.inventoryDiff !== 0
+  ))
 
   const SortIcon = ({ columnKey }: { columnKey: string }) => {
     if (sortConfig.key !== columnKey) {
@@ -2327,6 +2340,17 @@ export default function ProductSalesPage() {
     if (estimatedStock === 0) return 'text-red-700'
     if (estimatedStock <= 10) return 'text-orange-700'
     return 'text-slate-900'
+  }
+
+  const getInventoryDiffTextClass = (inventoryDiff: number) => {
+    if (inventoryDiff > 0) return 'text-emerald-700'
+    if (inventoryDiff < 0) return 'text-red-700'
+    return 'text-slate-600'
+  }
+
+  const formatSignedNumber = (value: number) => {
+    if (value > 0) return `+${value}`
+    return String(value)
   }
 
   const filteredBaselines = stockBaselines.filter((item) => (
@@ -4454,54 +4478,40 @@ export default function ProductSalesPage() {
 
               {summary && (
                 <>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-500">
+                  <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-sky-500">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-slate-600 text-sm font-medium">今日销量</p>
-                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.todaySales}</p>
+                          <p className="text-slate-600 text-sm font-medium">预计总库存</p>
+                          <p className={`mt-2 text-3xl font-bold ${getEstimatedStockTextClass(summary.estimatedTotalStock)}`}>
+                            {summary.estimatedTotalStock}
+                          </p>
                         </div>
-                        <div className="text-4xl text-blue-500 opacity-20">📊</div>
-                      </div>
-                    </div>
-
-                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-green-500">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-slate-600 text-sm font-medium">昨日销量</p>
-                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.yesterdaySales}</p>
-                        </div>
-                        <div className="text-4xl text-green-500 opacity-20">📈</div>
-                      </div>
-                    </div>
-
-                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-purple-500">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-slate-600 text-sm font-medium">近7天销量</p>
-                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.weekSales}</p>
-                        </div>
-                        <div className="text-4xl text-purple-500 opacity-20">📅</div>
-                      </div>
-                    </div>
-
-                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-orange-500">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-slate-600 text-sm font-medium">近30天销量</p>
-                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.monthSales}</p>
-                        </div>
-                        <div className="text-4xl text-orange-500 opacity-20">📊</div>
+                        <div className="text-4xl text-sky-500 opacity-20">🧮</div>
                       </div>
                     </div>
 
                     <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-indigo-500">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-slate-600 text-sm font-medium">当前总库存</p>
-                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.totalStock}</p>
+                          <p className="text-slate-600 text-sm font-medium">平台当前库存</p>
+                          <p className="mt-2 text-3xl font-bold text-slate-900">
+                            {summary.platformCurrentStock ?? summary.totalStock}
+                          </p>
                         </div>
                         <div className="text-4xl text-indigo-500 opacity-20">📦</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-emerald-500">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-slate-600 text-sm font-medium">库存差异</p>
+                          <p className={`mt-2 text-3xl font-bold ${getInventoryDiffTextClass(summary.inventoryDiff)}`}>
+                            {formatSignedNumber(summary.inventoryDiff)}
+                          </p>
+                        </div>
+                        <div className="text-4xl text-emerald-500 opacity-20">⚖️</div>
                       </div>
                     </div>
 
@@ -4527,12 +4537,31 @@ export default function ProductSalesPage() {
                   </div>
 
                   <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-3 text-sm text-slate-700">
-                      <span>下方总表始终显示全部 SKU；“筛选期销量”只跟随上方时间筛选。</span>
-                      {tableRangeLoading && <span className="text-slate-500">筛选期销量刷新中...</span>}
+                    <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-6 py-4 text-sm text-slate-700 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <div className="font-semibold text-slate-900">库存对账</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          预计库存按初始库存 + 补货/调整 - 库存消耗计算；平台当前库存来自库存快照或 Product.stock。
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-slate-300"
+                            checked={showOnlyDifferenceSkus}
+                            onChange={(event) => setShowOnlyDifferenceSkus(event.target.checked)}
+                          />
+                          只看差异 SKU
+                        </label>
+                        <span className="text-xs text-slate-500">
+                          当前显示 {visibleProducts.length} / {products.length} 个 SKU
+                        </span>
+                        {tableRangeLoading && <span className="text-slate-500">筛选期销量刷新中...</span>}
+                      </div>
                     </div>
                     <div className="overflow-x-auto">
-                      <table className="min-w-[1220px] w-full text-sm">
+                      <table className="min-w-[1760px] w-full text-sm">
                         <thead>
                           <tr className="bg-slate-50 border-b border-slate-200">
                             <th className="sticky top-0 left-0 z-30 min-w-[120px] bg-slate-50 px-6 py-3 text-left">
@@ -4551,6 +4580,46 @@ export default function ProductSalesPage() {
                                 预计库存 <SortIcon columnKey="estimatedStock" />
                               </button>
                             </th>
+                            <th className="sticky top-0 z-20 min-w-[120px] bg-slate-50 px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('platformCurrentStock')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                平台当前库存 <SortIcon columnKey="platformCurrentStock" />
+                              </button>
+                            </th>
+                            <th className="sticky top-0 z-20 min-w-[120px] bg-slate-50 px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('inventoryDiff')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                库存差异 <SortIcon columnKey="inventoryDiff" />
+                              </button>
+                            </th>
+                            <th className="sticky top-0 z-20 min-w-[110px] bg-slate-50 px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('baselineQty')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                初始库存 <SortIcon columnKey="baselineQty" />
+                              </button>
+                            </th>
+                            <th className="sticky top-0 z-20 min-w-[120px] bg-slate-50 px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('adjustmentTotal')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                调整合计 <SortIcon columnKey="adjustmentTotal" />
+                              </button>
+                            </th>
+                            <th className="sticky top-0 z-20 min-w-[140px] bg-slate-50 px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('cumulativeStockConsumedQty')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                累计库存消耗 <SortIcon columnKey="cumulativeStockConsumedQty" />
+                              </button>
+                            </th>
                             <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
                               <button
                                 onClick={() => handleSort('weekSales')}
@@ -4559,36 +4628,12 @@ export default function ProductSalesPage() {
                                 7天销量 <SortIcon columnKey="weekSales" />
                               </button>
                             </th>
-                            <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
+                            <th className="sticky top-0 z-20 min-w-[130px] bg-slate-50 px-6 py-3 text-center">
                               <button
-                                onClick={() => handleSort('avgDailySales')}
+                                onClick={() => handleSort('sampleConsumedQty')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
-                                7天均销 <SortIcon columnKey="avgDailySales" />
-                              </button>
-                            </th>
-                            <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
-                              <button
-                                onClick={() => handleSort('activeSalesDays')}
-                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                              >
-                                出单天数 <SortIcon columnKey="activeSalesDays" />
-                              </button>
-                            </th>
-                            <th className="sticky top-0 z-20 min-w-[120px] bg-slate-50 px-6 py-3 text-center">
-                              <button
-                                onClick={() => handleSort('salesRankPriority')}
-                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                              >
-                                等级 <SortIcon columnKey="salesRankPriority" />
-                              </button>
-                            </th>
-                            <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
-                              <button
-                                onClick={() => handleSort('stockStatus')}
-                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
-                              >
-                                库存状态 <SortIcon columnKey="stockStatus" />
+                                样品消耗数量 <SortIcon columnKey="sampleConsumedQty" />
                               </button>
                             </th>
                             <th className="sticky top-0 z-20 min-w-[140px] bg-slate-50 px-6 py-3 text-left">
@@ -4596,7 +4641,7 @@ export default function ProductSalesPage() {
                                 onClick={() => handleSort('updatedAt')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
                               >
-                                更新时间 <SortIcon columnKey="updatedAt" />
+                                最后更新时间 <SortIcon columnKey="updatedAt" />
                               </button>
                             </th>
                             <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center font-semibold text-slate-900">
@@ -4605,14 +4650,14 @@ export default function ProductSalesPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {sortedProducts.length === 0 ? (
+                          {visibleProducts.length === 0 ? (
                             <tr>
-                              <td colSpan={9} className="px-6 py-8 text-center text-slate-500">
+                              <td colSpan={11} className="px-6 py-8 text-center text-slate-500">
                                 暂无产品数据
                               </td>
                             </tr>
                           ) : (
-                            sortedProducts.map((product) => {
+                            visibleProducts.map((product) => {
                               const expanded = expandedProductIds.includes(product.id)
 
                               return (
@@ -4624,19 +4669,15 @@ export default function ProductSalesPage() {
                                     <td className={`min-w-[100px] px-6 py-4 text-sm text-center font-bold ${getEstimatedStockTextClass(product.estimatedStock)}`}>
                                       {product.estimatedStock}
                                     </td>
+                                    <td className="min-w-[120px] px-6 py-4 text-sm text-center text-slate-700">{product.platformCurrentStock}</td>
+                                    <td className={`min-w-[120px] px-6 py-4 text-sm text-center font-semibold ${getInventoryDiffTextClass(product.inventoryDiff)}`}>
+                                      {formatSignedNumber(product.inventoryDiff)}
+                                    </td>
+                                    <td className="min-w-[110px] px-6 py-4 text-sm text-center text-slate-700">{product.baselineQty}</td>
+                                    <td className="min-w-[120px] px-6 py-4 text-sm text-center text-slate-700">{formatSignedNumber(product.adjustmentTotal)}</td>
+                                    <td className="min-w-[140px] px-6 py-4 text-sm text-center text-slate-700">{product.cumulativeStockConsumedQty}</td>
                                     <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.weekSales}</td>
-                                    <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.avgDailySales}</td>
-                                    <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.activeSalesDays}</td>
-                                    <td className="min-w-[120px] px-6 py-4 text-sm text-center">
-                                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getRankBadgeClass(product.salesRank)}`}>
-                                        {getRankLabel(product.salesRank)}
-                                      </span>
-                                    </td>
-                                    <td className="min-w-[100px] px-6 py-4 text-sm text-center">
-                                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStockStatusBadgeClass(product.stockStatus)}`}>
-                                        {getStockStatusLabel(product.stockStatus)}
-                                      </span>
-                                    </td>
+                                    <td className="min-w-[130px] px-6 py-4 text-sm text-center text-slate-700">{product.sampleConsumedQty}</td>
                                     <td className="min-w-[140px] px-6 py-4 text-sm text-slate-600">
                                       {new Date(product.updatedAt).toLocaleString('zh-CN')}
                                     </td>
@@ -4651,12 +4692,12 @@ export default function ProductSalesPage() {
                                   </tr>
                                   {expanded && (
                                     <tr className="border-b border-slate-200 bg-slate-50/70">
-                                      <td colSpan={9} className="px-6 py-5">
+                                      <td colSpan={11} className="px-6 py-5">
                                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
                                           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                             <div>
                                               <div className="text-sm font-semibold text-slate-900">SKU：{product.sku}</div>
-                                              <div className="mt-1 text-xs text-slate-500">等级原因与次要指标放在这里，主表保持简洁。</div>
+                                              <div className="mt-1 text-xs text-slate-500">这里补充库存对账和动销说明，主表优先看平台库存与预计库存差异。</div>
                                             </div>
                                             <div className="flex flex-wrap gap-2">
                                               <button
@@ -4676,6 +4717,24 @@ export default function ProductSalesPage() {
                                             </div>
                                           </div>
                                           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">平台当前库存</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.platformCurrentStock}</div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">库存差异</div>
+                                              <div className={`mt-1 text-sm font-semibold ${getInventoryDiffTextClass(product.inventoryDiff)}`}>
+                                                {formatSignedNumber(product.inventoryDiff)}
+                                              </div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">库存状态</div>
+                                              <div className="mt-1">
+                                                <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStockStatusBadgeClass(product.stockStatus)}`}>
+                                                  {getStockStatusLabel(product.stockStatus)}
+                                                </span>
+                                              </div>
+                                            </div>
                                             <div className="rounded-lg bg-white px-3 py-3">
                                               <div className="text-xs text-slate-500">近3天销量</div>
                                               <div className="mt-1 text-sm font-semibold text-slate-900">{product.recent3DaySales}</div>
@@ -4703,6 +4762,24 @@ export default function ProductSalesPage() {
                                             <div className="rounded-lg bg-white px-3 py-3">
                                               <div className="text-xs text-slate-500">预计库存</div>
                                               <div className={`mt-1 text-sm font-semibold ${getEstimatedStockTextClass(product.estimatedStock)}`}>{product.estimatedStock}</div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">初始库存 baseline</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.baselineQty}</div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">补货/调整合计</div>
+                                              <div className={`mt-1 text-sm font-semibold ${getInventoryDiffTextClass(product.adjustmentTotal)}`}>
+                                                {formatSignedNumber(product.adjustmentTotal)}
+                                              </div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">累计库存消耗</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.cumulativeStockConsumedQty}</div>
+                                            </div>
+                                            <div className="rounded-lg bg-white px-3 py-3">
+                                              <div className="text-xs text-slate-500">样品消耗数量</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.sampleConsumedQty}</div>
                                             </div>
                                             <div className="rounded-lg bg-white px-3 py-3">
                                               <div className="text-xs text-slate-500">动销分</div>
