@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import {
+  buildProductSkuResolver,
+  buildSkuMatchVariants,
+  normalizeCell,
+  normalizeSkuForCompare,
+} from '@/lib/product-sku-resolver'
 
 type RangeKey = 'today' | '7' | '30' | 'custom'
 type ProductLookup = {
@@ -9,17 +15,6 @@ type ProductLookup = {
   sku: string | null
   name: string
   stock: number
-}
-
-type ProductMatchType =
-  | 'main'
-  | 'alias'
-  | 'product-sku-parentheses'
-  | 'product-name-parentheses'
-
-type ProductMatch = {
-  product: ProductLookup
-  matchType: ProductMatchType
 }
 
 type InventoryTarget = {
@@ -73,45 +68,6 @@ function formatDateKey(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
-}
-
-function normalizeCell(value: unknown) {
-  if (value === null || value === undefined) return ''
-  return typeof value === 'string' ? value.trim() : String(value).trim()
-}
-
-function normalizeSkuForCompare(value: string) {
-  return normalizeCell(value).replace(/\s+/g, '').toUpperCase()
-}
-
-function extractAliasSkusFromText(value: string | null | undefined) {
-  const aliases = new Set<string>()
-  const text = normalizeCell(value)
-  if (!text) return []
-
-  const pattern = /[（(]\s*([^()（）]+?)\s*[)）]/g
-  let match = pattern.exec(text)
-  while (match) {
-    const alias = normalizeCell(match[1])
-    if (alias) {
-      aliases.add(alias)
-    }
-    match = pattern.exec(text)
-  }
-
-  return Array.from(aliases)
-}
-
-function setLookupIfMissing<T>(lookupMap: Map<string, T>, normalizedLookupMap: Map<string, T>, key: string, value: T) {
-  if (!key) return
-  if (!lookupMap.has(key)) {
-    lookupMap.set(key, value)
-  }
-
-  const normalizedKey = normalizeSkuForCompare(key)
-  if (normalizedKey && !normalizedLookupMap.has(normalizedKey)) {
-    normalizedLookupMap.set(normalizedKey, value)
-  }
 }
 
 function addUniqueSku(target: string[], sku: string | null | undefined) {
@@ -390,101 +346,8 @@ export async function GET(request: NextRequest) {
       }),
     ])
 
-    const productById = new Map(products.map((product) => [product.id, product]))
-    const relatedSkuSetByProductId = new Map<string, Set<string>>()
-    const ensureRelatedSkuSet = (productId: string) => {
-      if (!relatedSkuSetByProductId.has(productId)) {
-        relatedSkuSetByProductId.set(productId, new Set<string>())
-      }
-      return relatedSkuSetByProductId.get(productId)!
-    }
-    const registerRelatedSku = (productId: string, sku: string | null | undefined) => {
-      const value = normalizeCell(sku)
-      if (!value) return
-      ensureRelatedSkuSet(productId).add(value)
-    }
-
-    const exactMainSkuMap = new Map<string, ProductLookup>()
-    const normalizedMainSkuMap = new Map<string, ProductLookup>()
-    const exactAliasSkuMap = new Map<string, ProductLookup>()
-    const normalizedAliasSkuMap = new Map<string, ProductLookup>()
-    const exactProductSkuParentheticalMap = new Map<string, ProductLookup>()
-    const normalizedProductSkuParentheticalMap = new Map<string, ProductLookup>()
-    const exactProductNameParentheticalMap = new Map<string, ProductLookup>()
-    const normalizedProductNameParentheticalMap = new Map<string, ProductLookup>()
-
-    products.forEach((product) => {
-      registerRelatedSku(product.id, product.sku)
-      if (product.sku) {
-        setLookupIfMissing(exactMainSkuMap, normalizedMainSkuMap, product.sku, product)
-      }
-    })
-
-    aliases.forEach((alias) => {
-      const product = productById.get(alias.productId)
-      if (!product) return
-      registerRelatedSku(product.id, alias.aliasSku)
-      setLookupIfMissing(exactAliasSkuMap, normalizedAliasSkuMap, alias.aliasSku, product)
-    })
-
-    products.forEach((product) => {
-      extractAliasSkusFromText(product.sku).forEach((aliasSku) => {
-        registerRelatedSku(product.id, aliasSku)
-        if (exactMainSkuMap.has(aliasSku) || exactAliasSkuMap.has(aliasSku)) return
-        setLookupIfMissing(
-          exactProductSkuParentheticalMap,
-          normalizedProductSkuParentheticalMap,
-          aliasSku,
-          product,
-        )
-      })
-
-      extractAliasSkusFromText(product.name).forEach((aliasSku) => {
-        registerRelatedSku(product.id, aliasSku)
-        if (
-          exactMainSkuMap.has(aliasSku) ||
-          exactAliasSkuMap.has(aliasSku) ||
-          exactProductSkuParentheticalMap.has(aliasSku)
-        ) {
-          return
-        }
-        setLookupIfMissing(
-          exactProductNameParentheticalMap,
-          normalizedProductNameParentheticalMap,
-          aliasSku,
-          product,
-        )
-      })
-    })
-
-    const resolveProductBySku = (sku: string): ProductMatch | null => {
-      const normalizedSku = normalizeSkuForCompare(sku)
-      if (!normalizedSku) return null
-
-      const mainProduct = exactMainSkuMap.get(sku) || normalizedMainSkuMap.get(normalizedSku)
-      if (mainProduct) {
-        return { product: mainProduct, matchType: 'main' }
-      }
-
-      const aliasProduct = exactAliasSkuMap.get(sku) || normalizedAliasSkuMap.get(normalizedSku)
-      if (aliasProduct) {
-        return { product: aliasProduct, matchType: 'alias' }
-      }
-
-      const skuParentheticalProduct = exactProductSkuParentheticalMap.get(sku)
-        || normalizedProductSkuParentheticalMap.get(normalizedSku)
-      if (skuParentheticalProduct) {
-        return { product: skuParentheticalProduct, matchType: 'product-sku-parentheses' }
-      }
-
-      const nameParentheticalProduct = exactProductNameParentheticalMap.get(sku)
-        || normalizedProductNameParentheticalMap.get(normalizedSku)
-      if (nameParentheticalProduct) {
-        return { product: nameParentheticalProduct, matchType: 'product-name-parentheses' }
-      }
-
-      return null
-    }
+    const skuResolver = buildProductSkuResolver(products, aliases)
+    const { getPrimarySku, getRelatedSkus, resolveProductBySku } = skuResolver
 
     const skuOptionsSet = new Set<string>()
     const skuOptions: Array<{ sku: string; label: string }> = []
@@ -496,7 +359,7 @@ export async function GET(request: NextRequest) {
     }
 
     products.forEach((product) => {
-      const mainSku = normalizeCell(product.sku)
+      const mainSku = getPrimarySku(product.id) || normalizeCell(product.sku)
       if (!mainSku) return
       registerSkuOption(mainSku)
     })
@@ -517,19 +380,149 @@ export async function GET(request: NextRequest) {
       ? groupOptions.find((group) => group.id === requestedGroupId) || null
       : null
 
-    let salesSkuList: string[] = []
     let trendTitle = '销售库存趋势 - 全部 SKU'
 
     if (selectedSku) {
-      salesSkuList = [selectedSku]
       trendTitle = `销售库存趋势 - SKU ${selectedSku}`
     } else if (selectedGroup) {
-      salesSkuList = Array.from(new Set(selectedGroup.skus.map((sku) => normalizeCell(sku)).filter(Boolean)))
       trendTitle = `销售库存趋势 - 分组 ${selectedGroup.name}`
     }
 
+    const inventoryTargets = (() => {
+      if (selectedSku) {
+        const match = resolveProductBySku(selectedSku)
+        if (!match) {
+          return [{
+            key: `missing:${selectedSku}`,
+            productId: null,
+            productSku: null,
+            fallbackStock: 0,
+            requestedSkus: [selectedSku],
+            consumedSkus: [selectedSku],
+            snapshotCandidateSkus: [],
+            baselineCandidateSkus: [selectedSku],
+          }] satisfies InventoryTarget[]
+        }
+
+        const relatedSkus = getRelatedSkus(match.product.id)
+        const snapshotCandidateSkus: string[] = []
+        addUniqueSku(snapshotCandidateSkus, selectedSku)
+        addUniqueSku(snapshotCandidateSkus, getPrimarySku(match.product.id))
+        relatedSkus.forEach((sku) => addUniqueSku(snapshotCandidateSkus, sku))
+
+        const baselineCandidateSkus: string[] = []
+        addUniqueSku(baselineCandidateSkus, selectedSku)
+        relatedSkus.forEach((sku) => addUniqueSku(baselineCandidateSkus, sku))
+
+        return [{
+          key: match.product.id,
+          productId: match.product.id,
+          productSku: getPrimarySku(match.product.id) || match.product.sku,
+          fallbackStock: match.product.stock || 0,
+          requestedSkus: [selectedSku],
+          consumedSkus: relatedSkus.length ? relatedSkus : [selectedSku],
+          snapshotCandidateSkus,
+          baselineCandidateSkus,
+        }] satisfies InventoryTarget[]
+      }
+
+      if (selectedGroup) {
+        const targetMap = new Map<string, InventoryTarget>()
+        const missingTargets: InventoryTarget[] = []
+
+        selectedGroup.skus.forEach((groupSku) => {
+          const sku = normalizeCell(groupSku)
+          if (!sku) return
+
+          const match = resolveProductBySku(sku)
+          if (!match) {
+            missingTargets.push({
+              key: `missing:${sku}`,
+              productId: null,
+              productSku: null,
+              fallbackStock: 0,
+              requestedSkus: [sku],
+              consumedSkus: [sku],
+              snapshotCandidateSkus: [],
+              baselineCandidateSkus: [sku],
+            })
+            return
+          }
+
+          const existing = targetMap.get(match.product.id)
+          if (existing) {
+            addUniqueSku(existing.requestedSkus, sku)
+            addUniqueSku(existing.consumedSkus, sku)
+            return
+          }
+
+          targetMap.set(match.product.id, {
+            key: match.product.id,
+            productId: match.product.id,
+            productSku: getPrimarySku(match.product.id) || match.product.sku,
+            fallbackStock: match.product.stock || 0,
+            requestedSkus: [sku],
+            consumedSkus: [],
+            snapshotCandidateSkus: [],
+            baselineCandidateSkus: [],
+          })
+        })
+
+        const matchedTargets = Array.from(targetMap.values()).map((target) => {
+          const relatedSkus = getRelatedSkus(target.productId || '')
+          const snapshotCandidateSkus: string[] = []
+          target.requestedSkus.forEach((sku) => addUniqueSku(snapshotCandidateSkus, sku))
+          addUniqueSku(snapshotCandidateSkus, target.productSku)
+          relatedSkus.forEach((sku) => addUniqueSku(snapshotCandidateSkus, sku))
+
+          const baselineCandidateSkus: string[] = []
+          target.requestedSkus.forEach((sku) => addUniqueSku(baselineCandidateSkus, sku))
+          relatedSkus.forEach((sku) => addUniqueSku(baselineCandidateSkus, sku))
+
+          return {
+            ...target,
+            consumedSkus: relatedSkus.length ? relatedSkus : target.requestedSkus,
+            snapshotCandidateSkus,
+            baselineCandidateSkus,
+          }
+        })
+
+        return [...matchedTargets, ...missingTargets]
+      }
+
+      return products.map((product) => {
+        const relatedSkus = getRelatedSkus(product.id)
+        const snapshotCandidateSkus: string[] = []
+        addUniqueSku(snapshotCandidateSkus, getPrimarySku(product.id) || product.sku)
+        relatedSkus.forEach((sku) => addUniqueSku(snapshotCandidateSkus, sku))
+
+        const baselineCandidateSkus: string[] = []
+        relatedSkus.forEach((sku) => addUniqueSku(baselineCandidateSkus, sku))
+        addUniqueSku(baselineCandidateSkus, getPrimarySku(product.id) || product.sku)
+
+        const consumedSkus = relatedSkus.length
+          ? relatedSkus
+          : (getPrimarySku(product.id) ? [getPrimarySku(product.id)!] : (product.sku ? [product.sku] : []))
+
+        return {
+          key: product.id,
+          productId: product.id,
+          productSku: getPrimarySku(product.id) || product.sku,
+          fallbackStock: product.stock || 0,
+          requestedSkus: getPrimarySku(product.id) ? [getPrimarySku(product.id)!] : (product.sku ? [product.sku] : []),
+          consumedSkus,
+          snapshotCandidateSkus,
+          baselineCandidateSkus,
+        }
+      })
+    })()
+
+    const querySkuList = Array.from(new Set(
+      inventoryTargets.flatMap((target) => target.consumedSkus.flatMap((sku) => buildSkuMatchVariants(sku))),
+    ))
+
     const performanceData = selectedSku || selectedGroup
-      ? (salesSkuList.length
+      ? (querySkuList.length
         ? await prisma.performanceDaily.findMany({
             where: {
               date: {
@@ -537,7 +530,7 @@ export async function GET(request: NextRequest) {
                 lt: selectedRange.endExclusive,
               },
               sku: {
-                in: salesSkuList,
+                in: querySkuList,
               },
             },
             select: {
@@ -581,11 +574,19 @@ export async function GET(request: NextRequest) {
       canceledQty: 0,
       refundAmount: 0,
     }
+    const targetKeyByProductId = new Map(
+      inventoryTargets
+        .filter((target) => target.productId)
+        .map((target) => [target.productId as string, target.key] as const),
+    )
 
     performanceData.forEach((item) => {
+      const match = resolveProductBySku(item.sku)
+      const targetKey = match?.product ? targetKeyByProductId.get(match.product.id) : null
+      if ((selectedSku || selectedGroup) && !targetKey) return
+
       const perfDate = startOfDay(new Date(item.date))
       const dateKey = formatDateKey(perfDate)
-
       salesMap.set(dateKey, (salesMap.get(dateKey) || 0) + item.orders)
       filterSummary.grossOrders += item.grossOrders || 0
       filterSummary.returnQty += item.returnQty || 0
@@ -595,129 +596,6 @@ export async function GET(request: NextRequest) {
     })
 
     filterSummary.refundAmount = Number(filterSummary.refundAmount.toFixed(2))
-
-    const inventoryTargets = (() => {
-      if (selectedSku) {
-        const match = resolveProductBySku(selectedSku)
-        if (!match) {
-          return [{
-            key: `missing:${selectedSku}`,
-            productId: null,
-            productSku: null,
-            fallbackStock: 0,
-            requestedSkus: [selectedSku],
-            consumedSkus: [selectedSku],
-            snapshotCandidateSkus: [],
-            baselineCandidateSkus: [selectedSku],
-          }] satisfies InventoryTarget[]
-        }
-
-        const relatedSkus = Array.from(relatedSkuSetByProductId.get(match.product.id) || [])
-        const snapshotCandidateSkus: string[] = []
-        addUniqueSku(snapshotCandidateSkus, selectedSku)
-        addUniqueSku(snapshotCandidateSkus, match.product.sku)
-
-        const baselineCandidateSkus: string[] = []
-        addUniqueSku(baselineCandidateSkus, selectedSku)
-        relatedSkus.forEach((sku) => addUniqueSku(baselineCandidateSkus, sku))
-
-        return [{
-          key: match.product.id,
-          productId: match.product.id,
-          productSku: match.product.sku,
-          fallbackStock: match.product.stock || 0,
-          requestedSkus: [selectedSku],
-          consumedSkus: [selectedSku],
-          snapshotCandidateSkus,
-          baselineCandidateSkus,
-        }] satisfies InventoryTarget[]
-      }
-
-      if (selectedGroup) {
-        const targetMap = new Map<string, InventoryTarget>()
-        const missingTargets: InventoryTarget[] = []
-
-        selectedGroup.skus.forEach((groupSku) => {
-          const sku = normalizeCell(groupSku)
-          if (!sku) return
-
-          const match = resolveProductBySku(sku)
-          if (!match) {
-            missingTargets.push({
-              key: `missing:${sku}`,
-              productId: null,
-              productSku: null,
-              fallbackStock: 0,
-              requestedSkus: [sku],
-              consumedSkus: [sku],
-              snapshotCandidateSkus: [],
-              baselineCandidateSkus: [sku],
-            })
-            return
-          }
-
-          const existing = targetMap.get(match.product.id)
-          if (existing) {
-            addUniqueSku(existing.requestedSkus, sku)
-            addUniqueSku(existing.consumedSkus, sku)
-            return
-          }
-
-          targetMap.set(match.product.id, {
-            key: match.product.id,
-            productId: match.product.id,
-            productSku: match.product.sku,
-            fallbackStock: match.product.stock || 0,
-            requestedSkus: [sku],
-            consumedSkus: [sku],
-            snapshotCandidateSkus: [],
-            baselineCandidateSkus: [],
-          })
-        })
-
-        const matchedTargets = Array.from(targetMap.values()).map((target) => {
-          const relatedSkus = Array.from(relatedSkuSetByProductId.get(target.productId || '') || [])
-          const snapshotCandidateSkus: string[] = []
-          target.requestedSkus.forEach((sku) => addUniqueSku(snapshotCandidateSkus, sku))
-          addUniqueSku(snapshotCandidateSkus, target.productSku)
-
-          const baselineCandidateSkus: string[] = []
-          target.requestedSkus.forEach((sku) => addUniqueSku(baselineCandidateSkus, sku))
-          relatedSkus.forEach((sku) => addUniqueSku(baselineCandidateSkus, sku))
-
-          return {
-            ...target,
-            snapshotCandidateSkus,
-            baselineCandidateSkus,
-          }
-        })
-
-        return [...matchedTargets, ...missingTargets]
-      }
-
-      return products.map((product) => {
-        const relatedSkus = Array.from(relatedSkuSetByProductId.get(product.id) || [])
-        const snapshotCandidateSkus: string[] = []
-        addUniqueSku(snapshotCandidateSkus, product.sku)
-
-        const baselineCandidateSkus: string[] = []
-        relatedSkus.forEach((sku) => addUniqueSku(baselineCandidateSkus, sku))
-        addUniqueSku(baselineCandidateSkus, product.sku)
-
-        const consumedSkus = relatedSkus.length ? relatedSkus : (product.sku ? [product.sku] : [])
-
-        return {
-          key: product.id,
-          productId: product.id,
-          productSku: product.sku,
-          fallbackStock: product.stock || 0,
-          requestedSkus: product.sku ? [product.sku] : [],
-          consumedSkus,
-          snapshotCandidateSkus,
-          baselineCandidateSkus,
-        }
-      })
-    })()
 
     const baselineSkuList = Array.from(new Set(
       inventoryTargets.flatMap((target) => target.baselineCandidateSkus.map((sku) => normalizeCell(sku)).filter(Boolean)),
@@ -923,7 +801,7 @@ export async function GET(request: NextRequest) {
     }, selectedRange.startDate)
 
     const inventoryConsumedSkuList = Array.from(new Set(
-      inventoryTargets.flatMap((target) => target.consumedSkus.map((sku) => normalizeCell(sku)).filter(Boolean)),
+      inventoryTargets.flatMap((target) => target.consumedSkus.flatMap((sku) => buildSkuMatchVariants(sku))),
     ))
 
     const inventoryPerformanceData = inventoryConsumedSkuList.length
@@ -952,23 +830,10 @@ export async function GET(request: NextRequest) {
       : []
 
     const stockConsumedByTargetMap = new Map<string, Map<string, number>>()
-    const exactConsumedSkuTargetMap = new Map<string, string>()
-    const normalizedConsumedSkuTargetMap = new Map<string, string>()
-    inventoryTargets.forEach((target) => {
-      target.consumedSkus.forEach((sku) => {
-        const value = normalizeCell(sku)
-        if (!value) return
-        exactConsumedSkuTargetMap.set(value, target.key)
-        const normalized = normalizeSkuForCompare(value)
-        if (normalized) {
-          normalizedConsumedSkuTargetMap.set(normalized, target.key)
-        }
-      })
-    })
 
     inventoryPerformanceData.forEach((item) => {
-      const targetKey = exactConsumedSkuTargetMap.get(item.sku)
-        || normalizedConsumedSkuTargetMap.get(normalizeSkuForCompare(item.sku))
+      const match = resolveProductBySku(item.sku)
+      const targetKey = match?.product ? targetKeyByProductId.get(match.product.id) : null
       if (!targetKey) return
 
       const dateKey = formatDateKey(startOfDay(new Date(item.date)))
@@ -1024,8 +889,8 @@ export async function GET(request: NextRequest) {
       const debugConsumedByDate = stockConsumedByTargetMap.get(debugTargetKey) || new Map<string, number>()
       const debugPerformanceRows = inventoryPerformanceData
         .filter((item) => {
-          const targetKey = exactConsumedSkuTargetMap.get(item.sku)
-            || normalizedConsumedSkuTargetMap.get(normalizeSkuForCompare(item.sku))
+          const match = resolveProductBySku(item.sku)
+          const targetKey = match?.product ? targetKeyByProductId.get(match.product.id) : null
           return targetKey === debugTargetKey
         })
         .map((item) => ({

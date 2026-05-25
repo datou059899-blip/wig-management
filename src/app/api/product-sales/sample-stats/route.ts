@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import {
+  buildProductSkuResolver,
+  normalizeCell,
+  normalizeSkuForCompare,
+} from '@/lib/product-sku-resolver'
 
 type RangeKey = 'today' | '7' | '30' | 'custom'
-
-function normalizeCell(value: unknown) {
-  if (value === null || value === undefined) return ''
-  return typeof value === 'string' ? value.trim() : String(value).trim()
-}
 
 function parseDateInput(value: string) {
   const matched = value.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/)
@@ -128,6 +128,31 @@ export async function GET(request: NextRequest) {
     const requestedBuyerUsername = normalizeCell(searchParams.get('buyerUsername'))
     const selectedRange = resolveRange(searchParams)
 
+    const [products, aliases] = await Promise.all([
+      prisma.product.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+        },
+      }),
+      prisma.productSkuAlias.findMany({
+        where: {
+          product: {
+            isActive: true,
+          },
+        },
+        select: {
+          productId: true,
+          aliasSku: true,
+        },
+      }),
+    ])
+
+    const skuResolver = buildProductSkuResolver(products, aliases)
+    const requestedSkuMatch = requestedSku ? skuResolver.resolveProductBySku(requestedSku) : null
+
     const rows = await prisma.productOrderItem.findMany({
       where: {
         isSample: true,
@@ -135,7 +160,6 @@ export async function GET(request: NextRequest) {
           gte: selectedRange.startDate,
           lt: selectedRange.endExclusive,
         },
-        ...(requestedSku ? { sellerSku: requestedSku } : {}),
         ...(requestedBuyerUsername
           ? {
               buyerUsername: {
@@ -156,6 +180,17 @@ export async function GET(request: NextRequest) {
         { paidDate: 'asc' },
         { createdAt: 'asc' },
       ],
+    })
+
+    const filteredRows = rows.filter((item) => {
+      if (!requestedSku) return true
+
+      const match = skuResolver.resolveProductBySku(item.sellerSku)
+      if (requestedSkuMatch && match) {
+        return requestedSkuMatch.product.id === match.product.id
+      }
+
+      return normalizeSkuForCompare(item.sellerSku) === normalizeSkuForCompare(requestedSku)
     })
 
     const sampleBySkuMap = new Map<string, {
@@ -180,9 +215,11 @@ export async function GET(request: NextRequest) {
       sampleRows: number
     }>()
 
-    rows.forEach((item) => {
-      const sampleBySku = sampleBySkuMap.get(item.sellerSku) || {
-        sku: item.sellerSku,
+    filteredRows.forEach((item) => {
+      const match = skuResolver.resolveProductBySku(item.sellerSku)
+      const resolvedSku = match?.primarySku || item.sellerSku
+      const sampleBySku = sampleBySkuMap.get(resolvedSku) || {
+        sku: resolvedSku,
         sampleQty: 0,
         sampleRows: 0,
       }
@@ -201,15 +238,15 @@ export async function GET(request: NextRequest) {
       }
       sampleByRecipient.sampleQty += item.sampleQty || 0
       sampleByRecipient.sampleRows += 1
-      sampleByRecipient.skus.add(item.sellerSku)
+      sampleByRecipient.skus.add(resolvedSku)
       sampleByRecipientMap.set(recipientKey, sampleByRecipient)
 
-      const recipientSkuKey = `${recipientKey}__${item.sellerSku}`
+      const recipientSkuKey = `${recipientKey}__${resolvedSku}`
       const sampleByRecipientAndSku = sampleByRecipientAndSkuMap.get(recipientSkuKey) || {
         buyerUsername: normalizeCell(item.buyerUsername),
         buyerNickname: normalizeCell(item.buyerNickname),
         recipient: normalizeCell(item.recipient),
-        sku: item.sellerSku,
+        sku: resolvedSku,
         sampleQty: 0,
         sampleRows: 0,
       }
@@ -256,10 +293,10 @@ export async function GET(request: NextRequest) {
       range: selectedRange.range,
       startDate: selectedRange.startDateText,
       endDate: selectedRange.endDateText,
-      sku: requestedSku,
+      sku: requestedSkuMatch?.primarySku || requestedSku,
       buyerUsername: requestedBuyerUsername,
-      totalSampleQty: rows.reduce((sum, item) => sum + (item.sampleQty || 0), 0),
-      sampleRows: rows.length,
+      totalSampleQty: filteredRows.reduce((sum, item) => sum + (item.sampleQty || 0), 0),
+      sampleRows: filteredRows.length,
       sampleSkuCount: sampleBySku.length,
       sampleRecipientCount: sampleByRecipient.length,
       sampleBySku,

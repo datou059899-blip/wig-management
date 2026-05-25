@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import {
+  buildProductSkuResolver,
+  buildSkuMatchVariants,
+  normalizeCell,
+  normalizeSkuForCompare,
+} from '@/lib/product-sku-resolver'
 
 type RangeKey = 'today' | '7' | '30' | 'custom'
 
@@ -59,33 +65,6 @@ function formatDateKey(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
-}
-
-function normalizeCell(value: unknown) {
-  if (value === null || value === undefined) return ''
-  return typeof value === 'string' ? value.trim() : String(value).trim()
-}
-
-function normalizeSkuForCompare(value: string) {
-  return normalizeCell(value).replace(/\s+/g, '').toUpperCase()
-}
-
-function extractAliasSkusFromText(value: string | null | undefined) {
-  const aliases = new Set<string>()
-  const text = normalizeCell(value)
-  if (!text) return []
-
-  const pattern = /[（(]\s*([^()（）]+?)\s*[)）]/g
-  let match = pattern.exec(text)
-  while (match) {
-    const alias = normalizeCell(match[1])
-    if (alias) {
-      aliases.add(alias)
-    }
-    match = pattern.exec(text)
-  }
-
-  return Array.from(aliases)
 }
 
 function resolveEffectiveStock(snapshot: {
@@ -280,43 +259,12 @@ export async function GET(request: NextRequest) {
       ? rankWindowStart
       : fixedSevenDayStart
 
-    const relatedSkuSetByProductId = new Map<string, Set<string>>()
-    const ensureRelatedSkuSet = (productId: string) => {
-      if (!relatedSkuSetByProductId.has(productId)) {
-        relatedSkuSetByProductId.set(productId, new Set<string>())
-      }
-      return relatedSkuSetByProductId.get(productId)!
-    }
-    const registerRelatedSku = (productId: string, sku: string | null | undefined) => {
-      const value = normalizeCell(sku)
-      if (!value) return
-      ensureRelatedSkuSet(productId).add(value)
-    }
+    const skuResolver = buildProductSkuResolver(products, aliases)
+    const { relatedSkuSetByProductId, getPrimarySku, getRelatedSkus, resolveProductBySku } = skuResolver
 
-    products.forEach((product) => {
-      registerRelatedSku(product.id, product.sku)
-      extractAliasSkusFromText(product.sku).forEach((aliasSku) => registerRelatedSku(product.id, aliasSku))
-      extractAliasSkusFromText(product.name).forEach((aliasSku) => registerRelatedSku(product.id, aliasSku))
-    })
-    aliases.forEach((alias) => {
-      registerRelatedSku(alias.productId, alias.aliasSku)
-    })
-
-    const relatedSkuToProductIdExact = new Map<string, string>()
-    const relatedSkuToProductIdNormalized = new Map<string, string>()
-    relatedSkuSetByProductId.forEach((skuSet, productId) => {
-      skuSet.forEach((sku) => {
-        relatedSkuToProductIdExact.set(sku, productId)
-        const normalized = normalizeSkuForCompare(sku)
-        if (normalized) {
-          relatedSkuToProductIdNormalized.set(normalized, productId)
-        }
-      })
-    })
-
-    const productSkus = products
-      .map((product) => normalizeCell(product.sku))
-      .filter(Boolean)
+    const productSkus = Array.from(new Set(
+      Array.from(relatedSkuSetByProductId.values()).flatMap((skuSet) => Array.from(skuSet.values())),
+    ))
     const latestSnapshots = productSkus.length
       ? await prisma.productInventorySnapshot.findMany({
           where: {
@@ -489,19 +437,13 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    const salesBySku: Record<string, {
+    const salesByProductId = new Map<string, {
       today: number
       yesterday: number
       week: number
       month: number
       selectedRange: number
-    }> = {}
-
-    products.forEach((product) => {
-      if (product.sku) {
-        salesBySku[product.sku] = { today: 0, yesterday: 0, week: 0, month: 0, selectedRange: 0 }
-      }
-    })
+    }>()
 
     const consumedRowsByProductId = new Map<string, InventoryConsumptionRow[]>()
     const rankDailySalesByProductId = new Map<string, Map<string, number>>()
@@ -509,36 +451,40 @@ export async function GET(request: NextRequest) {
 
     salesPerformanceData.forEach((perf) => {
       if (!perf.sku) return
-
-      if (!salesBySku[perf.sku]) {
-        salesBySku[perf.sku] = { today: 0, yesterday: 0, week: 0, month: 0, selectedRange: 0 }
+      const match = resolveProductBySku(perf.sku)
+      if (!match) return
+      const bucket = salesByProductId.get(match.product.id) || {
+        today: 0,
+        yesterday: 0,
+        week: 0,
+        month: 0,
+        selectedRange: 0,
       }
 
       const perfDate = startOfDay(new Date(perf.date))
       if (perfDate.getTime() === today.getTime()) {
-        salesBySku[perf.sku].today += perf.orders
+        bucket.today += perf.orders
       }
       if (perfDate.getTime() === yesterday.getTime()) {
-        salesBySku[perf.sku].yesterday += perf.orders
+        bucket.yesterday += perf.orders
       }
       if (perfDate >= sevenDaysAgo && perfDate <= today) {
-        salesBySku[perf.sku].week += perf.orders
+        bucket.week += perf.orders
       }
       if (perfDate >= thirtyDaysAgo && perfDate <= today) {
-        salesBySku[perf.sku].month += perf.orders
+        bucket.month += perf.orders
       }
       if (perfDate >= selectedRange.startDate && perfDate < selectedRange.endExclusive) {
-        salesBySku[perf.sku].selectedRange += perf.orders
+        bucket.selectedRange += perf.orders
       }
-
+      salesByProductId.set(match.product.id, bucket)
     })
 
     inventoryPerformanceData.forEach((perf) => {
       if (!perf.sku) return
 
       const perfDate = startOfDay(new Date(perf.date))
-      const productId = relatedSkuToProductIdExact.get(perf.sku)
-        || relatedSkuToProductIdNormalized.get(normalizeSkuForCompare(perf.sku))
+      const productId = resolveProductBySku(perf.sku)?.product.id
       if (!productId) return
 
       const bucket = consumedRowsByProductId.get(productId) || []
@@ -553,8 +499,7 @@ export async function GET(request: NextRequest) {
     rankPerformanceData.forEach((perf) => {
       if (!perf.sku) return
 
-      const productId = relatedSkuToProductIdExact.get(perf.sku)
-        || relatedSkuToProductIdNormalized.get(normalizeSkuForCompare(perf.sku))
+      const productId = resolveProductBySku(perf.sku)?.product.id
       if (!productId) return
 
       const dateKey = formatDateKey(startOfDay(new Date(perf.date)))
@@ -568,17 +513,32 @@ export async function GET(request: NextRequest) {
     })
 
     const tableData = products.map((product) => {
-      const sales = salesBySku[product.sku || ''] || {
+      const sales = salesByProductId.get(product.id) || {
         today: 0,
         yesterday: 0,
         week: 0,
         month: 0,
         selectedRange: 0,
       }
-      const currentStock = resolveEffectiveStock(
-        product.sku ? latestSnapshotBySku.get(product.sku) : null,
-        product.stock || 0,
-      )
+      const currentStock = (() => {
+        const orderedCandidateSkus = Array.from(new Set([
+          getPrimarySku(product.id),
+          product.sku,
+          ...getRelatedSkus(product.id),
+        ].map((sku) => normalizeCell(sku)).filter(Boolean)))
+        for (const candidateSku of orderedCandidateSkus) {
+          const snapshot = latestSnapshotBySku.get(candidateSku)
+          if (!snapshot) continue
+          const resolvedStock = resolveEffectiveStock(snapshot, product.stock || 0)
+          if (resolvedStock > 0) {
+            return resolvedStock
+          }
+        }
+        return resolveEffectiveStock(
+          product.sku ? latestSnapshotBySku.get(product.sku) : null,
+          product.stock || 0,
+        )
+      })()
 
       const baselineCandidates = Array.from(new Map(
         Array.from(relatedSkuSetByProductId.get(product.id) || []).flatMap((sku) => {
@@ -736,7 +696,7 @@ export async function GET(request: NextRequest) {
 
       return {
         id: product.id,
-        sku: product.sku || '-',
+        sku: getPrimarySku(product.id) || product.sku || '-',
         name: product.name,
         color: product.color || '-',
         length: product.length || '-',
@@ -779,7 +739,7 @@ export async function GET(request: NextRequest) {
     }
 
     products.forEach((product) => {
-      const mainSku = normalizeCell(product.sku)
+      const mainSku = getPrimarySku(product.id) || normalizeCell(product.sku)
       if (!mainSku) return
       registerSkuOption(mainSku)
     })
@@ -789,14 +749,11 @@ export async function GET(request: NextRequest) {
       registerSkuOption(aliasSku)
     })
 
-    const totalTodaySales = Object.values(salesBySku).reduce((sum, item) => sum + item.today, 0)
-    const totalYesterdaySales = Object.values(salesBySku).reduce((sum, item) => sum + item.yesterday, 0)
-    const totalWeekSales = Object.values(salesBySku).reduce((sum, item) => sum + item.week, 0)
-    const totalMonthSales = Object.values(salesBySku).reduce((sum, item) => sum + item.month, 0)
-    const effectiveStocks = products.map((product) => resolveEffectiveStock(
-      product.sku ? latestSnapshotBySku.get(product.sku) : null,
-      product.stock || 0,
-    ))
+    const totalTodaySales = tableData.reduce((sum, item) => sum + item.todaySales, 0)
+    const totalYesterdaySales = tableData.reduce((sum, item) => sum + item.yesterdaySales, 0)
+    const totalWeekSales = tableData.reduce((sum, item) => sum + item.weekSales, 0)
+    const totalMonthSales = tableData.reduce((sum, item) => sum + item.monthSales, 0)
+    const effectiveStocks = tableData.map((product) => product.platformCurrentStock)
     const totalStock = effectiveStocks.reduce((sum, stock) => sum + stock, 0)
     const estimatedTotalStock = tableData.reduce((sum, product) => sum + product.estimatedStock, 0)
     const inventoryDiff = totalStock - estimatedTotalStock
