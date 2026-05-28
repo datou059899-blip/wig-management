@@ -112,6 +112,7 @@ export function buildProductSkuResolver<T extends ProductSkuResolverProduct>(
   aliases: ProductSkuResolverAlias[],
 ) {
   const productById = new Map(products.map((product) => [product.id, product]))
+  const explicitAliasListByProductId = new Map<string, string[]>()
   const relatedSkuSetByProductId = new Map<string, Set<string>>()
   const primarySkuByProductId = new Map<string, string | null>()
   const lookupByKey = new Map<string, ResolvedProductMatch<T>>()
@@ -141,10 +142,25 @@ export function buildProductSkuResolver<T extends ProductSkuResolverProduct>(
     })
   }
 
+  aliases.forEach((alias) => {
+    const aliasSku = normalizeSkuText(alias.aliasSku)
+    if (!aliasSku) return
+    const bucket = explicitAliasListByProductId.get(alias.productId) || []
+    if (!bucket.includes(aliasSku)) {
+      bucket.push(aliasSku)
+      explicitAliasListByProductId.set(alias.productId, bucket)
+    }
+  })
+
   products.forEach((product) => {
-    const primarySku = normalizeSkuText(extractMainSkuFromText(product.sku))
+    const extractedPrimarySku = normalizeSkuText(extractMainSkuFromText(product.sku))
       || normalizeSkuText(product.sku)
       || null
+    const explicitAliases = explicitAliasListByProductId.get(product.id) || []
+    const preferredPrimarySku = extractedPrimarySku
+      ? buildTypoVariants(extractedPrimarySku).find((variant) => explicitAliases.includes(variant)) || extractedPrimarySku
+      : null
+    const primarySku = preferredPrimarySku
     primarySkuByProductId.set(product.id, primarySku)
 
     registerRelatedSku(product.id, product.sku)

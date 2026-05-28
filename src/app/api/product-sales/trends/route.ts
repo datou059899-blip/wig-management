@@ -363,11 +363,6 @@ export async function GET(request: NextRequest) {
       if (!mainSku) return
       registerSkuOption(mainSku)
     })
-    aliases.forEach((alias) => {
-      const aliasSku = normalizeCell(alias.aliasSku)
-      if (!aliasSku) return
-      registerSkuOption(aliasSku)
-    })
 
     const groupOptions = groups.map((group) => ({
       id: group.id,
@@ -376,14 +371,17 @@ export async function GET(request: NextRequest) {
     }))
 
     const selectedSku = requestedSku
+    const resolvedSelectedSku = selectedSku
+      ? (resolveProductBySku(selectedSku)?.primarySku || selectedSku)
+      : ''
     const selectedGroup = !selectedSku
       ? groupOptions.find((group) => group.id === requestedGroupId) || null
       : null
 
     let trendTitle = '销售库存趋势 - 全部 SKU'
 
-    if (selectedSku) {
-      trendTitle = `销售库存趋势 - SKU ${selectedSku}`
+    if (resolvedSelectedSku) {
+      trendTitle = `销售库存趋势 - SKU ${resolvedSelectedSku}`
     } else if (selectedGroup) {
       trendTitle = `销售库存趋势 - 分组 ${selectedGroup.name}`
     }
@@ -911,6 +909,7 @@ export async function GET(request: NextRequest) {
 
       console.log('Product sales inventory trend debug:', {
         selectedSku,
+        resolvedSelectedSku,
         resolvedProductSku: debugTarget?.target.productSku || null,
         resolvedProductId: debugTarget?.target.productId || null,
         productStock: debugTarget?.fallbackStock ?? 0,
@@ -948,7 +947,7 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({
-      selectedSku,
+      selectedSku: resolvedSelectedSku,
       selectedGroupId: selectedGroup?.id || '',
       trendRange: selectedRange.range,
       startDate: selectedRange.startDateText,

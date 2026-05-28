@@ -743,11 +743,6 @@ export async function GET(request: NextRequest) {
       if (!mainSku) return
       registerSkuOption(mainSku)
     })
-    aliases.forEach((alias) => {
-      const aliasSku = normalizeCell(alias.aliasSku)
-      if (!aliasSku) return
-      registerSkuOption(aliasSku)
-    })
 
     const totalTodaySales = tableData.reduce((sum, item) => sum + item.todaySales, 0)
     const totalYesterdaySales = tableData.reduce((sum, item) => sum + item.yesterdaySales, 0)
