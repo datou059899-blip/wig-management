@@ -1079,7 +1079,9 @@ export default function ProductSalesPage() {
         setTableRangeLoading(true)
       }
 
-      const response = await fetch(`/api/product-sales?${buildRangeParams(range, startDate, endDate).toString()}`)
+      const response = await fetch(`/api/product-sales?${buildRangeParams(range, startDate, endDate).toString()}`, {
+        cache: 'no-store',
+      })
       const data = await response.json()
       if (!response.ok) {
         throw new Error(data.error || '获取数据失败')
@@ -1096,7 +1098,9 @@ export default function ProductSalesPage() {
   }
 
   const loadGroups = async () => {
-    const response = await fetch('/api/product-sales/groups')
+    const response = await fetch('/api/product-sales/groups', {
+      cache: 'no-store',
+    })
     const data = await response.json()
     if (!response.ok) {
       throw new Error(data.error || '获取分组失败')
@@ -1111,7 +1115,9 @@ export default function ProductSalesPage() {
       params.set('sku', sku)
     }
 
-    const response = await fetch(`/api/product-sales/stock-baselines${params.toString() ? `?${params.toString()}` : ''}`)
+    const response = await fetch(`/api/product-sales/stock-baselines${params.toString() ? `?${params.toString()}` : ''}`, {
+      cache: 'no-store',
+    })
     const data = await response.json()
     if (!response.ok) {
       throw new Error(data.error || '获取初始库存失败')
@@ -1126,7 +1132,9 @@ export default function ProductSalesPage() {
       params.set('sku', sku)
     }
 
-    const response = await fetch(`/api/product-sales/stock-adjustments${params.toString() ? `?${params.toString()}` : ''}`)
+    const response = await fetch(`/api/product-sales/stock-adjustments${params.toString() ? `?${params.toString()}` : ''}`, {
+      cache: 'no-store',
+    })
     const data = await response.json()
     if (!response.ok) {
       throw new Error(data.error || '获取补货/调整记录失败')
@@ -1136,7 +1144,9 @@ export default function ProductSalesPage() {
   }
 
   const loadRankSettings = async () => {
-    const response = await fetch('/api/product-sales/rank-settings')
+    const response = await fetch('/api/product-sales/rank-settings', {
+      cache: 'no-store',
+    })
     const data = await response.json()
     if (!response.ok) {
       throw new Error(data.error || '获取等级设置失败')
@@ -1179,7 +1189,9 @@ export default function ProductSalesPage() {
         params.set('endDate', endDate)
       }
 
-      const response = await fetch(`/api/product-sales/trends?${params.toString()}`)
+      const response = await fetch(`/api/product-sales/trends?${params.toString()}`, {
+        cache: 'no-store',
+      })
       const data = await response.json()
       if (!response.ok) {
         throw new Error(data.error || '获取趋势失败')
@@ -1228,7 +1240,9 @@ export default function ProductSalesPage() {
         setSampleStatsLoading(true)
       }
 
-      const response = await fetch(`/api/product-sales/sample-stats?${buildSampleStatsParams(range, sku, startDate, endDate).toString()}`)
+      const response = await fetch(`/api/product-sales/sample-stats?${buildSampleStatsParams(range, sku, startDate, endDate).toString()}`, {
+        cache: 'no-store',
+      })
       const data = await response.json()
       if (!response.ok) {
         throw new Error(data.error || '获取样品统计失败')
