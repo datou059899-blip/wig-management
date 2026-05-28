@@ -88,12 +88,20 @@ function buildTypoVariants(value: string) {
 }
 
 export function buildSkuMatchVariants(value: string | null | undefined) {
+  const rawLiteral = normalizeCell(value)
   const raw = normalizeSkuText(value)
-  if (!raw) return []
+  if (!rawLiteral && !raw) return []
 
   const mainSku = extractMainSkuFromText(raw)
   const aliasSkus = extractAliasSkusFromText(raw)
-  const allValues = new Set<string>([raw])
+  const allValues = new Set<string>()
+
+  if (rawLiteral) {
+    allValues.add(rawLiteral)
+  }
+  if (raw) {
+    allValues.add(raw)
+  }
 
   if (mainSku) {
     allValues.add(mainSku)
