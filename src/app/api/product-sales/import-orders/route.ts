@@ -139,6 +139,10 @@ function normalizeSkuForCompare(value: string) {
   return normalizeCell(value).replace(/\s+/g, '').toUpperCase()
 }
 
+function isSpecialLinkSku(value: string | null | undefined) {
+  return normalizeSkuForCompare(normalizeCell(value)) === 'FG+GQ'
+}
+
 function extractAliasSkusFromText(value: string | null | undefined) {
   const aliases = new Set<string>()
   const text = normalizeCell(value)
@@ -960,6 +964,7 @@ export async function POST(request: NextRequest) {
     const failures: OrderFailure[] = []
     const skippedRows: OrderFailure[] = []
     const parsedRows: ParsedOrderItem[] = []
+    let specialLinkSkuIgnoredCount = 0
 
     rows.forEach(({ rowNumber, record }) => {
       try {
@@ -1042,7 +1047,13 @@ export async function POST(request: NextRequest) {
         const canceled = isCanceledOrder(orderStatus, cancelationReturnType)
         const canceledQty = isSample ? 0 : canceled ? quantity : 0
         const netQty = isSample ? 0 : canceled ? 0 : Math.max(quantity - returnQty, 0)
-        const stockConsumedQty = resolveStockConsumedQty(quantity, orderStatus, cancelationReturnType)
+        const isSpecialSku = isSpecialLinkSku(sellerSku)
+        const stockConsumedQty = isSpecialSku
+          ? 0
+          : resolveStockConsumedQty(quantity, orderStatus, cancelationReturnType)
+        if (isSpecialSku) {
+          specialLinkSkuIgnoredCount += 1
+        }
         const sampleQty = isSample ? quantity : 0
 
         parsedRows.push({
@@ -1141,6 +1152,9 @@ export async function POST(request: NextRequest) {
           sampleBySku: [],
           sampleByRecipient: [],
           sampleByRecipientAndSku: [],
+          hint: specialLinkSkuIgnoredCount > 0
+            ? `检测到 ${specialLinkSkuIgnoredCount} 行 FG+GQ 特殊链接 SKU，已忽略库存扣减。`
+            : null,
         },
         { status: 400 },
       )
@@ -1195,6 +1209,9 @@ export async function POST(request: NextRequest) {
         sampleBySku: sampleSummary.sampleBySku,
         sampleByRecipient: sampleSummary.sampleByRecipient,
         sampleByRecipientAndSku: sampleSummary.sampleByRecipientAndSku,
+        hint: specialLinkSkuIgnoredCount > 0
+          ? `检测到 ${specialLinkSkuIgnoredCount} 行 FG+GQ 特殊链接 SKU，已忽略库存扣减。`
+          : null,
       })
     }
 
@@ -1323,6 +1340,9 @@ export async function POST(request: NextRequest) {
         sampleBySku: sampleSummary.sampleBySku,
         sampleByRecipient: sampleSummary.sampleByRecipient,
         sampleByRecipientAndSku: sampleSummary.sampleByRecipientAndSku,
+        hint: specialLinkSkuIgnoredCount > 0
+          ? `检测到 ${specialLinkSkuIgnoredCount} 行 FG+GQ 特殊链接 SKU，已忽略库存扣减。`
+          : null,
       })
     }
 
@@ -1490,6 +1510,9 @@ export async function POST(request: NextRequest) {
       sampleByRecipient: sampleSummary.sampleByRecipient,
       sampleByRecipientAndSku: sampleSummary.sampleByRecipientAndSku,
       staleRecordCount: stalePairs.length,
+      hint: specialLinkSkuIgnoredCount > 0
+        ? `检测到 ${specialLinkSkuIgnoredCount} 行 FG+GQ 特殊链接 SKU，已忽略库存扣减。`
+        : null,
     })
   } catch (error) {
     console.error('导入订单数据失败:', error)

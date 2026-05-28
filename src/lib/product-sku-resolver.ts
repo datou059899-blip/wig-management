@@ -37,6 +37,10 @@ export function normalizeSkuForCompare(value: string | null | undefined) {
   return normalizeSkuText(value).replace(/\s+/g, '').toUpperCase()
 }
 
+export function isSpecialLinkSku(value: string | null | undefined) {
+  return normalizeSkuForCompare(value) === 'FG+GQ'
+}
+
 export function extractAliasSkusFromText(value: string | null | undefined) {
   const aliases = new Set<string>()
   const text = normalizeSkuText(value)

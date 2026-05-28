@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import {
   buildProductSkuResolver,
   buildSkuMatchVariants,
+  isSpecialLinkSku,
   normalizeCell,
   normalizeSkuForCompare,
 } from '@/lib/product-sku-resolver'
@@ -211,7 +212,7 @@ export async function GET(request: NextRequest) {
       ? selectedRange.endExclusive
       : tomorrow
 
-    const [products, aliases, rankSettingRecord] = await Promise.all([
+    const [rawProducts, aliases, rankSettingRecord] = await Promise.all([
       prisma.product.findMany({
         where: { isActive: true },
         select: {
@@ -251,6 +252,7 @@ export async function GET(request: NextRequest) {
           windowDays: rankSettingRecord.windowDays,
         }
       : DEFAULT_RANK_SETTINGS
+    const products = rawProducts.filter((product) => !isSpecialLinkSku(product.sku))
     const rankWindowDays = Math.max(rankSettings.windowDays, 1)
     const rankWindowStart = addDays(today, -(rankWindowDays - 1))
     const recentThreeDayStart = addDays(today, -2)

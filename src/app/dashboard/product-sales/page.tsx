@@ -249,6 +249,7 @@ interface OrderImportResult {
   sampleByRecipientAndSku?: OrderImportSampleByRecipientAndSku[]
   staleRecordCount?: number
   writeErrors?: Array<{ sku: string; dateStr: string; reason: string }>
+  hint?: string | null
 }
 
 interface SkuImportIssueRow {
@@ -1509,6 +1510,7 @@ export default function ProductSalesPage() {
           : [],
         staleRecordCount: payload.staleRecordCount || 0,
         writeErrors: Array.isArray(payload.writeErrors) ? payload.writeErrors : [],
+        hint: payload.hint || null,
       })
 
       await refreshAfterMutation()
@@ -2789,6 +2791,11 @@ export default function ProductSalesPage() {
               <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                 订单明细已按 Order ID + SKU ID 去重；当 SKU ID 为空时，会回退为 Order ID + Seller SKU。重复导入或重叠日期导入不会重复计算。
               </div>
+              {ordersImportResult.hint && (
+                <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                  {ordersImportResult.hint}
+                </div>
+              )}
               {ordersImportResult.mode === 'import' && (
                 <div className="mt-2 text-sm text-slate-700">
                   已完成订单明细去重并重算受影响日期的销量数据。

@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import {
   buildProductSkuResolver,
   buildSkuMatchVariants,
+  isSpecialLinkSku,
   normalizeCell,
   normalizeSkuForCompare,
 } from '@/lib/product-sku-resolver'
@@ -240,7 +241,7 @@ export async function GET(request: NextRequest) {
     const requestedGroupId = String(searchParams.get('groupId') || '').trim()
     const selectedRange = resolveRange(searchParams)
 
-    const [products, aliases, groups] = await Promise.all([
+    const [rawProducts, aliases, groups] = await Promise.all([
       prisma.product.findMany({
         where: { isActive: true },
         select: {
@@ -266,6 +267,7 @@ export async function GET(request: NextRequest) {
         orderBy: { createdAt: 'asc' },
       }),
     ])
+    const products = rawProducts.filter((product) => !isSpecialLinkSku(product.sku))
 
     const skuResolver = buildProductSkuResolver(products, aliases)
     const { getFilterPrimarySkuForProduct, getPrimarySku, getRelatedSkus, resolveProductBySku } = skuResolver
