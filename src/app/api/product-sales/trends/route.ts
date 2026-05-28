@@ -347,7 +347,7 @@ export async function GET(request: NextRequest) {
     ])
 
     const skuResolver = buildProductSkuResolver(products, aliases)
-    const { getPrimarySku, getRelatedSkus, resolveProductBySku } = skuResolver
+    const { getFilterPrimarySkuForProduct, getPrimarySku, getRelatedSkus, resolveProductBySku } = skuResolver
 
     const skuOptionsSet = new Set<string>()
     const skuOptions: Array<{ sku: string; label: string }> = []
@@ -359,7 +359,7 @@ export async function GET(request: NextRequest) {
     }
 
     products.forEach((product) => {
-      const mainSku = getPrimarySku(product.id) || normalizeCell(product.sku)
+      const mainSku = getFilterPrimarySkuForProduct(product) || normalizeCell(product.sku)
       if (!mainSku) return
       registerSkuOption(mainSku)
     })

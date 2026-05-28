@@ -260,7 +260,13 @@ export async function GET(request: NextRequest) {
       : fixedSevenDayStart
 
     const skuResolver = buildProductSkuResolver(products, aliases)
-    const { relatedSkuSetByProductId, getPrimarySku, getRelatedSkus, resolveProductBySku } = skuResolver
+    const {
+      relatedSkuSetByProductId,
+      getPrimarySku,
+      getFilterPrimarySkuForProduct,
+      getRelatedSkus,
+      resolveProductBySku,
+    } = skuResolver
 
     const productSkus = Array.from(new Set(
       Array.from(relatedSkuSetByProductId.values()).flatMap((skuSet) => Array.from(skuSet.values())),
@@ -739,7 +745,7 @@ export async function GET(request: NextRequest) {
     }
 
     products.forEach((product) => {
-      const mainSku = getPrimarySku(product.id) || normalizeCell(product.sku)
+      const mainSku = getFilterPrimarySkuForProduct(product) || normalizeCell(product.sku)
       if (!mainSku) return
       registerSkuOption(mainSku)
     })

@@ -117,6 +117,7 @@ export function buildProductSkuResolver<T extends ProductSkuResolverProduct>(
   const primarySkuByProductId = new Map<string, string | null>()
   const lookupByKey = new Map<string, ResolvedProductMatch<T>>()
   const normalizedLookupByKey = new Map<string, ResolvedProductMatch<T>>()
+  const explicitAliasTargetProductIdByNormalizedKey = new Map<string, string>()
 
   const ensureRelatedSkuSet = (productId: string) => {
     if (!relatedSkuSetByProductId.has(productId)) {
@@ -149,6 +150,11 @@ export function buildProductSkuResolver<T extends ProductSkuResolverProduct>(
     if (!bucket.includes(aliasSku)) {
       bucket.push(aliasSku)
       explicitAliasListByProductId.set(alias.productId, bucket)
+    }
+
+    const normalizedAliasKey = normalizeSkuForCompare(aliasSku)
+    if (normalizedAliasKey && !explicitAliasTargetProductIdByNormalizedKey.has(normalizedAliasKey)) {
+      explicitAliasTargetProductIdByNormalizedKey.set(normalizedAliasKey, alias.productId)
     }
   })
 
@@ -206,11 +212,44 @@ export function buildProductSkuResolver<T extends ProductSkuResolverProduct>(
     return null
   }
 
+  const resolveExplicitAliasTargetBySku = (sku: string | null | undefined): ResolvedProductMatch<T> | null => {
+    const normalizedSku = normalizeSkuForCompare(sku)
+    if (!normalizedSku) return null
+
+    const targetProductId = explicitAliasTargetProductIdByNormalizedKey.get(normalizedSku)
+    if (!targetProductId) return null
+
+    const product = productById.get(targetProductId)
+    if (!product) return null
+
+    return {
+      product,
+      primarySku: primarySkuByProductId.get(targetProductId) || null,
+    }
+  }
+
+  const getFilterPrimarySkuForProduct = (product: T) => {
+    const explicitAliasTarget = resolveExplicitAliasTargetBySku(product.sku)
+    if (explicitAliasTarget && explicitAliasTarget.product.id !== product.id) {
+      return explicitAliasTarget.primarySku
+        || normalizeSkuText(extractMainSkuFromText(explicitAliasTarget.product.sku))
+        || normalizeSkuText(explicitAliasTarget.product.sku)
+        || null
+    }
+
+    return primarySkuByProductId.get(product.id)
+      || normalizeSkuText(extractMainSkuFromText(product.sku))
+      || normalizeSkuText(product.sku)
+      || null
+  }
+
   return {
     primarySkuByProductId,
     relatedSkuSetByProductId,
     resolveProductBySku,
+    resolveExplicitAliasTargetBySku,
     getPrimarySku: (productId: string) => primarySkuByProductId.get(productId) || null,
+    getFilterPrimarySkuForProduct,
     getRelatedSkus: (productId: string) => Array.from(relatedSkuSetByProductId.get(productId) || []),
   }
 }
