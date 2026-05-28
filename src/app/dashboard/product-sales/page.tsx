@@ -41,8 +41,9 @@ interface ProductData {
   selectedRangeSales: number
   stock: number
   platformCurrentStock: number
+  hasBaseline: boolean
   estimatedStock: number
-  inventoryDiff: number
+  inventoryDiff: number | null
   baselineQty: number
   adjustmentTotal: number
   cumulativeStockConsumedQty: number
@@ -2257,6 +2258,8 @@ export default function ProductSalesPage() {
     const sevenDayAvgSalesDiff = b.sevenDayAvgSales - a.sevenDayAvgSales
     if (sevenDayAvgSalesDiff !== 0) return sevenDayAvgSalesDiff
 
+    if (a.hasBaseline !== b.hasBaseline) return a.hasBaseline ? -1 : 1
+
     const estimatedStockDiff = a.estimatedStock - b.estimatedStock
     if (estimatedStockDiff !== 0) return estimatedStockDiff
 
@@ -2275,6 +2278,12 @@ export default function ProductSalesPage() {
       return sortConfig.direction === 'asc' ? aValue - bValue : bValue - aValue
     }
 
+    if (sortConfig.key === 'estimatedStock' && a.hasBaseline !== b.hasBaseline) {
+      return sortConfig.direction === 'asc'
+        ? (a.hasBaseline ? -1 : 1)
+        : (a.hasBaseline ? 1 : -1)
+    }
+
     const aValue = a[sortConfig.key as keyof ProductData]
     const bValue = b[sortConfig.key as keyof ProductData]
 
@@ -2290,7 +2299,7 @@ export default function ProductSalesPage() {
   })
   const visibleProducts = sortedProducts
   const reconciliationProducts = [...products].sort((a, b) => {
-    const diffGap = Math.abs(b.inventoryDiff) - Math.abs(a.inventoryDiff)
+    const diffGap = Math.abs(b.inventoryDiff ?? 0) - Math.abs(a.inventoryDiff ?? 0)
     if (diffGap !== 0) return diffGap
 
     const updatedGap = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
@@ -2349,11 +2358,15 @@ export default function ProductSalesPage() {
   }
 
   const getStockStatusLabel = (stockStatus: string) => {
+    if (stockStatus === '未设置初始库存') return '未设置初始库存'
     if (stockStatus === '断货') return '缺货'
     return stockStatus
   }
 
   const getStockStatusBadgeClass = (stockStatus: string) => {
+    if (stockStatus === '未设置初始库存') {
+      return 'bg-slate-100 text-slate-700 border border-slate-200'
+    }
     if (stockStatus === '断货') {
       return 'bg-red-100 text-red-700 border border-red-200'
     }
@@ -2363,18 +2376,21 @@ export default function ProductSalesPage() {
     return 'bg-emerald-100 text-emerald-700 border border-emerald-200'
   }
 
-  const getEstimatedStockTextClass = (estimatedStock: number) => {
+  const getEstimatedStockTextClass = (estimatedStock: number, hasBaseline = true) => {
+    if (!hasBaseline) return 'text-slate-400'
     if (estimatedStock === 0) return 'text-red-700'
     if (estimatedStock <= 10) return 'text-orange-700'
     return 'text-slate-900'
   }
 
   const getDaysOfSupplyValue = (product: ProductData) => {
+    if (!product.hasBaseline) return Number.POSITIVE_INFINITY
     if (product.avgDailySales <= 0) return Number.POSITIVE_INFINITY
     return Number((product.estimatedStock / product.avgDailySales).toFixed(1))
   }
 
   const getDaysOfSupplyDisplay = (product: ProductData) => {
+    if (!product.hasBaseline) return '未设置'
     if (product.avgDailySales <= 0) {
       return product.estimatedStock > 0 ? '无近期销量' : '断货'
     }
@@ -2382,6 +2398,7 @@ export default function ProductSalesPage() {
   }
 
   const getDaysOfSupplyTextClass = (product: ProductData) => {
+    if (!product.hasBaseline) return 'text-slate-400'
     if (product.avgDailySales <= 0) {
       return product.estimatedStock > 0 ? 'text-slate-500' : 'text-red-700'
     }
@@ -2391,13 +2408,15 @@ export default function ProductSalesPage() {
     return 'text-slate-900'
   }
 
-  const getInventoryDiffTextClass = (inventoryDiff: number) => {
+  const getInventoryDiffTextClass = (inventoryDiff: number | null) => {
+    if (inventoryDiff === null) return 'text-slate-400'
     if (inventoryDiff > 0) return 'text-emerald-700'
     if (inventoryDiff < 0) return 'text-red-700'
     return 'text-slate-600'
   }
 
-  const formatSignedNumber = (value: number) => {
+  const formatSignedNumber = (value: number | null) => {
+    if (value === null) return '未设置'
     if (value > 0) return `+${value}`
     return String(value)
   }
@@ -3221,7 +3240,7 @@ export default function ProductSalesPage() {
                   <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
                     <div className="mb-3">
                       <div className="text-sm font-medium text-slate-900">每日预计剩余库存曲线</div>
-                      <div className="text-xs text-slate-500">优先使用手动初始库存，并按库存消耗量扣减；未设置初始库存时回退库存快照或当前库存。</div>
+                      <div className="text-xs text-slate-500">预计库存只使用手动初始库存和补货调整，并按库存消耗量扣减；未设置初始库存的 SKU 不计入预计库存主口径。</div>
                     </div>
                     <div className="h-64">
                       {trendLoading ? (
@@ -4532,7 +4551,7 @@ export default function ProductSalesPage() {
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-slate-600 text-sm font-medium">预计总库存</p>
-                          <p className={`mt-2 text-3xl font-bold ${getEstimatedStockTextClass(summary.estimatedTotalStock)}`}>
+                          <p className={`mt-2 text-3xl font-bold ${getEstimatedStockTextClass(summary.estimatedTotalStock, true)}`}>
                             {summary.estimatedTotalStock}
                           </p>
                         </div>
@@ -4630,13 +4649,15 @@ export default function ProductSalesPage() {
                               {reconciliationProducts.map((product) => (
                                 <tr key={`reconciliation-${product.id}`} className="border-b border-slate-100">
                                   <td className="px-6 py-3 font-medium text-slate-900">{product.sku}</td>
-                                  <td className={`px-6 py-3 text-center font-semibold ${getEstimatedStockTextClass(product.estimatedStock)}`}>{product.estimatedStock}</td>
+                                  <td className={`px-6 py-3 text-center font-semibold ${getEstimatedStockTextClass(product.estimatedStock, product.hasBaseline)}`}>
+                                    {product.hasBaseline ? product.estimatedStock : '未设置'}
+                                  </td>
                                   <td className="px-6 py-3 text-center text-slate-700">{product.platformCurrentStock}</td>
                                   <td className={`px-6 py-3 text-center font-semibold ${getInventoryDiffTextClass(product.inventoryDiff)}`}>{formatSignedNumber(product.inventoryDiff)}</td>
-                                  <td className="px-6 py-3 text-center text-slate-700">{product.baselineQty}</td>
+                                  <td className="px-6 py-3 text-center text-slate-700">{product.hasBaseline ? product.baselineQty : '未设置'}</td>
                                   <td className="px-6 py-3 text-center text-slate-700">{formatSignedNumber(product.adjustmentTotal)}</td>
-                                  <td className="px-6 py-3 text-center text-slate-700">{product.cumulativeStockConsumedQty}</td>
-                                  <td className="px-6 py-3 text-center text-slate-700">{product.sampleConsumedQty}</td>
+                                  <td className="px-6 py-3 text-center text-slate-700">{product.hasBaseline ? product.cumulativeStockConsumedQty : '—'}</td>
+                                  <td className="px-6 py-3 text-center text-slate-700">{product.hasBaseline ? product.sampleConsumedQty : '—'}</td>
                                   <td className="px-6 py-3 text-slate-600">{new Date(product.updatedAt).toLocaleString('zh-CN')}</td>
                                 </tr>
                               ))}
@@ -4755,8 +4776,8 @@ export default function ProductSalesPage() {
                                     <td className="sticky left-0 z-10 min-w-[120px] bg-white px-6 py-4 text-sm font-medium text-slate-900">
                                       {product.sku}
                                     </td>
-                                    <td className={`min-w-[100px] px-6 py-4 text-sm text-center font-bold ${getEstimatedStockTextClass(product.estimatedStock)}`}>
-                                      {product.estimatedStock}
+                                    <td className={`min-w-[100px] px-6 py-4 text-sm text-center font-bold ${getEstimatedStockTextClass(product.estimatedStock, product.hasBaseline)}`}>
+                                      {product.hasBaseline ? product.estimatedStock : '未设置'}
                                     </td>
                                     <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.weekSales}</td>
                                     <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.avgDailySales}</td>
@@ -4857,11 +4878,13 @@ export default function ProductSalesPage() {
                                             </div>
                                             <div className="rounded-lg bg-white px-3 py-3">
                                               <div className="text-xs text-slate-500">预计库存</div>
-                                              <div className={`mt-1 text-sm font-semibold ${getEstimatedStockTextClass(product.estimatedStock)}`}>{product.estimatedStock}</div>
+                                              <div className={`mt-1 text-sm font-semibold ${getEstimatedStockTextClass(product.estimatedStock, product.hasBaseline)}`}>
+                                                {product.hasBaseline ? product.estimatedStock : '未设置'}
+                                              </div>
                                             </div>
                                             <div className="rounded-lg bg-white px-3 py-3">
                                               <div className="text-xs text-slate-500">初始库存 baseline</div>
-                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.baselineQty}</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.hasBaseline ? product.baselineQty : '未设置'}</div>
                                             </div>
                                             <div className="rounded-lg bg-white px-3 py-3">
                                               <div className="text-xs text-slate-500">补货/调整合计</div>
@@ -4871,11 +4894,11 @@ export default function ProductSalesPage() {
                                             </div>
                                             <div className="rounded-lg bg-white px-3 py-3">
                                               <div className="text-xs text-slate-500">累计库存消耗</div>
-                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.cumulativeStockConsumedQty}</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.hasBaseline ? product.cumulativeStockConsumedQty : '—'}</div>
                                             </div>
                                             <div className="rounded-lg bg-white px-3 py-3">
                                               <div className="text-xs text-slate-500">样品消耗数量</div>
-                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.sampleConsumedQty}</div>
+                                              <div className="mt-1 text-sm font-semibold text-slate-900">{product.hasBaseline ? product.sampleConsumedQty : '—'}</div>
                                             </div>
                                             <div className="rounded-lg bg-white px-3 py-3">
                                               <div className="text-xs text-slate-500">动销分</div>

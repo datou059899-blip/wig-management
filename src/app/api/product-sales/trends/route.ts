@@ -21,7 +21,6 @@ type InventoryTarget = {
   key: string
   productId: string | null
   productSku: string | null
-  fallbackStock: number
   requestedSkus: string[]
   consumedSkus: string[]
   snapshotCandidateSkus: string[]
@@ -93,84 +92,6 @@ function resolveSnapshotQty(snapshot: {
   }
 
   return null
-}
-
-function buildFallbackStockSeries(params: {
-  startDate: Date
-  totalDays: number
-  fallbackStock: number
-  snapshots: Array<{ date: Date; qty: number }>
-  consumedByDate: Map<string, number>
-}) {
-  const { startDate, totalDays, fallbackStock, snapshots, consumedByDate } = params
-  const series = new Map<string, number>()
-  const endDate = addDays(startDate, totalDays - 1)
-  const startDateMs = startDate.getTime()
-  const endDateMs = endDate.getTime()
-  const inRangeSnapshots = snapshots
-    .filter((snapshot) => {
-      const snapshotDateMs = snapshot.date.getTime()
-      return snapshotDateMs >= startDateMs && snapshotDateMs <= endDateMs
-    })
-    .sort((a, b) => a.date.getTime() - b.date.getTime())
-
-  if (!inRangeSnapshots.length) {
-    let currentStock = Math.max(fallbackStock, 0)
-    for (let offset = totalDays - 1; offset >= 0; offset -= 1) {
-      const currentDate = addDays(startDate, offset)
-      const dateKey = formatDateKey(currentDate)
-      series.set(dateKey, currentStock)
-      currentStock = Math.max(currentStock + (consumedByDate.get(dateKey) || 0), 0)
-    }
-    return series
-  }
-
-  inRangeSnapshots.forEach((snapshot) => {
-    series.set(formatDateKey(snapshot.date), Math.max(snapshot.qty, 0))
-  })
-
-  for (let index = 0; index < inRangeSnapshots.length; index += 1) {
-    const currentSnapshot = inRangeSnapshots[index]
-    const previousSnapshot = index > 0 ? inRangeSnapshots[index - 1] : null
-    let cursorDate = currentSnapshot.date
-    let cursorStock = Math.max(currentSnapshot.qty, 0)
-
-    while (true) {
-      const previousDate = addDays(cursorDate, -1)
-      if (previousDate.getTime() < startDateMs) break
-      if (previousSnapshot && previousDate.getTime() <= previousSnapshot.date.getTime()) break
-
-      const cursorDateKey = formatDateKey(cursorDate)
-      const previousDateKey = formatDateKey(previousDate)
-      cursorStock = Math.max(cursorStock + (consumedByDate.get(cursorDateKey) || 0), 0)
-      if (!series.has(previousDateKey)) {
-        series.set(previousDateKey, cursorStock)
-      }
-      cursorDate = previousDate
-    }
-  }
-
-  for (let index = 0; index < inRangeSnapshots.length; index += 1) {
-    const currentSnapshot = inRangeSnapshots[index]
-    const nextSnapshot = index + 1 < inRangeSnapshots.length ? inRangeSnapshots[index + 1] : null
-    let cursorDate = currentSnapshot.date
-    let cursorStock = Math.max(currentSnapshot.qty, 0)
-
-    while (true) {
-      const nextDate = addDays(cursorDate, 1)
-      if (nextDate.getTime() > endDateMs) break
-      if (nextSnapshot && nextDate.getTime() >= nextSnapshot.date.getTime()) break
-
-      const nextDateKey = formatDateKey(nextDate)
-      cursorStock = Math.max(cursorStock - (consumedByDate.get(nextDateKey) || 0), 0)
-      if (!series.has(nextDateKey)) {
-        series.set(nextDateKey, cursorStock)
-      }
-      cursorDate = nextDate
-    }
-  }
-
-  return series
 }
 
 function buildBaselineStockSeries(params: {
@@ -394,7 +315,6 @@ export async function GET(request: NextRequest) {
             key: `missing:${selectedSku}`,
             productId: null,
             productSku: null,
-            fallbackStock: 0,
             requestedSkus: [selectedSku],
             consumedSkus: [selectedSku],
             snapshotCandidateSkus: [],
@@ -416,7 +336,6 @@ export async function GET(request: NextRequest) {
           key: match.product.id,
           productId: match.product.id,
           productSku: getPrimarySku(match.product.id) || match.product.sku,
-          fallbackStock: match.product.stock || 0,
           requestedSkus: [selectedSku],
           consumedSkus: relatedSkus.length ? relatedSkus : [selectedSku],
           snapshotCandidateSkus,
@@ -438,7 +357,6 @@ export async function GET(request: NextRequest) {
               key: `missing:${sku}`,
               productId: null,
               productSku: null,
-              fallbackStock: 0,
               requestedSkus: [sku],
               consumedSkus: [sku],
               snapshotCandidateSkus: [],
@@ -458,7 +376,6 @@ export async function GET(request: NextRequest) {
             key: match.product.id,
             productId: match.product.id,
             productSku: getPrimarySku(match.product.id) || match.product.sku,
-            fallbackStock: match.product.stock || 0,
             requestedSkus: [sku],
             consumedSkus: [],
             snapshotCandidateSkus: [],
@@ -506,7 +423,6 @@ export async function GET(request: NextRequest) {
           key: product.id,
           productId: product.id,
           productSku: getPrimarySku(product.id) || product.sku,
-          fallbackStock: product.stock || 0,
           requestedSkus: getPrimarySku(product.id) ? [getPrimarySku(product.id)!] : (product.sku ? [product.sku] : []),
           consumedSkus,
           snapshotCandidateSkus,
@@ -782,7 +698,6 @@ export async function GET(request: NextRequest) {
 
       return {
         target,
-        fallbackStock: target.fallbackStock,
         firstSnapshot: allSnapshots[0] || null,
         lastSnapshot: allSnapshots[allSnapshots.length - 1] || null,
         resolvedSnapshots,
@@ -799,7 +714,9 @@ export async function GET(request: NextRequest) {
     }, selectedRange.startDate)
 
     const inventoryConsumedSkuList = Array.from(new Set(
-      inventoryTargets.flatMap((target) => target.consumedSkus.flatMap((sku) => buildSkuMatchVariants(sku))),
+      inventoryStates
+        .filter((targetState) => Boolean(targetState.activeBaseline))
+        .flatMap((targetState) => targetState.target.consumedSkus.flatMap((sku) => buildSkuMatchVariants(sku))),
     ))
 
     const inventoryPerformanceData = inventoryConsumedSkuList.length
@@ -856,13 +773,7 @@ export async function GET(request: NextRequest) {
             adjustmentsByDate,
             consumedByDate,
           })
-        : buildFallbackStockSeries({
-            startDate: selectedRange.startDate,
-            totalDays,
-            fallbackStock: targetState.fallbackStock,
-            snapshots: targetState.resolvedSnapshots,
-            consumedByDate,
-          })
+        : new Map<string, number>()
 
       targetSeries.forEach((stock, dateKey) => {
         stockByDate.set(dateKey, (stockByDate.get(dateKey) || 0) + Math.max(stock, 0))
@@ -912,7 +823,6 @@ export async function GET(request: NextRequest) {
         resolvedSelectedSku,
         resolvedProductSku: debugTarget?.target.productSku || null,
         resolvedProductId: debugTarget?.target.productId || null,
-        productStock: debugTarget?.fallbackStock ?? 0,
         baselineSku: debugTarget?.activeBaseline?.sku || null,
         baselineDate: debugTarget?.activeBaseline ? formatDateKey(debugTarget.activeBaseline.baselineDate) : null,
         baselineQty: debugTarget?.activeBaseline?.quantity ?? null,

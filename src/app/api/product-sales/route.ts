@@ -572,6 +572,7 @@ export async function GET(request: NextRequest) {
         }),
       ).values()).sort((a, b) => a.adjustmentDate.getTime() - b.adjustmentDate.getTime())
 
+      const hasBaseline = Boolean(activeBaseline)
       const estimatedStock = activeBaseline
         ? Math.max(
             activeBaseline.quantity
@@ -585,7 +586,7 @@ export async function GET(request: NextRequest) {
               ), 0),
             0,
           )
-        : currentStock
+        : 0
       const baselineQty = activeBaseline ? activeBaseline.quantity : 0
       const adjustmentTotal = activeBaseline
         ? adjustmentCandidates.reduce((sum, row) => (
@@ -604,7 +605,7 @@ export async function GET(request: NextRequest) {
             row.date >= activeBaseline.baselineDate && row.date < tomorrow ? sum + row.sampleQty : sum
           ), 0)
         : 0
-      const inventoryDiff = currentStock - estimatedStock
+      const inventoryDiff = hasBaseline ? estimatedStock - currentStock : null
 
       const rankDailySales = rankDailySalesByProductId.get(product.id) || new Map<string, number>()
       const orderedRankDailySales = Array.from(rankDailySales.entries()).sort((a, b) => a[0].localeCompare(b[0]))
@@ -693,11 +694,13 @@ export async function GET(request: NextRequest) {
         + orderShareRatio * 20
       ).toFixed(2))
 
-      let stockStatus = '正常'
-      if (currentStock === 0) {
+      let stockStatus = '未设置初始库存'
+      if (hasBaseline && estimatedStock === 0) {
         stockStatus = '断货'
-      } else if (currentStock <= 10) {
+      } else if (hasBaseline && estimatedStock <= 10) {
         stockStatus = '低库存'
+      } else if (hasBaseline) {
+        stockStatus = '正常'
       }
 
       return {
@@ -713,6 +716,7 @@ export async function GET(request: NextRequest) {
         selectedRangeSales: sales.selectedRange,
         stock: currentStock,
         platformCurrentStock: currentStock,
+        hasBaseline,
         estimatedStock,
         inventoryDiff,
         baselineQty,
@@ -756,10 +760,11 @@ export async function GET(request: NextRequest) {
     const totalMonthSales = tableData.reduce((sum, item) => sum + item.monthSales, 0)
     const effectiveStocks = tableData.map((product) => product.platformCurrentStock)
     const totalStock = effectiveStocks.reduce((sum, stock) => sum + stock, 0)
-    const estimatedTotalStock = tableData.reduce((sum, product) => sum + product.estimatedStock, 0)
-    const inventoryDiff = totalStock - estimatedTotalStock
-    const lowStockCount = effectiveStocks.filter((stock) => stock > 0 && stock <= 10).length
-    const outOfStockCount = effectiveStocks.filter((stock) => stock === 0).length
+    const forecastableProducts = tableData.filter((product) => product.hasBaseline)
+    const estimatedTotalStock = forecastableProducts.reduce((sum, product) => sum + product.estimatedStock, 0)
+    const inventoryDiff = estimatedTotalStock - totalStock
+    const lowStockCount = forecastableProducts.filter((product) => product.estimatedStock > 0 && product.estimatedStock <= 10).length
+    const outOfStockCount = forecastableProducts.filter((product) => product.estimatedStock === 0).length
 
     return NextResponse.json({
       summary: {
