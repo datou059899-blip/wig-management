@@ -197,6 +197,7 @@ export async function GET(request: NextRequest) {
       sku: string
       sampleQty: number
       sampleRows: number
+      originalSellerSkus: Set<string>
     }>()
     const sampleByRecipientMap = new Map<string, {
       buyerUsername: string
@@ -222,10 +223,12 @@ export async function GET(request: NextRequest) {
         sku: resolvedSku,
         sampleQty: 0,
         sampleRows: 0,
+        originalSellerSkus: new Set<string>(),
       }
       sampleBySku.sampleQty += item.sampleQty || 0
       sampleBySku.sampleRows += 1
-      sampleBySkuMap.set(item.sellerSku, sampleBySku)
+      sampleBySku.originalSellerSkus.add(item.sellerSku)
+      sampleBySkuMap.set(resolvedSku, sampleBySku)
 
       const recipientKey = buildRecipientKey(item)
       const sampleByRecipient = sampleByRecipientMap.get(recipientKey) || {
@@ -255,9 +258,16 @@ export async function GET(request: NextRequest) {
       sampleByRecipientAndSkuMap.set(recipientSkuKey, sampleByRecipientAndSku)
     })
 
-    const sampleBySku = Array.from(sampleBySkuMap.values()).sort((a, b) => (
-      b.sampleQty - a.sampleQty || b.sampleRows - a.sampleRows || a.sku.localeCompare(b.sku)
-    ))
+    const sampleBySku = Array.from(sampleBySkuMap.values())
+      .map((item) => ({
+        sku: item.sku,
+        sampleQty: item.sampleQty,
+        sampleRows: item.sampleRows,
+        originalSellerSkus: Array.from(item.originalSellerSkus).sort((a, b) => a.localeCompare(b)),
+      }))
+      .sort((a, b) => (
+        b.sampleQty - a.sampleQty || b.sampleRows - a.sampleRows || a.sku.localeCompare(b.sku)
+      ))
     const sampleByRecipient = Array.from(sampleByRecipientMap.values())
       .map((item) => ({
         buyerUsername: item.buyerUsername || 'unknown',

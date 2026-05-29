@@ -188,6 +188,7 @@ interface OrderImportSampleBySku {
   sku: string
   sampleQty: number
   sampleRows: number
+  originalSellerSkus?: string[]
 }
 
 interface OrderImportSampleByRecipient {
@@ -3439,7 +3440,16 @@ export default function ProductSalesPage() {
                           <tbody>
                             {(sampleStats?.sampleBySku || []).slice(0, 20).map((item) => (
                               <tr key={`persistent-sample-sku-${item.sku}`} className="border-b border-slate-100">
-                                <td className="px-3 py-2 text-slate-700">{item.sku}</td>
+                                <td className="px-3 py-2 text-slate-700">
+                                  <div>{item.sku}</div>
+                                  {(item.originalSellerSkus?.length || 0) > 0 && (
+                                    <div className="mt-1 text-xs text-slate-400">
+                                      原始 SKU：
+                                      {' '}
+                                      {item.originalSellerSkus?.join('、')}
+                                    </div>
+                                  )}
+                                </td>
                                 <td className="px-3 py-2 text-slate-700">{item.sampleQty}</td>
                                 <td className="px-3 py-2 text-slate-700">{item.sampleRows}</td>
                               </tr>
