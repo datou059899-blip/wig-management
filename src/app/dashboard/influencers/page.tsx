@@ -210,6 +210,21 @@ function computeReminder(x: Influencer): OperatingReminder | null {
 type ToastType = 'success' | 'error' | 'info'
 type Toast = { id: string; type: ToastType; text: string }
 
+type PendingStatusChange =
+  | {
+      mode: 'single'
+      influencerId: string
+      influencerName: string
+      currentStatus: InfluencerStatus
+      nextStatus: InfluencerStatus
+    }
+  | {
+      mode: 'batch'
+      influencerIds: string[]
+      count: number
+      nextStatus: InfluencerStatus
+    }
+
 function Toasts({ toasts, onRemove }: { toasts: Toast[]; onRemove: (id: string) => void }) {
   useEffect(() => {
     if (toasts.length === 0) return
@@ -883,8 +898,11 @@ export default function InfluencersPage() {
   const [actionOpen, setActionOpen] = useState(false)
   const [actionTargetId, setActionTargetId] = useState('')
   const [statusModalOpen, setStatusModalOpen] = useState(false)
+  const [statusModalMode, setStatusModalMode] = useState<'single' | 'batch'>('single')
   const [statusModalTargetId, setStatusModalTargetId] = useState('')
-  const [statusModalUpdating, setStatusModalUpdating] = useState(false)
+  const [statusConfirmOpen, setStatusConfirmOpen] = useState(false)
+  const [statusConfirmSubmitting, setStatusConfirmSubmitting] = useState(false)
+  const [pendingStatusChange, setPendingStatusChange] = useState<PendingStatusChange | null>(null)
   const [actionForm, setActionForm] = useState({
     summary: '',
     messageSummary: '',
@@ -1309,7 +1327,7 @@ export default function InfluencersPage() {
     }
   }
 
-  const updateInfluencer = async (id: string, patch: Partial<Influencer>) => {
+  const updateInfluencer = async (id: string, patch: Partial<Influencer>, options?: { silent?: boolean }) => {
     // 保存原始状态用于回滚
     const originalItems = items
     const originalSelected = selected
@@ -1322,7 +1340,9 @@ export default function InfluencersPage() {
 
     try {
       await apiPatch(id, patch as any)
-      pushToast('success', '已保存')
+      if (!options?.silent) {
+        pushToast('success', '已保存')
+      }
     } catch (e) {
       console.error(e)
       // 回滚 UI 更新
@@ -1330,7 +1350,10 @@ export default function InfluencersPage() {
       setSelected(originalSelected)
       // 显示具体错误信息
       const errorMsg = (e as any)?.message || '保存失败'
-      pushToast('error', errorMsg)
+      if (!options?.silent) {
+        pushToast('error', errorMsg)
+      }
+      throw e
     }
   }
 
@@ -1505,6 +1528,92 @@ export default function InfluencersPage() {
     } catch (e) {
       console.error(e)
       pushToast('error', '状态保存失败，请重试')
+    }
+  }
+
+  const closeStatusSelectionModal = () => {
+    setStatusModalOpen(false)
+    setStatusModalTargetId('')
+    setStatusModalMode('single')
+  }
+
+  const closeStatusConfirmModal = () => {
+    if (statusConfirmSubmitting) return
+    setStatusConfirmOpen(false)
+    setPendingStatusChange(null)
+  }
+
+  const handleStatusOptionSelect = (nextStatus: InfluencerStatus) => {
+    if (statusModalMode === 'batch') {
+      setPendingStatusChange({
+        mode: 'batch',
+        influencerIds: [...selectedIds],
+        count: selectedIds.length,
+        nextStatus,
+      })
+      setStatusModalOpen(false)
+      setStatusConfirmOpen(true)
+      return
+    }
+
+    const target = (itemsRef.current || []).find((item) => item.id === statusModalTargetId)
+    if (!target) {
+      closeStatusSelectionModal()
+      pushToast('error', '未找到要更新的达人')
+      return
+    }
+
+    setPendingStatusChange({
+      mode: 'single',
+      influencerId: target.id,
+      influencerName: target.nickname,
+      currentStatus: target.status,
+      nextStatus,
+    })
+    setStatusModalOpen(false)
+    setStatusConfirmOpen(true)
+  }
+
+  const confirmStatusChange = async () => {
+    if (!pendingStatusChange) return
+
+    setStatusConfirmSubmitting(true)
+    try {
+      if (pendingStatusChange.mode === 'single') {
+        await updateInfluencer(
+          pendingStatusChange.influencerId,
+          {
+            status: pendingStatusChange.nextStatus,
+            nextAction: getNextActionForStatus(pendingStatusChange.nextStatus),
+          },
+          { silent: true },
+        )
+        pushToast('success', '状态已更新')
+      } else {
+        await Promise.all(
+          pendingStatusChange.influencerIds.map((id) =>
+            updateInfluencer(
+              id,
+              {
+                status: pendingStatusChange.nextStatus,
+                nextAction: getNextActionForStatus(pendingStatusChange.nextStatus),
+              },
+              { silent: true },
+            ),
+          ),
+        )
+        pushToast('success', `已批量更新 ${pendingStatusChange.count} 位达人状态`)
+        setSelectedIds([])
+      }
+
+      setStatusConfirmOpen(false)
+      setPendingStatusChange(null)
+      closeStatusSelectionModal()
+    } catch (e) {
+      console.error(e)
+      pushToast('error', '状态更新失败，请重试')
+    } finally {
+      setStatusConfirmSubmitting(false)
     }
   }
 
@@ -2671,6 +2780,7 @@ export default function InfluencersPage() {
                                 e.stopPropagation()
                                 setRowMenuOpenId('')
                                 if (!canManage) return
+                                setStatusModalMode('single')
                                 setStatusModalTargetId(x.id)
                                 setStatusModalOpen(true)
                               }}
@@ -2766,20 +2876,10 @@ export default function InfluencersPage() {
               <button
                 onClick={() => {
                   if (!canManage) return
-                  const next = window.prompt(
-                    `批量更改状态：\n${Object.entries(statusLabel)
-                      .map(([k, v]) => `${k} = ${v}`)
-                      .join('\n')}`,
-                    'to_outreach',
-                  )
-                  if (!next) return
-                  if (!(next in statusLabel)) return
-                  void Promise.all(
-                    selectedIds.map(id => updateInfluencer(id, { status: next as any, nextAction: getNextActionForStatus(next as any) }))
-                  ).then(() => {
-                    pushToast('success', `已批量更新 ${selectedIds.length} 位达人状态`)
-                    setSelectedIds([])
-                  })
+                  if (selectedIds.length === 0) return
+                  setStatusModalMode('batch')
+                  setStatusModalTargetId('')
+                  setStatusModalOpen(true)
                 }}
                 className="px-2 py-1 text-[10px] rounded border border-primary-200 bg-white text-primary-700 hover:bg-primary-50"
               >
@@ -3180,18 +3280,13 @@ export default function InfluencersPage() {
       {/* 状态选择弹窗 */}
       <Modal
         open={statusModalOpen}
-        title="选择达人状态"
-        onClose={() => {
-          setStatusModalOpen(false)
-          setStatusModalTargetId('')
-        }}
+        title={statusModalMode === 'batch' ? '选择批量更新状态' : '选择达人状态'}
+        subtitle={statusModalMode === 'batch' ? `当前已选择 ${selectedIds.length} 位达人，选择目标状态后还需二次确认` : '选择目标状态后还需二次确认'}
+        onClose={closeStatusSelectionModal}
         footer={
           <div className="flex items-center justify-end gap-2">
             <button
-              onClick={() => {
-                setStatusModalOpen(false)
-                setStatusModalTargetId('')
-              }}
+              onClick={closeStatusSelectionModal}
               className="px-3 py-2 text-xs bg-white border border-gray-200 text-gray-800 rounded-lg hover:bg-gray-50"
             >
               取消
@@ -3203,32 +3298,83 @@ export default function InfluencersPage() {
           {Object.entries(statusLabel).map(([statusKey, statusValue]) => (
             <button
               key={statusKey}
-              onClick={async () => {
-                setStatusModalUpdating(true)
-                try {
-                  await updateInfluencer(statusModalTargetId, {
-                    status: statusKey as InfluencerStatus,
-                    nextAction: getNextActionForStatus(statusKey as InfluencerStatus)
-                  })
-                  pushToast('success', '状态已更新')
-                  setStatusModalOpen(false)
-                  setStatusModalTargetId('')
-                } catch (e) {
-                  console.error(e)
-                  pushToast('error', '更新失败')
-                } finally {
-                  setStatusModalUpdating(false)
-                }
-              }}
-              disabled={statusModalUpdating}
-              className="px-3 py-2 text-xs rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => handleStatusOptionSelect(statusKey as InfluencerStatus)}
+              className="px-3 py-2 text-xs rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
             >
-              {statusModalUpdating ? '更新中...' : statusValue}
+              {statusValue}
             </button>
           ))}
         </div>
       </Modal>
+
+      <Modal
+        open={statusConfirmOpen}
+        title={pendingStatusChange?.mode === 'batch' ? '确认批量更改状态' : '确认更改达人状态'}
+        subtitle={pendingStatusChange?.mode === 'batch' ? '这是批量操作，确认后将统一更新所选达人的状态' : '确认后将更新该达人的状态'}
+        onClose={closeStatusConfirmModal}
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={closeStatusConfirmModal}
+              disabled={statusConfirmSubmitting}
+              className="px-3 py-2 text-xs bg-white border border-gray-200 text-gray-800 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              取消
+            </button>
+            <button
+              onClick={() => {
+                void confirmStatusChange()
+              }}
+              disabled={statusConfirmSubmitting || !pendingStatusChange}
+              className="px-3 py-2 text-xs bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {statusConfirmSubmitting ? '确认中...' : '确认更改'}
+            </button>
+          </div>
+        }
+      >
+        {pendingStatusChange && (
+          <div className="space-y-3 text-sm text-gray-700">
+            {pendingStatusChange.mode === 'single' ? (
+              <>
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+                  <div className="text-xs text-amber-700">确认后将更新该达人的状态</div>
+                </div>
+                <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-gray-500">达人昵称/账号</span>
+                    <span className="text-sm font-medium text-gray-900">{pendingStatusChange.influencerName}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-gray-500">当前状态</span>
+                    <span className="text-sm text-gray-900">{statusLabel[pendingStatusChange.currentStatus]}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-gray-500">目标状态</span>
+                    <span className="text-sm font-medium text-primary-700">{statusLabel[pendingStatusChange.nextStatus]}</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+                  <div className="text-xs text-amber-700">这是批量操作，确认后将统一更新所选达人的状态</div>
+                </div>
+                <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-gray-500">已选择达人数量</span>
+                    <span className="text-sm font-medium text-gray-900">{pendingStatusChange.count} 位</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-gray-500">目标状态</span>
+                    <span className="text-sm font-medium text-primary-700">{statusLabel[pendingStatusChange.nextStatus]}</span>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }
-
