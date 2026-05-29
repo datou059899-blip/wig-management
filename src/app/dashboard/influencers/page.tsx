@@ -1357,6 +1357,61 @@ export default function InfluencersPage() {
     }
   }
 
+  const updateInfluencersBatch = async (
+    ids: string[],
+    patch: Partial<Influencer>,
+    options?: { silent?: boolean },
+  ) => {
+    if (!ids.length) return
+
+    const idSet = new Set(ids)
+    const originalItems = items
+    const originalSelected = selected
+
+    setItems((prev) => {
+      if (!prev) return prev
+      return prev.map((x) => (idSet.has(x.id) ? { ...x, ...patch } : x))
+    })
+    setSelected((prev) => (prev && idSet.has(prev.id) ? { ...prev, ...patch } : prev))
+
+    const results = await Promise.allSettled(ids.map((id) => apiPatch(id, patch as any)))
+    const failedIds = results
+      .map((result, index) => ({ result, id: ids[index] }))
+      .filter((item) => item.result.status === 'rejected')
+      .map((item) => item.id)
+
+    if (failedIds.length > 0) {
+      setItems((prev) => {
+        if (!prev || !originalItems) return prev
+        const originalMap = new Map(originalItems.map((item) => [item.id, item]))
+        return prev.map((item) => (failedIds.includes(item.id) ? (originalMap.get(item.id) || item) : item))
+      })
+
+      if (originalSelected && failedIds.includes(originalSelected.id)) {
+        setSelected(originalSelected)
+      }
+
+      const firstFailed = results.find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined
+      const errorMsg = failedIds.length === ids.length
+        ? ((firstFailed?.reason as any)?.message || '批量更新失败')
+        : `部分更新失败：${failedIds.length}/${ids.length} 位达人未更新`
+
+      if (!options?.silent) {
+        pushToast('error', errorMsg)
+      }
+
+      if (failedIds.length === ids.length) {
+        throw firstFailed?.reason || new Error('批量更新失败')
+      }
+
+      return
+    }
+
+    if (!options?.silent) {
+      pushToast('success', '已保存')
+    }
+  }
+
   // 下一步动作与“记一条跟进”统一走 appendFollowUp，确保列表/最近跟进/抽屉时间线同步
   const addFollowUp = async (id: string, note: string, nextAction?: string) => {
     const entry: FollowUp = {
@@ -1590,17 +1645,13 @@ export default function InfluencersPage() {
         )
         pushToast('success', '状态已更新')
       } else {
-        await Promise.all(
-          pendingStatusChange.influencerIds.map((id) =>
-            updateInfluencer(
-              id,
-              {
-                status: pendingStatusChange.nextStatus,
-                nextAction: getNextActionForStatus(pendingStatusChange.nextStatus),
-              },
-              { silent: true },
-            ),
-          ),
+        await updateInfluencersBatch(
+          pendingStatusChange.influencerIds,
+          {
+            status: pendingStatusChange.nextStatus,
+            nextAction: getNextActionForStatus(pendingStatusChange.nextStatus),
+          },
+          { silent: true },
         )
         pushToast('success', `已批量更新 ${pendingStatusChange.count} 位达人状态`)
         setSelectedIds([])
