@@ -2592,9 +2592,25 @@ export default function InfluencersPage() {
               {effectiveLabel}达人（{filtered.length}）
             </span>
             {selectedIds.length > 0 && (
-              <span className="text-[11px] text-primary-600 bg-primary-50 px-2 py-0.5 rounded">
-                已选 {selectedIds.length} 位
-              </span>
+              <>
+                <span className="text-[11px] text-primary-600 bg-primary-50 px-2 py-0.5 rounded">
+                  已选 {selectedIds.length} 位
+                </span>
+                {canManage && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (selectedIds.length === 0) return
+                      setStatusModalMode('batch')
+                      setStatusModalTargetId('')
+                      setStatusModalOpen(true)
+                    }}
+                    className="px-2.5 py-1 text-[11px] rounded-lg border border-primary-200 bg-white text-primary-700 hover:bg-primary-50"
+                  >
+                    批量更改状态
+                  </button>
+                )}
+              </>
             )}
           </div>
           <div className="text-[11px] text-gray-500">建议从「待建联 / 已发送 / 合作中」开始推进</div>
