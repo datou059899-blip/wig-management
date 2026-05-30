@@ -2,6 +2,7 @@ export type ProductSkuResolverProduct = {
   id: string
   sku: string | null
   name?: string | null
+  skuId?: string | null
 }
 
 export type ProductSkuResolverAlias = {
@@ -12,6 +13,12 @@ export type ProductSkuResolverAlias = {
 export type ResolvedProductMatch<T extends ProductSkuResolverProduct> = {
   product: T
   primarySku: string | null
+  originalSku: string
+  resolvedSku: string
+  productId: string
+  matchedBy: 'alias' | 'product' | 'normalized' | 'raw'
+  aliasSku: string | null
+  productSku: string | null
 }
 
 function uniqueValues(values: Array<string | null | undefined>) {
@@ -91,6 +98,12 @@ function buildTypoVariants(value: string) {
   return Array.from(variants)
 }
 
+function resolveCanonicalProductSku(value: string | null | undefined) {
+  return normalizeSkuText(extractMainSkuFromText(value))
+    || normalizeSkuText(value)
+    || null
+}
+
 export function buildSkuMatchVariants(value: string | null | undefined) {
   const rawLiteral = normalizeCell(value)
   const raw = normalizeSkuText(value)
@@ -124,11 +137,13 @@ export function buildProductSkuResolver<T extends ProductSkuResolverProduct>(
   aliases: ProductSkuResolverAlias[],
 ) {
   const productById = new Map(products.map((product) => [product.id, product]))
+  const productBySkuId = new Map<string, T>()
+  const productByName = new Map<string, T>()
   const explicitAliasListByProductId = new Map<string, string[]>()
   const relatedSkuSetByProductId = new Map<string, Set<string>>()
   const primarySkuByProductId = new Map<string, string | null>()
-  const lookupByKey = new Map<string, ResolvedProductMatch<T>>()
-  const normalizedLookupByKey = new Map<string, ResolvedProductMatch<T>>()
+  const matchByNormalizedKey = new Map<string, Omit<ResolvedProductMatch<T>, 'originalSku'>>()
+  const matchPriorityByNormalizedKey = new Map<string, number>()
   const explicitAliasTargetProductIdByNormalizedKey = new Map<string, string>()
 
   const ensureRelatedSkuSet = (productId: string) => {
@@ -142,16 +157,38 @@ export function buildProductSkuResolver<T extends ProductSkuResolverProduct>(
     uniqueValues(buildSkuMatchVariants(sku)).forEach((item) => ensureRelatedSkuSet(productId).add(item))
   }
 
-  const registerLookup = (product: T, sku: string | null | undefined) => {
-    const primarySku = primarySkuByProductId.get(product.id) ?? null
+  const registerLookup = (
+    product: T,
+    sku: string | null | undefined,
+    options: {
+      matchedBy: 'alias' | 'product' | 'normalized'
+      aliasSku?: string | null
+      productSku?: string | null
+    },
+  ) => {
+    const priority = options.matchedBy === 'alias' ? 1 : options.matchedBy === 'product' ? 2 : 3
+    const primarySku = primarySkuByProductId.get(product.id)
+      || resolveCanonicalProductSku(product.sku)
+      || null
+    const resolvedSku = primarySku || normalizeSkuText(product.sku) || normalizeSkuText(sku) || ''
+
     buildSkuMatchVariants(sku).forEach((item) => {
-      if (!lookupByKey.has(item)) {
-        lookupByKey.set(item, { product, primarySku })
-      }
       const normalizedKey = normalizeSkuForCompare(item)
-      if (normalizedKey && !normalizedLookupByKey.has(normalizedKey)) {
-        normalizedLookupByKey.set(normalizedKey, { product, primarySku })
-      }
+      if (!normalizedKey) return
+
+      const existingPriority = matchPriorityByNormalizedKey.get(normalizedKey)
+      if (existingPriority !== undefined && existingPriority <= priority) return
+
+      matchByNormalizedKey.set(normalizedKey, {
+        product,
+        primarySku,
+        resolvedSku,
+        productId: product.id,
+        matchedBy: options.matchedBy,
+        aliasSku: normalizeSkuText(options.aliasSku) || null,
+        productSku: normalizeSkuText(options.productSku || product.sku) || null,
+      })
+      matchPriorityByNormalizedKey.set(normalizedKey, priority)
     })
   }
 
@@ -171,14 +208,17 @@ export function buildProductSkuResolver<T extends ProductSkuResolverProduct>(
   })
 
   products.forEach((product) => {
-    const extractedPrimarySku = normalizeSkuText(extractMainSkuFromText(product.sku))
-      || normalizeSkuText(product.sku)
-      || null
-    const explicitAliases = explicitAliasListByProductId.get(product.id) || []
-    const preferredPrimarySku = extractedPrimarySku
-      ? buildTypoVariants(extractedPrimarySku).find((variant) => explicitAliases.includes(variant)) || extractedPrimarySku
-      : null
-    const primarySku = preferredPrimarySku
+    const normalizedSkuId = normalizeCell(product.skuId)
+    if (normalizedSkuId && !productBySkuId.has(normalizedSkuId)) {
+      productBySkuId.set(normalizedSkuId, product)
+    }
+
+    const normalizedName = normalizeSkuText(product.name)
+    if (normalizedName && !productByName.has(normalizedName)) {
+      productByName.set(normalizedName, product)
+    }
+
+    const primarySku = resolveCanonicalProductSku(product.sku)
     primarySkuByProductId.set(product.id, primarySku)
 
     registerRelatedSku(product.id, product.sku)
@@ -186,45 +226,56 @@ export function buildProductSkuResolver<T extends ProductSkuResolverProduct>(
     extractAliasSkusFromText(product.sku).forEach((aliasSku) => registerRelatedSku(product.id, aliasSku))
     extractAliasSkusFromText(product.name).forEach((aliasSku) => registerRelatedSku(product.id, aliasSku))
 
-    registerLookup(product, product.sku)
-    registerLookup(product, primarySku)
-    extractAliasSkusFromText(product.sku).forEach((aliasSku) => registerLookup(product, aliasSku))
-    extractAliasSkusFromText(product.name).forEach((aliasSku) => registerLookup(product, aliasSku))
+    registerLookup(product, product.sku, {
+      matchedBy: 'product',
+      productSku: product.sku,
+    })
+
+    if (primarySku && normalizeSkuForCompare(primarySku) !== normalizeSkuForCompare(product.sku)) {
+      registerLookup(product, primarySku, {
+        matchedBy: 'normalized',
+        productSku: product.sku,
+      })
+    }
+
+    extractAliasSkusFromText(product.sku).forEach((aliasSku) => registerLookup(product, aliasSku, {
+      matchedBy: 'normalized',
+      productSku: product.sku,
+    }))
+    extractAliasSkusFromText(product.name).forEach((aliasSku) => registerLookup(product, aliasSku, {
+      matchedBy: 'normalized',
+      productSku: product.sku,
+    }))
   })
 
   aliases.forEach((alias) => {
     const product = productById.get(alias.productId)
     if (!product) return
     registerRelatedSku(product.id, alias.aliasSku)
-    registerLookup(product, alias.aliasSku)
+    registerLookup(product, alias.aliasSku, {
+      matchedBy: 'alias',
+      aliasSku: alias.aliasSku,
+      productSku: product.sku,
+    })
   })
 
   const resolveProductBySku = (sku: string | null | undefined): ResolvedProductMatch<T> | null => {
+    const originalSku = normalizeCell(sku)
     const raw = normalizeSkuText(sku)
     if (!raw) return null
 
-    const exactMatch = lookupByKey.get(raw)
-    if (exactMatch) return exactMatch
-
     const normalizedKey = normalizeSkuForCompare(raw)
-    if (normalizedKey && normalizedLookupByKey.has(normalizedKey)) {
-      return normalizedLookupByKey.get(normalizedKey) || null
-    }
+    const match = normalizedKey ? matchByNormalizedKey.get(normalizedKey) || null : null
+    if (!match) return null
 
-    for (const variant of buildSkuMatchVariants(raw)) {
-      if (lookupByKey.has(variant)) {
-        return lookupByKey.get(variant) || null
-      }
-      const variantNormalizedKey = normalizeSkuForCompare(variant)
-      if (variantNormalizedKey && normalizedLookupByKey.has(variantNormalizedKey)) {
-        return normalizedLookupByKey.get(variantNormalizedKey) || null
-      }
+    return {
+      ...match,
+      originalSku,
     }
-
-    return null
   }
 
   const resolveExplicitAliasTargetBySku = (sku: string | null | undefined): ResolvedProductMatch<T> | null => {
+    const originalSku = normalizeCell(sku)
     const normalizedSku = normalizeSkuForCompare(sku)
     if (!normalizedSku) return null
 
@@ -237,7 +288,75 @@ export function buildProductSkuResolver<T extends ProductSkuResolverProduct>(
     return {
       product,
       primarySku: primarySkuByProductId.get(targetProductId) || null,
+      originalSku,
+      resolvedSku: primarySkuByProductId.get(targetProductId)
+        || resolveCanonicalProductSku(product.sku)
+        || originalSku,
+      productId: targetProductId,
+      matchedBy: 'alias',
+      aliasSku: normalizeSkuText(sku) || null,
+      productSku: normalizeSkuText(product.sku) || null,
     }
+  }
+
+  const resolveProductReference = (params: {
+    originalSku?: string | null | undefined
+    skuCandidates?: Array<string | null | undefined>
+    skuIdCandidates?: Array<string | null | undefined>
+    nameCandidates?: Array<string | null | undefined>
+  }): ResolvedProductMatch<T> | null => {
+    const originalSku = normalizeCell(params.originalSku)
+
+    for (const candidate of params.skuCandidates || []) {
+      const match = resolveProductBySku(candidate)
+      if (match) {
+        return originalSku && match.originalSku !== originalSku
+          ? { ...match, originalSku }
+          : match
+      }
+    }
+
+    for (const candidate of params.skuIdCandidates || []) {
+      const normalizedSkuId = normalizeCell(candidate)
+      if (!normalizedSkuId) continue
+      const product = productBySkuId.get(normalizedSkuId)
+      if (!product) continue
+      const primarySku = primarySkuByProductId.get(product.id)
+        || resolveCanonicalProductSku(product.sku)
+        || originalSku
+      return {
+        product,
+        primarySku,
+        originalSku,
+        resolvedSku: primarySku,
+        productId: product.id,
+        matchedBy: 'product',
+        aliasSku: null,
+        productSku: normalizeSkuText(product.sku) || null,
+      }
+    }
+
+    for (const candidate of params.nameCandidates || []) {
+      const normalizedName = normalizeSkuText(candidate)
+      if (!normalizedName) continue
+      const product = productByName.get(normalizedName)
+      if (!product) continue
+      const primarySku = primarySkuByProductId.get(product.id)
+        || resolveCanonicalProductSku(product.sku)
+        || originalSku
+      return {
+        product,
+        primarySku,
+        originalSku,
+        resolvedSku: primarySku,
+        productId: product.id,
+        matchedBy: 'product',
+        aliasSku: null,
+        productSku: normalizeSkuText(product.sku) || null,
+      }
+    }
+
+    return null
   }
 
   const getFilterPrimarySkuForProduct = (product: T) => {
@@ -260,6 +379,7 @@ export function buildProductSkuResolver<T extends ProductSkuResolverProduct>(
     relatedSkuSetByProductId,
     resolveProductBySku,
     resolveExplicitAliasTargetBySku,
+    resolveProductReference,
     getPrimarySku: (productId: string) => primarySkuByProductId.get(productId) || null,
     getFilterPrimarySkuForProduct,
     getRelatedSkus: (productId: string) => Array.from(relatedSkuSetByProductId.get(productId) || []),

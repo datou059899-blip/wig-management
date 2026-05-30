@@ -271,6 +271,12 @@ export async function GET(request: NextRequest) {
 
     const skuResolver = buildProductSkuResolver(products, aliases)
     const { getFilterPrimarySkuForProduct, getPrimarySku, getRelatedSkus, resolveProductBySku } = skuResolver
+    const displayProducts = Array.from(new Map(
+      products.map((product) => {
+        const canonicalProduct = resolveProductBySku(product.sku)?.product || product
+        return [canonicalProduct.id, canonicalProduct] as const
+      }),
+    ).values())
 
     const skuOptionsSet = new Set<string>()
     const skuOptions: Array<{ sku: string; label: string }> = []
@@ -281,7 +287,7 @@ export async function GET(request: NextRequest) {
       skuOptions.push({ sku: value, label: value })
     }
 
-    products.forEach((product) => {
+    displayProducts.forEach((product) => {
       const mainSku = getFilterPrimarySkuForProduct(product) || normalizeCell(product.sku)
       if (!mainSku) return
       registerSkuOption(mainSku)
@@ -295,7 +301,7 @@ export async function GET(request: NextRequest) {
 
     const selectedSku = requestedSku
     const resolvedSelectedSku = selectedSku
-      ? (resolveProductBySku(selectedSku)?.primarySku || selectedSku)
+      ? (resolveProductBySku(selectedSku)?.resolvedSku || resolveProductBySku(selectedSku)?.primarySku || selectedSku)
       : ''
     const selectedGroup = !selectedSku
       ? groupOptions.find((group) => group.id === requestedGroupId) || null
@@ -407,7 +413,7 @@ export async function GET(request: NextRequest) {
         return [...matchedTargets, ...missingTargets]
       }
 
-      return products.map((product) => {
+      return displayProducts.map((product) => {
         const relatedSkus = getRelatedSkus(product.id)
         const snapshotCandidateSkus: string[] = []
         addUniqueSku(snapshotCandidateSkus, getPrimarySku(product.id) || product.sku)

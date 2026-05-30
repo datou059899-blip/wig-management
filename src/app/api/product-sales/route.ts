@@ -269,6 +269,12 @@ export async function GET(request: NextRequest) {
       getRelatedSkus,
       resolveProductBySku,
     } = skuResolver
+    const displayProducts = Array.from(new Map(
+      products.map((product) => {
+        const canonicalProduct = resolveProductBySku(product.sku)?.product || product
+        return [canonicalProduct.id, canonicalProduct] as const
+      }),
+    ).values())
 
     const productSkus = Array.from(new Set(
       Array.from(relatedSkuSetByProductId.values()).flatMap((skuSet) => Array.from(skuSet.values())),
@@ -520,7 +526,7 @@ export async function GET(request: NextRequest) {
       rankDailySalesByProductId.set(productId, productDailySales)
     })
 
-    const tableData = products.map((product) => {
+    const tableData = displayProducts.map((product) => {
       const sales = salesByProductId.get(product.id) || {
         today: 0,
         yesterday: 0,
@@ -707,7 +713,7 @@ export async function GET(request: NextRequest) {
 
       return {
         id: product.id,
-        sku: getPrimarySku(product.id) || product.sku || '-',
+        sku: getFilterPrimarySkuForProduct(product) || getPrimarySku(product.id) || product.sku || '-',
         name: product.name,
         color: product.color || '-',
         length: product.length || '-',
@@ -750,7 +756,7 @@ export async function GET(request: NextRequest) {
       skuOptions.push({ sku: value, label: value })
     }
 
-    products.forEach((product) => {
+    displayProducts.forEach((product) => {
       const mainSku = getFilterPrimarySkuForProduct(product) || normalizeCell(product.sku)
       if (!mainSku) return
       registerSkuOption(mainSku)

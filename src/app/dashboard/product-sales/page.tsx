@@ -3216,6 +3216,7 @@ export default function ProductSalesPage() {
                     <div className="mb-3">
                       <div className="text-sm font-medium text-slate-900">每日销量曲线</div>
                       <div className="text-xs text-slate-500">{trendTitle}</div>
+                      <div className="mt-1 text-xs text-slate-500">销量展示的是订单销售统计；库存实际扣减请以下方预计库存曲线使用的库存消耗量为准。</div>
                     </div>
                     <div className="h-64">
                       {trendLoading ? (

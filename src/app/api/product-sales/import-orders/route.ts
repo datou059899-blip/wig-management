@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client'
 import * as XLSX from 'xlsx'
 import { authOptions } from '@/lib/auth'
 import { buildImportRowRecords, parseImportFile } from '@/lib/import-file-parser'
+import { buildProductSkuResolver } from '@/lib/product-sku-resolver'
 import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
@@ -141,24 +142,6 @@ function normalizeSkuForCompare(value: string) {
 
 function isSpecialLinkSku(value: string | null | undefined) {
   return normalizeSkuForCompare(normalizeCell(value)) === 'FG+GQ'
-}
-
-function extractAliasSkusFromText(value: string | null | undefined) {
-  const aliases = new Set<string>()
-  const text = normalizeCell(value)
-  if (!text) return []
-
-  const pattern = /[（(]\s*([^()（）]+?)\s*[)）]/g
-  let match = pattern.exec(text)
-  while (match) {
-    const alias = normalizeCell(match[1])
-    if (alias) {
-      aliases.add(alias)
-    }
-    match = pattern.exec(text)
-  }
-
-  return Array.from(aliases)
 }
 
 function parseNumber(value: unknown): number {
@@ -1240,61 +1223,26 @@ export async function POST(request: NextRequest) {
       }),
     ])
 
-    const matchedSkuNameMap = new Map<string, string>()
-    const matchedSkuPriorityMap = new Map<string, number>()
-    const normalizedRequestedSkuMap = new Map(uniqueSkus.map((sku) => [normalizeSkuForCompare(sku), sku]))
+    const skuResolver = buildProductSkuResolver(
+      products.map((product) => ({
+        id: product.id,
+        sku: product.sku,
+        name: product.name,
+      })),
+      aliases.map((alias) => ({
+        productId: alias.productId,
+        aliasSku: alias.aliasSku,
+      })),
+    )
 
-    const registerMatchedSku = (requestedSku: string | undefined, productName: string, priority: number) => {
-      if (!requestedSku) return
-
-      const existingPriority = matchedSkuPriorityMap.get(requestedSku)
-      if (existingPriority !== undefined && existingPriority <= priority) {
-        return
-      }
-
-      matchedSkuPriorityMap.set(requestedSku, priority)
-      matchedSkuNameMap.set(requestedSku, productName)
-    }
-
-    products.forEach((product) => {
-      if (!product.sku) return
-
-      registerMatchedSku(
-        normalizedRequestedSkuMap.get(normalizeSkuForCompare(product.sku)),
-        product.name,
-        1,
-      )
-    })
-
-    aliases.forEach((alias) => {
-      registerMatchedSku(
-        normalizedRequestedSkuMap.get(normalizeSkuForCompare(alias.aliasSku)),
-        alias.product.name,
-        2,
-      )
-    })
-
-    products.forEach((product) => {
-      extractAliasSkusFromText(product.sku).forEach((aliasSku) => {
-        registerMatchedSku(
-          normalizedRequestedSkuMap.get(normalizeSkuForCompare(aliasSku)),
-          product.name,
-          3,
-        )
-      })
-    })
-
-    products.forEach((product) => {
-      extractAliasSkusFromText(product.name).forEach((aliasSku) => {
-        registerMatchedSku(
-          normalizedRequestedSkuMap.get(normalizeSkuForCompare(aliasSku)),
-          product.name,
-          4,
-        )
-      })
-    })
-
-    const matchedSkuSet = new Set(matchedSkuPriorityMap.keys())
+    const matchedSkuMap = new Map(uniqueSkus.map((sku) => [sku, skuResolver.resolveProductBySku(sku)]).filter((entry) => Boolean(entry[1])) as Array<[string, NonNullable<ReturnType<typeof skuResolver.resolveProductBySku>>]>)
+    const matchedSkuNameMap = new Map(
+      Array.from(matchedSkuMap.entries()).map(([sku, match]) => [
+        sku,
+        match.product.name || match.resolvedSku || match.productSku || sku,
+      ]),
+    )
+    const matchedSkuSet = new Set(matchedSkuMap.keys())
 
     const missingSkus = uniqueSkus.filter((sku) => !matchedSkuSet.has(sku))
     const missingSkuRows = dedupedItems.filter((item) => !matchedSkuSet.has(item.sellerSku)).length

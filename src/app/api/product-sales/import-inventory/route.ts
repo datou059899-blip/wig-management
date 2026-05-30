@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { buildProductSkuResolver } from '@/lib/product-sku-resolver'
 import { buildImportRowRecords, parseImportFile } from '@/lib/import-file-parser'
 import { prisma } from '@/lib/prisma'
 
@@ -256,14 +257,24 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    const products = await prisma.product.findMany({
-      select: {
-        id: true,
-        sku: true,
-        name: true,
-        skuId: true,
-      },
-    })
+    const [products, aliases] = await Promise.all([
+      prisma.product.findMany({
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          skuId: true,
+        },
+      }),
+      prisma.productSkuAlias.findMany({
+        select: {
+          productId: true,
+          aliasSku: true,
+        },
+      }),
+    ])
+
+    const skuResolver = buildProductSkuResolver(products, aliases)
 
     const productBySkuMap = new Map<string, ProductLookup>()
     const productByNameMap = new Map<string, ProductLookup>()
@@ -291,10 +302,18 @@ export async function POST(request: NextRequest) {
 
     for (const item of candidates) {
       try {
-        let product = productBySkuMap.get(item.sku) || null
+        let resolvedSkuMatch = skuResolver.resolveProductBySku(item.sku)
+          || skuResolver.resolveProductBySku(item.platformSku)
+          || null
+
+        let product = resolvedSkuMatch?.product || null
         let importMode: 'existing' | 'filled' | 'created' = 'existing'
         let shouldReview = false
         let reviewReason = ''
+
+        if (!product) {
+          product = productBySkuMap.get(item.sku) || null
+        }
 
         if (!product && item.platformSku) {
           product = productBySkuMap.get(item.platformSku) || null
@@ -417,7 +436,10 @@ export async function POST(request: NextRequest) {
           )
         }
 
-        const snapshotSku = product.sku || item.sku
+        const snapshotSku = resolvedSkuMatch?.resolvedSku
+          || skuResolver.getPrimarySku(product.id)
+          || product.sku
+          || item.sku
 
         await prisma.$transaction([
           prisma.productInventorySnapshot.upsert({
