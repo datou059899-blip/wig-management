@@ -1,7 +1,7 @@
 'use client'
 
 import { signIn } from 'next-auth/react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
@@ -108,8 +108,21 @@ export default function LoginPage() {
   const router = useRouter()
   const [loginInput, setLoginInput] = useState('')
   const [password, setPassword] = useState('')
+  const [rememberEmail, setRememberEmail] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    try {
+      const rememberedEmail = window.localStorage.getItem('rememberedEmail')
+      if (rememberedEmail) {
+        setLoginInput(rememberedEmail)
+        setRememberEmail(true)
+      }
+    } catch (err) {
+      console.error('Failed to load remembered email:', err)
+    }
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -128,6 +141,15 @@ export default function LoginPage() {
       if (result?.error) {
         setError(AUTH_ERROR_MESSAGES[result.error] || `登录失败: ${result.error}`)
       } else if (result?.ok) {
+        try {
+          if (rememberEmail) {
+            window.localStorage.setItem('rememberedEmail', loginInput.trim())
+          } else {
+            window.localStorage.removeItem('rememberedEmail')
+          }
+        } catch (err) {
+          console.error('Failed to persist remembered email:', err)
+        }
         router.push('/dashboard')
       } else {
         setError('登录失败，请重试')
@@ -279,7 +301,12 @@ export default function LoginPage() {
 
               <div className="flex items-center justify-between text-xs">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-pink-500 focus:ring-pink-500" />
+                  <input
+                    type="checkbox"
+                    checked={rememberEmail}
+                    onChange={(e) => setRememberEmail(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-pink-500 focus:ring-pink-500"
+                  />
                   <span className="text-slate-600">记住我</span>
                 </label>
                 <span className="text-slate-500">忘记密码？请联系管理员</span>
@@ -306,22 +333,24 @@ export default function LoginPage() {
           </div>
           
           {/* 演示信息 */}
-          <div className="mt-4 p-4 rounded-xl bg-gradient-to-r from-pink-50 to-blue-50 border border-pink-100">
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-pink-400 to-blue-400 flex items-center justify-center flex-shrink-0">
-                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-medium text-slate-900">演示环境</div>
-                <div className="text-xs text-slate-500 mt-0.5">
-                  邮箱：admin@test.com<br />
-                  密码：password
+          {process.env.NODE_ENV !== 'production' && (
+            <div className="mt-4 p-4 rounded-xl bg-gradient-to-r from-pink-50 to-blue-50 border border-pink-100">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-pink-400 to-blue-400 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-slate-900">演示环境</div>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    邮箱：admin@test.com<br />
+                    密码：password
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
