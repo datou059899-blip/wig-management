@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import {
@@ -1001,6 +1001,61 @@ export default function ProductSalesPage() {
     || Boolean(stockEditTarget)
     || groupManagerOpen
   )
+  const activeUiStates = useMemo(
+    () =>
+      [
+        ['loading', loading],
+        ['importingInventory', importingInventory],
+        ['importingOrders', importingOrders],
+        ['savingBaseline', savingBaseline],
+        ['savingAdjustment', savingAdjustment],
+        ['savingRankSettings', savingRankSettings],
+        ['checkingSkuImport', checkingSkuImport],
+        ['importingSkus', importingSkus],
+        ['anyModalOpen', anyModalOpen],
+      ].filter(([, active]) => active),
+    [
+      anyModalOpen,
+      checkingSkuImport,
+      importingInventory,
+      importingOrders,
+      importingSkus,
+      loading,
+      savingAdjustment,
+      savingBaseline,
+      savingRankSettings,
+    ],
+  )
+
+  const closeStockBaselineModal = useCallback(() => {
+    if (savingBaseline) return
+    setStockBaselineOpen(false)
+    setBaselineError(null)
+  }, [savingBaseline])
+
+  const closeStockAdjustmentModal = useCallback(() => {
+    if (savingAdjustment) return
+    setStockAdjustmentOpen(false)
+    setAdjustmentError(null)
+  }, [savingAdjustment])
+
+  const closeRankSettingsModal = useCallback(() => {
+    if (savingRankSettings) return
+    setRankSettingsOpen(false)
+    setRankSettingsError(null)
+  }, [savingRankSettings])
+
+  const closeStockEditModal = useCallback(() => {
+    if (editingStockSku) return
+    setStockEditTarget(null)
+    setStockEditError(null)
+  }, [editingStockSku])
+
+  const closeGroupManagerModal = useCallback(() => {
+    if (savingGroup) return
+    setGroupManagerOpen(false)
+    resetGroupForm()
+  }, [savingGroup])
 
   const buildRangeParams = (range: TrendRange, startDate = trendStartDate, endDate = trendEndDate) => {
     const params = new URLSearchParams()
@@ -1317,6 +1372,53 @@ export default function ProductSalesPage() {
       document.body.style.overflow = originalOverflow
     }
   }, [anyModalOpen])
+
+  useEffect(() => {
+    if (!anyModalOpen) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+
+      if (groupManagerOpen) {
+        closeGroupManagerModal()
+        return
+      }
+
+      if (stockEditTarget) {
+        closeStockEditModal()
+        return
+      }
+
+      if (rankSettingsOpen) {
+        closeRankSettingsModal()
+        return
+      }
+
+      if (stockAdjustmentOpen) {
+        closeStockAdjustmentModal()
+        return
+      }
+
+      if (stockBaselineOpen) {
+        closeStockBaselineModal()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [
+    anyModalOpen,
+    closeGroupManagerModal,
+    closeRankSettingsModal,
+    closeStockAdjustmentModal,
+    closeStockBaselineModal,
+    closeStockEditModal,
+    groupManagerOpen,
+    rankSettingsOpen,
+    stockAdjustmentOpen,
+    stockBaselineOpen,
+    stockEditTarget,
+  ])
 
   const refreshAfterMutation = async () => {
     await Promise.all([
@@ -2499,6 +2601,13 @@ export default function ProductSalesPage() {
                   {importingOrders ? '检测中...' : '检测订单 SKU 匹配'}
                 </button>
               </div>
+              {activeUiStates.length > 0 && (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  页面状态：
+                  {' '}
+                  {activeUiStates.map(([label]) => label).join(' / ')}
+                </div>
+              )}
               <div className="mt-3 text-xs text-slate-500">
                 导入订单表、库存表、SKU 补齐均支持 CSV / XLSX / XLS。
               </div>
@@ -3526,19 +3635,21 @@ export default function ProductSalesPage() {
               </div>
 
               {stockBaselineOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-6xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+                  onClick={closeStockBaselineModal}
+                >
+                  <div
+                    className="w-full max-w-6xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl"
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">设置初始库存</h3>
                         <p className="mt-1 text-sm text-slate-600">手动设置某个 SKU 的理论库存起点，趋势图会优先按这个基准减去库存消耗量。</p>
                       </div>
                       <button
-                        onClick={() => {
-                          if (savingBaseline) return
-                          setStockBaselineOpen(false)
-                          setBaselineError(null)
-                        }}
+                        onClick={closeStockBaselineModal}
                         className="text-sm text-slate-500 hover:text-slate-700"
                         disabled={savingBaseline}
                       >
@@ -3843,19 +3954,21 @@ export default function ProductSalesPage() {
               )}
 
               {stockAdjustmentOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-6xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+                  onClick={closeStockAdjustmentModal}
+                >
+                  <div
+                    className="w-full max-w-6xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl"
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">补货/调整库存</h3>
                         <p className="mt-1 text-sm text-slate-600">补货和调整只参与预计库存计算，不会直接修改 Product.stock。</p>
                       </div>
                       <button
-                        onClick={() => {
-                          if (savingAdjustment) return
-                          setStockAdjustmentOpen(false)
-                          setAdjustmentError(null)
-                        }}
+                        onClick={closeStockAdjustmentModal}
                         className="text-sm text-slate-500 hover:text-slate-700"
                         disabled={savingAdjustment}
                       >
@@ -4193,19 +4306,21 @@ export default function ProductSalesPage() {
               )}
 
               {rankSettingsOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-2xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+                  onClick={closeRankSettingsModal}
+                >
+                  <div
+                    className="w-full max-w-2xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl"
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">等级设置</h3>
                         <p className="mt-1 text-sm text-slate-600">A/B 用近 7 天日均销量判断，C 用单日销量占库存或全店订单占比判断。</p>
                       </div>
                       <button
-                        onClick={() => {
-                          if (savingRankSettings) return
-                          setRankSettingsOpen(false)
-                          setRankSettingsError(null)
-                        }}
+                        onClick={closeRankSettingsModal}
                         className="text-sm text-slate-500 hover:text-slate-700"
                         disabled={savingRankSettings}
                       >
@@ -4303,11 +4418,7 @@ export default function ProductSalesPage() {
 
                     <div className="mt-5 flex justify-end gap-3">
                       <button
-                        onClick={() => {
-                          if (savingRankSettings) return
-                          setRankSettingsOpen(false)
-                          setRankSettingsError(null)
-                        }}
+                        onClick={closeRankSettingsModal}
                         className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                         disabled={savingRankSettings}
                       >
@@ -4326,8 +4437,14 @@ export default function ProductSalesPage() {
               )}
 
               {stockEditTarget && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-md max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+                  onClick={closeStockEditModal}
+                >
+                  <div
+                    className="w-full max-w-md max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl"
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">编辑库存</h3>
@@ -4335,11 +4452,7 @@ export default function ProductSalesPage() {
                         <p className="mt-1 text-sm text-slate-600">当前库存：{stockEditTarget.stock}</p>
                       </div>
                       <button
-                        onClick={() => {
-                          if (editingStockSku) return
-                          setStockEditTarget(null)
-                          setStockEditError(null)
-                        }}
+                        onClick={closeStockEditModal}
                         className="text-sm text-slate-500 hover:text-slate-700"
                         disabled={Boolean(editingStockSku)}
                       >
@@ -4405,11 +4518,7 @@ export default function ProductSalesPage() {
 
                       <div className="flex justify-end gap-3">
                         <button
-                          onClick={() => {
-                            if (editingStockSku) return
-                            setStockEditTarget(null)
-                            setStockEditError(null)
-                          }}
+                          onClick={closeStockEditModal}
                           className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                           disabled={Boolean(editingStockSku)}
                         >
@@ -4429,19 +4538,21 @@ export default function ProductSalesPage() {
               )}
 
               {groupManagerOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-                  <div className="w-full max-w-5xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl">
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+                  onClick={closeGroupManagerModal}
+                >
+                  <div
+                    className="w-full max-w-5xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl"
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-lg font-semibold text-slate-900">分组管理</h3>
                         <p className="mt-1 text-sm text-slate-600">自定义分组名称，并手动选择多个 SKU 归入分组。</p>
                       </div>
                       <button
-                        onClick={() => {
-                          if (savingGroup) return
-                          setGroupManagerOpen(false)
-                          resetGroupForm()
-                        }}
+                        onClick={closeGroupManagerModal}
                         className="text-sm text-slate-500 hover:text-slate-700"
                         disabled={savingGroup}
                       >

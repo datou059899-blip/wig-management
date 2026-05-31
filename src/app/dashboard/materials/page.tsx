@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 
 interface MaterialItem {
   id: string
@@ -146,6 +146,19 @@ export default function MaterialsPage() {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<MaterialImportResult | null>(null)
 
+  const closeFormModal = useCallback(() => {
+    if (savingForm) return
+    setFormOpen(false)
+    setFormError(null)
+  }, [savingForm])
+
+  const closeTransactionModal = useCallback(() => {
+    if (savingTransaction) return
+    setTransactionOpen(false)
+    setTransactionTarget(null)
+    setTransactionError(null)
+  }, [savingTransaction])
+
   const loadMaterials = async () => {
     const response = await fetch('/api/materials')
     const data = await response.json()
@@ -190,6 +203,26 @@ export default function MaterialsPage() {
 
     void initialize()
   }, [])
+
+  useEffect(() => {
+    if (!formOpen && !transactionOpen) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+
+      if (transactionOpen) {
+        closeTransactionModal()
+        return
+      }
+
+      if (formOpen) {
+        closeFormModal()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [closeFormModal, closeTransactionModal, formOpen, transactionOpen])
 
   const openCreateModal = () => {
     setFormMode('create')
@@ -715,8 +748,11 @@ export default function MaterialsPage() {
         </div>
 
         {formOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-            <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-xl">
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+            onClick={closeFormModal}
+          >
+            <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">{formMode === 'create' ? '新增耗材' : '编辑耗材'}</h3>
@@ -727,11 +763,7 @@ export default function MaterialsPage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => {
-                    if (savingForm) return
-                    setFormOpen(false)
-                    setFormError(null)
-                  }}
+                  onClick={closeFormModal}
                   className="text-sm text-slate-500 hover:text-slate-700"
                   disabled={savingForm}
                 >
@@ -827,7 +859,7 @@ export default function MaterialsPage() {
 
               <div className="mt-6 flex justify-end gap-3">
                 <button
-                  onClick={() => setFormOpen(false)}
+                  onClick={closeFormModal}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                   disabled={savingForm}
                 >
@@ -846,8 +878,11 @@ export default function MaterialsPage() {
         )}
 
         {transactionOpen && transactionTarget && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-            <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-xl">
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+            onClick={closeTransactionModal}
+          >
+            <div className="w-full max-w-2xl rounded-xl bg-white p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">{getTransactionLabel(transactionMode)}</h3>
@@ -856,11 +891,7 @@ export default function MaterialsPage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => {
-                    if (savingTransaction) return
-                    setTransactionOpen(false)
-                    setTransactionError(null)
-                  }}
+                  onClick={closeTransactionModal}
                   className="text-sm text-slate-500 hover:text-slate-700"
                   disabled={savingTransaction}
                 >
@@ -937,7 +968,7 @@ export default function MaterialsPage() {
 
               <div className="mt-6 flex justify-end gap-3">
                 <button
-                  onClick={() => setTransactionOpen(false)}
+                  onClick={closeTransactionModal}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                   disabled={savingTransaction}
                 >

@@ -321,6 +321,9 @@ export default function PerformancePage() {
   const maxGmv = Math.max(...trend.map((p) => p.gmv), 1)
   const maxAds = Math.max(...trend.map((p) => p.adsCost), 1)
   const maxOrders = Math.max(...trend.map((p) => p.orders), 1)
+  const importOrdersDisabledReason = importingOrders ? '订单导入中' : loading ? '数据加载中' : undefined
+  const importAdsDisabledReason = importingAds ? '广告数据导入中' : loading ? '数据加载中' : undefined
+  const refreshDisabledReason = loading ? '数据加载中' : undefined
 
   if (status === 'loading') {
     return (
@@ -341,6 +344,7 @@ export default function PerformancePage() {
               onClick={handleImportOrders}
               className="px-3 py-2 text-xs bg-white border border-gray-200 text-gray-800 rounded-lg hover:bg-gray-50 disabled:opacity-60"
               disabled={importingOrders || loading}
+              title={importOrdersDisabledReason}
             >
               {importingOrders ? '正在导入订单...' : '导入订单数据'}
             </button>
@@ -348,6 +352,7 @@ export default function PerformancePage() {
               onClick={handleImportAds}
               className="px-3 py-2 text-xs bg-white border border-gray-200 text-gray-800 rounded-lg hover:bg-gray-50 disabled:opacity-60"
               disabled={importingAds || loading}
+              title={importAdsDisabledReason}
             >
               {importingAds ? '正在导入广告...' : '导入广告数据'}
             </button>
@@ -355,6 +360,7 @@ export default function PerformancePage() {
               onClick={handleRefresh}
               className="px-3 py-2 text-xs bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-60"
               disabled={loading}
+              title={refreshDisabledReason}
             >
               {loading ? '刷新中...' : '刷新数据'}
             </button>
