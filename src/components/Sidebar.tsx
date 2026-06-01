@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { signOut, useSession } from 'next-auth/react'
-import { getAllowedMenuItems, PAGE_PERMISSIONS } from '@/lib/pagePermissions'
+import { getAllowedMenuItems } from '@/lib/pagePermissions'
 import { useState, useEffect, useMemo } from 'react'
 
 const ROLE_LABELS: Record<string, string> = {

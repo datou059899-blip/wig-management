@@ -1,3 +1,13 @@
+type PagePermissionDefinition = {
+  id: string
+  name: string
+  path: string
+  icon: string
+  category: string
+  adminDefault: boolean
+  sidebarVisible: boolean
+}
+
 // 页面权限配置
 export const PAGE_PERMISSIONS = {
   // 核心工作台
@@ -7,6 +17,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/workbench',
     icon: 'LayoutDashboard',
     category: '工作台',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   overview: {
     id: 'overview',
@@ -14,6 +26,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/overview',
     icon: 'BarChart3',
     category: '数据',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   
   // 产品相关
@@ -23,6 +37,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/products',
     icon: 'Package',
     category: '产品',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   productOpportunities: {
     id: 'productOpportunities',
@@ -30,6 +46,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/products/opportunities',
     icon: 'Lightbulb',
     category: '产品',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   productSales: {
     id: 'productSales',
@@ -37,6 +55,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/product-sales',
     icon: 'Package',
     category: '产品',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   materials: {
     id: 'materials',
@@ -44,6 +64,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/materials',
     icon: 'Boxes',
     category: '产品',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   
   // 达人相关
@@ -53,6 +75,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/influencers',
     icon: 'Users',
     category: '达人',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   
   // 脚本相关
@@ -62,6 +86,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/scripts',
     icon: 'FileText',
     category: '内容',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   
   // 视频相关
@@ -71,6 +97,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/viral-videos',
     icon: 'Video',
     category: '内容',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   videoMetrics: {
     id: 'videoMetrics',
@@ -78,6 +106,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/video-metrics',
     icon: 'LineChart',
     category: '数据',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   
   // 数据相关
@@ -87,6 +117,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/performance',
     icon: 'TrendingUp',
     category: '数据',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   
   // 同步相关
@@ -96,6 +128,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/tiktok-sync',
     icon: 'RefreshCw',
     category: '工具',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   priceCheck: {
     id: 'priceCheck',
@@ -103,6 +137,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/price-check',
     icon: 'DollarSign',
     category: '工具',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   
   // 系统管理
@@ -112,6 +148,8 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/users',
     icon: 'UserCog',
     category: '系统',
+    adminDefault: true,
+    sidebarVisible: true,
   },
   settings: {
     id: 'settings',
@@ -119,14 +157,39 @@ export const PAGE_PERMISSIONS = {
     path: '/dashboard/settings',
     icon: 'Settings',
     category: '系统',
+    adminDefault: true,
+    sidebarVisible: true,
   },
-} as const;
+} as const satisfies Record<string, PagePermissionDefinition>;
 
 export type PagePermissionKey = keyof typeof PAGE_PERMISSIONS;
+export type PagePermissionItem = (typeof PAGE_PERMISSIONS)[PagePermissionKey];
+
+export const PAGE_PERMISSION_OPTIONS = Object.values(PAGE_PERMISSIONS);
+
+export const PAGE_PERMISSION_GROUPS = PAGE_PERMISSION_OPTIONS.reduce<Record<string, PagePermissionItem[]>>(
+  (groups, page) => {
+    if (!groups[page.category]) {
+      groups[page.category] = [];
+    }
+    groups[page.category].push(page);
+    return groups;
+  },
+  {}
+);
+
+export const PATH_TO_PAGE_ID: Record<string, PagePermissionKey> = {
+  ...Object.fromEntries(
+    PAGE_PERMISSION_OPTIONS.map((page) => [page.path, page.id as PagePermissionKey])
+  ),
+  '/dashboard/account': 'workbench',
+};
 
 // 角色默认权限映射
 export const ROLE_DEFAULT_PAGES: Record<string, PagePermissionKey[]> = {
-  admin: Object.keys(PAGE_PERMISSIONS) as PagePermissionKey[],
+  admin: PAGE_PERMISSION_OPTIONS
+    .filter((page) => page.adminDefault)
+    .map((page) => page.id as PagePermissionKey),
   boss: ['overview', 'performance', 'productSales', 'materials', 'products', 'influencers', 'scripts', 'viralVideos', 'videoMetrics'],
   product: ['workbench', 'products', 'productOpportunities', 'productSales', 'materials', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance'],
   operator: ['workbench', 'products', 'productOpportunities', 'productSales', 'materials', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance', 'tiktokSync', 'priceCheck'],
@@ -186,7 +249,7 @@ export function getAllowedMenuItems(
   
   return allowed
     .map(pageId => PAGE_PERMISSIONS[pageId])
-    .filter(Boolean);
+    .filter((page): page is PagePermissionItem => Boolean(page && page.sidebarVisible));
 }
 
 // 按分类分组菜单
@@ -234,4 +297,19 @@ export function validateDefaultHomePage(
   
   // 保底返回工作台
   return '/dashboard/workbench';
+}
+
+export function findPageIdByPath(pathname: string): PagePermissionKey | undefined {
+  let pageId = PATH_TO_PAGE_ID[pathname];
+
+  if (!pageId) {
+    for (const [path, id] of Object.entries(PATH_TO_PAGE_ID)) {
+      if (pathname.startsWith(path)) {
+        pageId = id;
+        break;
+      }
+    }
+  }
+
+  return pageId as PagePermissionKey | undefined;
 }

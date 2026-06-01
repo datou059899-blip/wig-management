@@ -5,7 +5,12 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { canAccessUsers } from '@/lib/permissions'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { PAGE_PERMISSIONS, getUserAllowedPages, validateDefaultHomePage } from '@/lib/pagePermissions'
+import {
+  PAGE_PERMISSION_GROUPS,
+  PAGE_PERMISSIONS,
+  getUserAllowedPages,
+  validateDefaultHomePage,
+} from '@/lib/pagePermissions'
 
 type User = {
   id: string
@@ -33,17 +38,6 @@ const ROLES = [
 ]
 
 const DEPARTMENTS = ['产品部', '运营部', 'BD部', '剪辑部', '管理层']
-
-// 页面分组
-const PAGE_CATEGORIES = {
-  '工作台': ['workbench'],
-  '产品': ['products', 'productOpportunities'],
-  '达人': ['influencers'],
-  '内容': ['scripts', 'viralVideos'],
-  '数据': ['overview', 'videoMetrics', 'performance'],
-  '工具': ['tiktokSync', 'priceCheck'],
-  '系统': ['users', 'settings'],
-}
 
 // 密码输入框组件（带显示/隐藏切换）
 function PasswordInput({ 
@@ -370,6 +364,38 @@ export default function UsersPage() {
     return allowed.map(id => PAGE_PERMISSIONS[id as keyof typeof PAGE_PERMISSIONS]).filter(Boolean)
   }
 
+  const renderCustomPermissionOptions = () => (
+    <div className="border rounded-lg p-4 bg-gray-50">
+      <p className="text-sm text-gray-600 mb-3">勾选该员工可以访问的页面：</p>
+      {Object.entries(PAGE_PERMISSION_GROUPS).map(([category, pages]) => (
+        <div key={category} className="mb-4">
+          <h4 className="text-sm font-medium text-gray-700 mb-2">{category}</h4>
+          <div className="flex flex-wrap gap-2">
+            {pages.map((page) => {
+              const isChecked = editForm.allowedPages.includes(page.id)
+              return (
+                <label
+                  key={page.id}
+                  className={`flex items-center px-3 py-2 rounded border cursor-pointer transition-colors ${
+                    isChecked ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() => togglePage(page.id)}
+                    className="mr-2"
+                  />
+                  <span className="text-sm">{page.name}</span>
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+
   // 格式化用户显示名称
   const getUserDisplayName = (user: User) => {
     return user.name || user.email || user.phone || '未命名用户'
@@ -630,37 +656,7 @@ export default function UsersPage() {
                 </div>
 
                 {editForm.permissionMode === 'custom' && (
-                  <div className="border rounded-lg p-4 bg-gray-50">
-                    <p className="text-sm text-gray-600 mb-3">勾选该员工可以访问的页面：</p>
-                    {Object.entries(PAGE_CATEGORIES).map(([category, pageIds]) => (
-                      <div key={category} className="mb-4">
-                        <h4 className="text-sm font-medium text-gray-700 mb-2">{category}</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {pageIds.map(pageId => {
-                            const page = PAGE_PERMISSIONS[pageId as keyof typeof PAGE_PERMISSIONS]
-                            if (!page) return null
-                            const isChecked = editForm.allowedPages.includes(pageId)
-                            return (
-                              <label
-                                key={pageId}
-                                className={`flex items-center px-3 py-2 rounded border cursor-pointer transition-colors ${
-                                  isChecked ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => togglePage(pageId)}
-                                  className="mr-2"
-                                />
-                                <span className="text-sm">{page.name}</span>
-                              </label>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  renderCustomPermissionOptions()
                 )}
               </div>
             </div>
@@ -825,37 +821,7 @@ export default function UsersPage() {
                 </div>
 
                 {editForm.permissionMode === 'custom' && (
-                  <div className="border rounded-lg p-4 bg-gray-50">
-                    <p className="text-sm text-gray-600 mb-3">勾选该员工可以访问的页面：</p>
-                    {Object.entries(PAGE_CATEGORIES).map(([category, pageIds]) => (
-                      <div key={category} className="mb-4">
-                        <h4 className="text-sm font-medium text-gray-700 mb-2">{category}</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {pageIds.map(pageId => {
-                            const page = PAGE_PERMISSIONS[pageId as keyof typeof PAGE_PERMISSIONS]
-                            if (!page) return null
-                            const isChecked = editForm.allowedPages.includes(pageId)
-                            return (
-                              <label
-                                key={pageId}
-                                className={`flex items-center px-3 py-2 rounded border cursor-pointer transition-colors ${
-                                  isChecked ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => togglePage(pageId)}
-                                  className="mr-2"
-                                />
-                                <span className="text-sm">{page.name}</span>
-                              </label>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  renderCustomPermissionOptions()
                 )}
               </div>
             </div>
