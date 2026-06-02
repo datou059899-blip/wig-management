@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { canAccessPage, canManagePage, getSessionPermissionContext } from "@/lib/pagePermissions";
 import { prisma } from "@/lib/prisma";
 import {
   getDefaultVideoMetricCategories,
@@ -19,6 +20,11 @@ export async function GET() {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
       return NextResponse.json({ error: "未授权" }, { status: 401 });
+    }
+
+    const permissionContext = getSessionPermissionContext(session);
+    if (!canAccessPage(permissionContext, "videoMetrics")) {
+      return NextResponse.json({ error: "无权限访问视频数据分析" }, { status: 403 });
     }
 
     try {
@@ -52,6 +58,11 @@ export async function POST(request: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
       return NextResponse.json({ error: "未授权" }, { status: 401 });
+    }
+
+    const permissionContext = getSessionPermissionContext(session);
+    if (!canManagePage(permissionContext, "videoMetrics")) {
+      return NextResponse.json({ error: "无权限操作视频数据分析" }, { status: 403 });
     }
 
     const data = await request.json();

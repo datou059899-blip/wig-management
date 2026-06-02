@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client'
 import * as XLSX from 'xlsx'
 import { authOptions } from '@/lib/auth'
 import { buildImportRowRecords, parseImportFile } from '@/lib/import-file-parser'
+import { canManagePage, getSessionPermissionContext } from '@/lib/pagePermissions'
 import { buildProductSkuResolver } from '@/lib/product-sku-resolver'
 import { prisma } from '@/lib/prisma'
 
@@ -866,13 +867,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const user = session.user as any
-    const userRole = user?.role as string | undefined
-    if (!userRole || (userRole !== 'admin' && userRole !== 'operator' && userRole !== 'optimizer')) {
+    const permissionContext = getSessionPermissionContext(session)
+    if (!canManagePage(permissionContext, 'productSales')) {
       return NextResponse.json(
         {
-          error: '无权限导入订单数据',
-          detail: '当前账号没有导入订单表权限',
+          error: '无权限操作销售库存',
+          detail: '当前账号没有销售库存页面操作权限',
           stage,
         },
         { status: 403 },

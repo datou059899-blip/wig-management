@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { canManagePage, getSessionPermissionContext } from '@/lib/pagePermissions'
 import { prisma } from '@/lib/prisma'
 
 export async function POST(request: NextRequest) {
@@ -10,10 +11,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
     }
 
-    const user = session.user as any
-    const userRole = user?.role as string | undefined
-    if (!userRole || (userRole !== 'admin' && userRole !== 'operator' && userRole !== 'optimizer')) {
-      return NextResponse.json({ error: '无权限删除库存' }, { status: 403 })
+    const permissionContext = getSessionPermissionContext(session)
+    if (!canManagePage(permissionContext, 'productSales')) {
+      return NextResponse.json({ error: '无权限操作销售库存' }, { status: 403 })
     }
 
     const body = await request.json()

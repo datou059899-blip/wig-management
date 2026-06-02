@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { parseImportFile } from '@/lib/import-file-parser'
+import { canManagePage, getSessionPermissionContext } from '@/lib/pagePermissions'
 import { prisma } from '@/lib/prisma'
 
 type ImportStage = 'parse-file' | 'check-products' | 'write-products' | 'done'
@@ -347,10 +348,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
     }
 
-    const user = session.user as any
-    const userRole = user?.role as string | undefined
-    if (!userRole || (userRole !== 'admin' && userRole !== 'operator' && userRole !== 'optimizer')) {
-      return NextResponse.json({ error: '无权限导入产品 SKU' }, { status: 403 })
+    const permissionContext = getSessionPermissionContext(session)
+    if (!canManagePage(permissionContext, 'productSales')) {
+      return NextResponse.json({ error: '无权限操作销售库存' }, { status: 403 })
     }
 
     const dryRun = request.nextUrl.searchParams.get('dryRun') === '1'

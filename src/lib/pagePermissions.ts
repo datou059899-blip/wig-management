@@ -164,6 +164,11 @@ export const PAGE_PERMISSIONS = {
 
 export type PagePermissionKey = keyof typeof PAGE_PERMISSIONS;
 export type PagePermissionItem = (typeof PAGE_PERMISSIONS)[PagePermissionKey];
+export type SessionPermissionContext = {
+  role: string
+  permissionMode: string
+  allowedPages: string
+}
 
 export const PAGE_PERMISSION_OPTIONS = Object.values(PAGE_PERMISSIONS);
 
@@ -237,6 +242,45 @@ export function hasPagePermission(
 ): boolean {
   const allowed = getUserAllowedPages(userRole, permissionMode, allowedPages);
   return allowed.includes(pageId);
+}
+
+export function getSessionPermissionContext(
+  session: { user?: Record<string, unknown> | null } | null | undefined
+): SessionPermissionContext | null {
+  const user = session?.user as Record<string, unknown> | null | undefined
+  if (!user) return null
+
+  const rawRole = typeof user.role === 'string' ? user.role : ''
+  const role = mapOldRole(rawRole) || rawRole
+  const permissionMode = typeof user.permissionMode === 'string' && user.permissionMode
+    ? user.permissionMode
+    : 'role'
+  const allowedPages = typeof user.allowedPages === 'string' ? user.allowedPages : ''
+
+  if (!role) return null
+
+  return {
+    role,
+    permissionMode,
+    allowedPages,
+  }
+}
+
+export function canAccessPage(
+  ctx: SessionPermissionContext | null | undefined,
+  pageId: PagePermissionKey
+): boolean {
+  if (!ctx?.role) return false
+  if (ctx.role === 'admin') return true
+
+  return hasPagePermission(ctx.role, ctx.permissionMode || 'role', ctx.allowedPages || '', pageId)
+}
+
+export function canManagePage(
+  ctx: SessionPermissionContext | null | undefined,
+  pageId: PagePermissionKey
+): boolean {
+  return canAccessPage(ctx, pageId)
 }
 
 // 获取有权限的菜单项

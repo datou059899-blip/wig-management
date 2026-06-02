@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { canManagePage, getSessionPermissionContext } from '@/lib/pagePermissions'
 import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
@@ -72,10 +73,9 @@ async function requireOperator() {
     return { error: NextResponse.json({ error: '未登录' }, { status: 401 }) }
   }
 
-  const user = session.user as any
-  const userRole = user?.role as string | undefined
-  if (!userRole || (userRole !== 'admin' && userRole !== 'operator' && userRole !== 'optimizer')) {
-    return { error: NextResponse.json({ error: '无权限' }, { status: 403 }) }
+  const permissionContext = getSessionPermissionContext(session)
+  if (!canManagePage(permissionContext, 'materials')) {
+    return { error: NextResponse.json({ error: '无权限操作耗材管理' }, { status: 403 }) }
   }
 
   return { error: null }

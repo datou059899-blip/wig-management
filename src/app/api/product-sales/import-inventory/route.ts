@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildProductSkuResolver } from '@/lib/product-sku-resolver'
 import { buildImportRowRecords, parseImportFile } from '@/lib/import-file-parser'
+import { canManagePage, getSessionPermissionContext } from '@/lib/pagePermissions'
 import { prisma } from '@/lib/prisma'
 
 type InventoryFailure = {
@@ -105,10 +106,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
     }
 
-    const user = session.user as any
-    const userRole = user?.role as string | undefined
-    if (!userRole || (userRole !== 'admin' && userRole !== 'operator' && userRole !== 'optimizer')) {
-      return NextResponse.json({ error: '无权限导入库存数据' }, { status: 403 })
+    const permissionContext = getSessionPermissionContext(session)
+    if (!canManagePage(permissionContext, 'productSales')) {
+      return NextResponse.json({ error: '无权限操作销售库存' }, { status: 403 })
     }
 
     const formData = await request.formData()
