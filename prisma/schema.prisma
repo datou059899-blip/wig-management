@@ -621,6 +621,7 @@ model OwnVideoMetric {
   sourceUrl      String?
   videoDuration  Int      @default(0)
   contentType    String   @default("product_showcase")
+  videoCategory  String   @default("other")
   productSku     String?
   impressions    Int      @default(0)
   views          Int      @default(0)
@@ -651,5 +652,6 @@ model OwnVideoMetric {
   @@index([productSku])
   @@index([publishedAt])
   @@index([contentType])
+  @@index([videoCategory])
   @@index([createdById])
 }

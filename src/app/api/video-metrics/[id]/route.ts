@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { normalizeVideoMetricCategory } from "@/lib/videoMetricCategories";
 
 // GET - 获取单个视频数据
 export async function GET(
@@ -75,6 +76,7 @@ export async function PUT(
       sourceUrl: data.sourceUrl || null,
       videoDuration: parseInt(data.videoDuration) || 0,
       contentType: data.contentType,
+      videoCategory: normalizeVideoMetricCategory(data.videoCategory),
       productSku: data.productSku || null,
       impressions: parseInt(data.impressions) || 0,
       views: parseInt(data.views) || 0,

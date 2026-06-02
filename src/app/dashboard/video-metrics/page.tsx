@@ -3,6 +3,11 @@
 import { useState, useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
+import {
+  getVideoMetricCategoryLabel,
+  normalizeVideoMetricCategory,
+  VIDEO_METRIC_CATEGORY_OPTIONS,
+} from "@/lib/videoMetricCategories";
 
 interface VideoMetric {
   id: string;
@@ -11,6 +16,7 @@ interface VideoMetric {
   sourceUrl?: string;
   videoDuration: number;
   contentType: string;
+  videoCategory?: string;
   productSku?: string;
   impressions: number;
   views: number;
@@ -33,6 +39,49 @@ interface VideoMetric {
   publishedAt: string;
   notes: string;
   createdAt: string;
+}
+
+interface VideoMetricsSummary {
+  _sum?: {
+    views?: number | null;
+    likes?: number | null;
+    comments?: number | null;
+    shares?: number | null;
+    clicks?: number | null;
+    addToCarts?: number | null;
+    orders?: number | null;
+    revenue?: number | null;
+    adSpend?: number | null;
+  };
+  _avg?: {
+    completionRate?: number | null;
+    cpm?: number | null;
+    cpc?: number | null;
+  };
+}
+
+interface CategorySummaryRow {
+  videoCategory: string;
+  label: string;
+  videoCount: number;
+  totalViews: number;
+  avgViews: number;
+  avgEngagementRate: number;
+  avgClickRate: number;
+  totalOrders: number;
+  totalRevenue: number;
+  totalAdSpend: number;
+  roas: number;
+}
+
+interface CategoryTrendRow {
+  date: string;
+  videoCategory: string;
+  label: string;
+  views: number;
+  orders: number;
+  revenue: number;
+  adSpend: number;
 }
 
 // 自动计算指标
@@ -96,17 +145,23 @@ const getPerformanceTag = (video: VideoMetric) => {
 
 export default function VideoMetricsPage() {
   const [videos, setVideos] = useState<VideoMetric[]>([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<VideoMetricsSummary | null>(null);
+  const [categorySummary, setCategorySummary] = useState<CategorySummaryRow[]>([]);
+  const [categoryTrend, setCategoryTrend] = useState<CategoryTrendRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingVideo, setEditingVideo] = useState<VideoMetric | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [videoCategoryFilter, setVideoCategoryFilter] = useState("all");
   const [formData, setFormData] = useState({
     title: "",
     platform: "TikTok",
     sourceUrl: "",
     videoDuration: 0,
     contentType: "product_showcase",
+    videoCategory: "other",
     productSku: "",
     impressions: 0,
     views: 0,
@@ -132,13 +187,29 @@ export default function VideoMetricsPage() {
 
   useEffect(() => {
     fetchVideos();
-  }, []);
+  }, [videoCategoryFilter]);
 
   const fetchVideos = async () => {
     try {
-      const res = await fetch("/api/video-metrics");
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (videoCategoryFilter !== "all") {
+        params.set("videoCategory", videoCategoryFilter);
+      }
+      const query = params.toString();
+      const res = await fetch(`/api/video-metrics${query ? `?${query}` : ""}`);
       const data = await res.json();
-      setVideos(data.videos || []);
+      const normalizedVideos = Array.isArray(data.videos)
+        ? data.videos.map((video: VideoMetric) => ({
+            ...video,
+            videoCategory: normalizeVideoMetricCategory(video.videoCategory),
+          }))
+        : [];
+      setVideos(normalizedVideos);
+      setTotal(data.total || 0);
+      setSummary(data.summary || null);
+      setCategorySummary(Array.isArray(data.categorySummary) ? data.categorySummary : []);
+      setCategoryTrend(Array.isArray(data.categoryTrend) ? data.categoryTrend : []);
     } catch (error) {
       console.error("获取视频数据失败:", error);
     } finally {
@@ -162,6 +233,7 @@ export default function VideoMetricsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...formData,
+          videoCategory: normalizeVideoMetricCategory(formData.videoCategory),
           publishedAt: new Date(formData.publishedAt).toISOString(),
         }),
       });
@@ -203,6 +275,7 @@ export default function VideoMetricsPage() {
       sourceUrl: video.sourceUrl || "",
       videoDuration: video.videoDuration,
       contentType: video.contentType,
+      videoCategory: normalizeVideoMetricCategory(video.videoCategory),
       productSku: video.productSku || "",
       impressions: video.impressions,
       views: video.views,
@@ -236,6 +309,7 @@ export default function VideoMetricsPage() {
       sourceUrl: "",
       videoDuration: 0,
       contentType: "product_showcase",
+      videoCategory: "other",
       productSku: "",
       impressions: 0,
       views: 0,
@@ -271,14 +345,6 @@ export default function VideoMetricsPage() {
     return num.toFixed(1) + "%";
   };
 
-  // 计算汇总数据
-  const summary = videos.reduce((acc, video) => ({
-    totalVideos: acc.totalVideos + 1,
-    totalViews: acc.totalViews + (video.views || 0),
-    totalOrders: acc.totalOrders + (video.orders || 0),
-    totalRevenue: acc.totalRevenue + (video.revenue || 0),
-  }), { totalVideos: 0, totalViews: 0, totalOrders: 0, totalRevenue: 0 });
-
   return (
     <div className="p-6">
       <PageHeader
@@ -298,24 +364,117 @@ export default function VideoMetricsPage() {
         }
       />
 
+      <div className="mb-6 flex flex-wrap items-end gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">视频分类</label>
+          <select
+            value={videoCategoryFilter}
+            onChange={(e) => setVideoCategoryFilter(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg bg-white min-w-[180px]"
+          >
+            <option value="all">全部分类</option>
+            {VIDEO_METRIC_CATEGORY_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       {/* 统计卡片 */}
-      {!loading && videos.length > 0 && (
+      {!loading && total > 0 && (
         <div className="grid grid-cols-4 gap-4 mb-6">
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
             <div className="text-sm text-gray-500">总视频数</div>
-            <div className="text-2xl font-bold text-gray-900">{summary.totalVideos}</div>
+            <div className="text-2xl font-bold text-gray-900">{total}</div>
           </div>
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
             <div className="text-sm text-gray-500">总播放量</div>
-            <div className="text-2xl font-bold text-blue-600">{formatNumber(summary.totalViews)}</div>
+            <div className="text-2xl font-bold text-blue-600">{formatNumber(summary?._sum?.views || 0)}</div>
           </div>
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
             <div className="text-sm text-gray-500">总订单</div>
-            <div className="text-2xl font-bold text-green-600">{summary.totalOrders}</div>
+            <div className="text-2xl font-bold text-green-600">{summary?._sum?.orders || 0}</div>
           </div>
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
             <div className="text-sm text-gray-500">总营收</div>
-            <div className="text-2xl font-bold text-purple-600">${summary.totalRevenue.toFixed(2)}</div>
+            <div className="text-2xl font-bold text-purple-600">${(summary?._sum?.revenue || 0).toFixed(2)}</div>
+          </div>
+        </div>
+      )}
+
+      {!loading && categorySummary.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
+          <div className="px-4 py-3 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">分类汇总</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">视频分类</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">视频数量</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">总播放</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">平均播放</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">平均互动率</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">平均点击率</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">总订单</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">总营收</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">ROAS</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {categorySummary.map((row) => (
+                  <tr key={row.videoCategory} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 text-sm font-medium text-gray-900">{row.label}</td>
+                    <td className="px-4 py-3 text-right text-sm">{row.videoCount}</td>
+                    <td className="px-4 py-3 text-right text-sm">{formatNumber(row.totalViews)}</td>
+                    <td className="px-4 py-3 text-right text-sm">{formatNumber(Math.round(row.avgViews))}</td>
+                    <td className="px-4 py-3 text-right text-sm">{formatPercent(row.avgEngagementRate)}</td>
+                    <td className="px-4 py-3 text-right text-sm">{formatPercent(row.avgClickRate)}</td>
+                    <td className="px-4 py-3 text-right text-sm">{row.totalOrders}</td>
+                    <td className="px-4 py-3 text-right text-sm">${row.totalRevenue.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right text-sm">{row.roas > 0 ? row.roas.toFixed(2) : "0.00"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {!loading && categoryTrend.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
+          <div className="px-4 py-3 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">分类趋势</h2>
+            <p className="text-sm text-gray-500 mt-1">当前先以表格展示分类播放、订单、营收和广告花费趋势。</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">日期</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">视频分类</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">播放趋势</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">订单趋势</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">营收趋势</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">广告花费</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {categoryTrend.map((row) => (
+                  <tr key={`${row.date}-${row.videoCategory}`} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 text-sm text-gray-600">{row.date}</td>
+                    <td className="px-4 py-3 text-sm font-medium text-gray-900">{row.label}</td>
+                    <td className="px-4 py-3 text-right text-sm">{formatNumber(row.views)}</td>
+                    <td className="px-4 py-3 text-right text-sm">{row.orders}</td>
+                    <td className="px-4 py-3 text-right text-sm">${row.revenue.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right text-sm">${row.adSpend.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -324,7 +483,7 @@ export default function VideoMetricsPage() {
         <div className="flex justify-center py-12">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
         </div>
-      ) : videos.length === 0 ? (
+      ) : total === 0 ? (
         <EmptyState
           title="暂无视频数据"
           description="点击上方按钮添加第一条视频数据"
@@ -336,6 +495,7 @@ export default function VideoMetricsPage() {
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">视频</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">视频分类</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">平台</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">播放</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">3秒留存</th>
@@ -358,6 +518,9 @@ export default function VideoMetricsPage() {
                       <td className="px-4 py-3">
                         <div className="font-medium text-gray-900 max-w-xs truncate">{video.title}</div>
                         <div className="text-xs text-gray-500">{new Date(video.publishedAt).toLocaleDateString()}</div>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-600">
+                        {getVideoMetricCategoryLabel(video.videoCategory)}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600">{video.platform}</td>
                       <td className="px-4 py-3 text-right text-sm font-medium">{formatNumber(video.views)}</td>
@@ -456,6 +619,20 @@ export default function VideoMetricsPage() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                       required
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">视频分类</label>
+                    <select
+                      value={formData.videoCategory}
+                      onChange={(e) => setFormData({ ...formData, videoCategory: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                      {VIDEO_METRIC_CATEGORY_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">视频时长（秒）</label>
