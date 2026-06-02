@@ -4,9 +4,13 @@ import { useState, useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 import {
+  buildVideoMetricCategoryLabelMap,
+  getDefaultVideoMetricCategories,
   getVideoMetricCategoryLabel,
+  OTHER_VIDEO_METRIC_CATEGORY_KEY,
   normalizeVideoMetricCategory,
-  VIDEO_METRIC_CATEGORY_OPTIONS,
+  sortVideoMetricCategories,
+  type VideoMetricCategoryRecord,
 } from "@/lib/videoMetricCategories";
 
 interface VideoMetric {
@@ -84,6 +88,10 @@ interface CategoryTrendRow {
   adSpend: number;
 }
 
+interface VideoMetricCategory extends VideoMetricCategoryRecord {
+  id: string;
+}
+
 // 自动计算指标
 const calculateMetrics = (video: VideoMetric) => {
   const views = video.views || 0;
@@ -149,6 +157,13 @@ export default function VideoMetricsPage() {
   const [summary, setSummary] = useState<VideoMetricsSummary | null>(null);
   const [categorySummary, setCategorySummary] = useState<CategorySummaryRow[]>([]);
   const [categoryTrend, setCategoryTrend] = useState<CategoryTrendRow[]>([]);
+  const [categories, setCategories] = useState<VideoMetricCategory[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [categoriesError, setCategoriesError] = useState("");
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [categorySaving, setCategorySaving] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategorySortOrder, setNewCategorySortOrder] = useState(100);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingVideo, setEditingVideo] = useState<VideoMetric | null>(null);
@@ -186,8 +201,45 @@ export default function VideoMetricsPage() {
   });
 
   useEffect(() => {
+    fetchCategories();
+  }, []);
+
+  useEffect(() => {
     fetchVideos();
   }, [videoCategoryFilter]);
+
+  const fetchCategories = async () => {
+    try {
+      setCategoriesLoading(true);
+      setCategoriesError("");
+      const res = await fetch("/api/video-metric-categories");
+      const data = await res.json();
+      const fallback = getDefaultVideoMetricCategories().map((category, index) => ({
+        ...category,
+        id: `fallback-${category.key}-${index}`,
+      }));
+      const loaded = Array.isArray(data.categories) && data.categories.length > 0
+        ? data.categories.map((category: any, index: number) => ({
+            id: category.id || `category-${category.key}-${index}`,
+            key: category.key,
+            name: category.name,
+            sortOrder: typeof category.sortOrder === "number" ? category.sortOrder : 0,
+            isActive: category.isActive !== false,
+          }))
+        : fallback;
+
+      setCategories(sortVideoMetricCategories(loaded));
+    } catch (error) {
+      console.error("获取视频分类失败:", error);
+      setCategories(sortVideoMetricCategories(getDefaultVideoMetricCategories().map((category, index) => ({
+        ...category,
+        id: `fallback-${category.key}-${index}`,
+      }))));
+      setCategoriesError("获取分类失败，已使用默认分类。");
+    } finally {
+      setCategoriesLoading(false);
+    }
+  };
 
   const fetchVideos = async () => {
     try {
@@ -345,22 +397,137 @@ export default function VideoMetricsPage() {
     return num.toFixed(1) + "%";
   };
 
+  const categoryLabelMap = buildVideoMetricCategoryLabelMap(categories);
+  const activeCategories = sortVideoMetricCategories(categories.filter((category) => category.isActive));
+  const editingCategoryOption =
+    editingVideo && editingVideo.videoCategory
+      ? categories.find((category) => category.key === normalizeVideoMetricCategory(editingVideo.videoCategory))
+      : null;
+  const formCategoryOptions = sortVideoMetricCategories(
+    editingCategoryOption && !activeCategories.some((category) => category.key === editingCategoryOption.key)
+      ? [...activeCategories, editingCategoryOption]
+      : activeCategories
+  );
+
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim()) {
+      setCategoriesError("请输入分类名称");
+      return;
+    }
+
+    setCategorySaving(true);
+    setCategoriesError("");
+    try {
+      const res = await fetch("/api/video-metric-categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newCategoryName.trim(),
+          sortOrder: newCategorySortOrder,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "创建分类失败");
+      }
+      setNewCategoryName("");
+      setNewCategorySortOrder(100);
+      await fetchCategories();
+    } catch (error: any) {
+      setCategoriesError(error.message || "创建分类失败");
+    } finally {
+      setCategorySaving(false);
+    }
+  };
+
+  const handleSaveCategory = async (category: VideoMetricCategory) => {
+    setCategorySaving(true);
+    setCategoriesError("");
+    try {
+      const res = await fetch(`/api/video-metric-categories/${category.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: category.name,
+          sortOrder: category.sortOrder,
+          isActive: category.isActive,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "保存分类失败");
+      }
+      await fetchCategories();
+      await fetchVideos();
+    } catch (error: any) {
+      setCategoriesError(error.message || "保存分类失败");
+    } finally {
+      setCategorySaving(false);
+    }
+  };
+
+  const handleToggleCategory = async (category: VideoMetricCategory) => {
+    if (category.key === OTHER_VIDEO_METRIC_CATEGORY_KEY) {
+      return;
+    }
+
+    setCategorySaving(true);
+    setCategoriesError("");
+    try {
+      const res = await fetch(`/api/video-metric-categories/${category.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: category.name,
+          sortOrder: category.sortOrder,
+          isActive: !category.isActive,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "更新分类状态失败");
+      }
+      await fetchCategories();
+      await fetchVideos();
+    } catch (error: any) {
+      setCategoriesError(error.message || "更新分类状态失败");
+    } finally {
+      setCategorySaving(false);
+    }
+  };
+
+  const updateCategoryDraft = (id: string, patch: Partial<VideoMetricCategory>) => {
+    setCategories((prev) =>
+      sortVideoMetricCategories(
+        prev.map((category) => (category.id === id ? { ...category, ...patch } : category))
+      )
+    );
+  };
+
   return (
     <div className="p-6">
       <PageHeader
         title="视频数据分析"
         description="追踪和分析自发短视频的表现数据"
         actions={
-          <button
-            onClick={() => {
-              setEditingVideo(null);
-              resetForm();
-              setShowModal(true);
-            }}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            + 添加数据
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setCategoryModalOpen(true)}
+              className="px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              分类管理
+            </button>
+            <button
+              onClick={() => {
+                setEditingVideo(null);
+                resetForm();
+                setShowModal(true);
+              }}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              + 添加数据
+            </button>
+          </div>
         }
       />
 
@@ -373,9 +540,9 @@ export default function VideoMetricsPage() {
             className="px-3 py-2 border border-gray-300 rounded-lg bg-white min-w-[180px]"
           >
             <option value="all">全部分类</option>
-            {VIDEO_METRIC_CATEGORY_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
+            {activeCategories.map((category) => (
+              <option key={category.key} value={category.key}>
+                {category.name}
               </option>
             ))}
           </select>
@@ -520,7 +687,7 @@ export default function VideoMetricsPage() {
                         <div className="text-xs text-gray-500">{new Date(video.publishedAt).toLocaleDateString()}</div>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600">
-                        {getVideoMetricCategoryLabel(video.videoCategory)}
+                        {getVideoMetricCategoryLabel(video.videoCategory, categoryLabelMap)}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600">{video.platform}</td>
                       <td className="px-4 py-3 text-right text-sm font-medium">{formatNumber(video.views)}</td>
@@ -627,9 +794,9 @@ export default function VideoMetricsPage() {
                       onChange={(e) => setFormData({ ...formData, videoCategory: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     >
-                      {VIDEO_METRIC_CATEGORY_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
+                      {formCategoryOptions.map((category) => (
+                        <option key={category.key} value={category.key}>
+                          {category.name}
                         </option>
                       ))}
                     </select>
@@ -849,6 +1016,154 @@ export default function VideoMetricsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {categoryModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200 flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold">分类管理</h2>
+                <p className="text-sm text-gray-500 mt-1">可新增、重命名、排序以及启用/停用视频分类。</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCategoryModalOpen(false)}
+                className="px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {categoriesError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                  {categoriesError}
+                </div>
+              )}
+
+              <div className="border border-gray-200 rounded-xl p-4">
+                <h3 className="font-semibold text-gray-900 mb-3">新增分类</h3>
+                <div className="grid grid-cols-[1fr_160px_auto] gap-3 items-end">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">分类名称</label>
+                    <input
+                      type="text"
+                      value={newCategoryName}
+                      onChange={(e) => setNewCategoryName(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      placeholder="请输入分类名称"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">排序</label>
+                    <input
+                      type="number"
+                      value={newCategorySortOrder}
+                      onChange={(e) => setNewCategorySortOrder(parseInt(e.target.value) || 0)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCreateCategory}
+                    disabled={categorySaving}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    新增分类
+                  </button>
+                </div>
+              </div>
+
+              <div className="border border-gray-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+                  <h3 className="font-semibold text-gray-900">分类列表</h3>
+                </div>
+                {categoriesLoading ? (
+                  <div className="p-6 text-sm text-gray-500">分类加载中...</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Key</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">分类名称</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">排序</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">状态</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {categories.map((category) => (
+                          <tr key={category.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 text-sm text-gray-500">{category.key}</td>
+                            <td className="px-4 py-3">
+                              <input
+                                type="text"
+                                value={category.name}
+                                onChange={(e) => updateCategoryDraft(category.id, { name: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <input
+                                type="number"
+                                value={category.sortOrder}
+                                onChange={(e) =>
+                                  updateCategoryDraft(category.id, {
+                                    sortOrder: parseInt(e.target.value) || 0,
+                                  })
+                                }
+                                className="w-24 ml-auto block px-3 py-2 border border-gray-300 rounded-lg text-right"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span
+                                className={`px-2 py-1 rounded-full text-xs ${
+                                  category.isActive
+                                    ? "bg-green-100 text-green-700"
+                                    : "bg-gray-100 text-gray-600"
+                                }`}
+                              >
+                                {category.isActive ? "启用" : "停用"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap items-center justify-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveCategory(category)}
+                                  disabled={categorySaving}
+                                  className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                  保存
+                                </button>
+                                {category.key !== OTHER_VIDEO_METRIC_CATEGORY_KEY && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleCategory(category)}
+                                    disabled={categorySaving}
+                                    className={`px-3 py-1.5 text-sm rounded-lg disabled:opacity-50 ${
+                                      category.isActive
+                                        ? "bg-orange-100 text-orange-700 hover:bg-orange-200"
+                                        : "bg-green-100 text-green-700 hover:bg-green-200"
+                                    }`}
+                                  >
+                                    {category.isActive ? "停用" : "启用"}
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

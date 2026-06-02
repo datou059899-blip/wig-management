@@ -3,9 +3,12 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
+  buildVideoMetricCategoryLabelMap,
+  getDefaultVideoMetricCategories,
   getVideoMetricCategoryLabel,
   normalizeVideoMetricCategory,
-  VIDEO_METRIC_CATEGORY_OPTIONS,
+  sortVideoMetricCategories,
+  type VideoMetricCategoryRecord,
 } from "@/lib/videoMetricCategories";
 
 type MetricAggregateRow = {
@@ -22,7 +25,12 @@ type MetricAggregateRow = {
   publishedAt: Date;
 };
 
-function buildCategorySummary(rows: MetricAggregateRow[]) {
+function buildCategorySummary(
+  rows: MetricAggregateRow[],
+  categories: VideoMetricCategoryRecord[]
+) {
+  const labelMap = buildVideoMetricCategoryLabelMap(categories);
+  const sortedCategories = sortVideoMetricCategories(categories);
   const grouped = new Map<
     string,
     {
@@ -66,7 +74,7 @@ function buildCategorySummary(rows: MetricAggregateRow[]) {
   return Array.from(grouped.entries())
     .map(([videoCategory, stats]) => ({
       videoCategory,
-      label: getVideoMetricCategoryLabel(videoCategory),
+      label: getVideoMetricCategoryLabel(videoCategory, labelMap),
       videoCount: stats.videoCount,
       totalViews: stats.totalViews,
       avgViews: stats.videoCount > 0 ? stats.totalViews / stats.videoCount : 0,
@@ -78,13 +86,23 @@ function buildCategorySummary(rows: MetricAggregateRow[]) {
       roas: stats.totalAdSpend > 0 ? stats.totalRevenue / stats.totalAdSpend : 0,
     }))
     .sort((a, b) => {
-      const aIndex = VIDEO_METRIC_CATEGORY_OPTIONS.findIndex((option) => option.value === a.videoCategory);
-      const bIndex = VIDEO_METRIC_CATEGORY_OPTIONS.findIndex((option) => option.value === b.videoCategory);
-      return aIndex - bIndex;
+      const aCategory = sortedCategories.find((item) => item.key === a.videoCategory);
+      const bCategory = sortedCategories.find((item) => item.key === b.videoCategory);
+      const aOrder = aCategory?.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      const bOrder = bCategory?.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      if (aOrder !== bOrder) {
+        return aOrder - bOrder;
+      }
+      return a.label.localeCompare(b.label, "zh-CN");
     });
 }
 
-function buildCategoryTrend(rows: MetricAggregateRow[]) {
+function buildCategoryTrend(
+  rows: MetricAggregateRow[],
+  categories: VideoMetricCategoryRecord[]
+) {
+  const labelMap = buildVideoMetricCategoryLabelMap(categories);
+  const sortedCategories = sortVideoMetricCategories(categories);
   const grouped = new Map<
     string,
     {
@@ -120,16 +138,42 @@ function buildCategoryTrend(rows: MetricAggregateRow[]) {
   return Array.from(grouped.values())
     .map((item) => ({
       ...item,
-      label: getVideoMetricCategoryLabel(item.videoCategory),
+      label: getVideoMetricCategoryLabel(item.videoCategory, labelMap),
     }))
     .sort((a, b) => {
       if (a.date !== b.date) {
         return a.date.localeCompare(b.date);
       }
-      const aIndex = VIDEO_METRIC_CATEGORY_OPTIONS.findIndex((option) => option.value === a.videoCategory);
-      const bIndex = VIDEO_METRIC_CATEGORY_OPTIONS.findIndex((option) => option.value === b.videoCategory);
-      return aIndex - bIndex;
+      const aCategory = sortedCategories.find((item) => item.key === a.videoCategory);
+      const bCategory = sortedCategories.find((item) => item.key === b.videoCategory);
+      const aOrder = aCategory?.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      const bOrder = bCategory?.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      if (aOrder !== bOrder) {
+        return aOrder - bOrder;
+      }
+      return a.label.localeCompare(b.label, "zh-CN");
     });
+}
+
+async function loadVideoMetricCategories() {
+  try {
+    const categories = await prisma.videoMetricCategory.findMany({
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    });
+
+    return categories.map((category) => ({
+      id: category.id,
+      key: category.key,
+      name: category.name,
+      sortOrder: category.sortOrder,
+      isActive: category.isActive,
+    })) satisfies VideoMetricCategoryRecord[];
+  } catch (error: any) {
+    if (error?.code === "P2021") {
+      return getDefaultVideoMetricCategories();
+    }
+    throw error;
+  }
 }
 
 // GET - 获取视频数据列表
@@ -178,7 +222,7 @@ export async function GET(request: NextRequest) {
     const total = await prisma.ownVideoMetric.count({ where });
 
     // 计算汇总数据
-    const [summary, metricsForCategory] = await Promise.all([
+    const [summary, metricsForCategory, categories] = await Promise.all([
       prisma.ownVideoMetric.aggregate({
         where,
         _sum: {
@@ -215,6 +259,7 @@ export async function GET(request: NextRequest) {
         },
         orderBy: { publishedAt: "asc" },
       }),
+      loadVideoMetricCategories(),
     ]);
 
     const normalizedVideos = videos.map((video) => ({
@@ -240,8 +285,8 @@ export async function GET(request: NextRequest) {
       videos: normalizedVideos,
       total,
       summary,
-      categorySummary: buildCategorySummary(categoryRows),
-      categoryTrend: buildCategoryTrend(categoryRows),
+      categorySummary: buildCategorySummary(categoryRows, categories),
+      categoryTrend: buildCategoryTrend(categoryRows, categories),
     });
   } catch (error: any) {
     console.error("[API ERROR] 获取视频数据列表失败:", error);
