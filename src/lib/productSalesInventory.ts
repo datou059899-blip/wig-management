@@ -1,7 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import {
   buildProductSkuResolver,
-  buildSkuMatchVariants,
   isSpecialLinkSku,
   normalizeCell,
   normalizeSkuForCompare,
@@ -781,30 +780,22 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
 
   const skuOptionsSet = new Set<string>()
   const skuOptions: Array<{ sku: string; label: string }> = []
-  const registerSkuOption = (sku: string | null | undefined) => {
+  const registerSkuOption = (sku: string | null | undefined, productName: string | null | undefined) => {
     const value = normalizeCell(sku)
-    if (!value || skuOptionsSet.has(value)) return
+    if (!value || value === '-' || skuOptionsSet.has(value)) return
     skuOptionsSet.add(value)
-    skuOptions.push({ sku: value, label: value })
+    const normalizedName = normalizeCell(productName)
+    const label = normalizedName && normalizedName !== '-'
+      ? `${value} - ${normalizedName}`
+      : value
+    skuOptions.push({ sku: value, label })
   }
 
-  displayProducts.forEach((product) => {
-    const mainSku = getFilterPrimarySkuForProduct(product) || normalizeCell(product.sku)
-    if (!mainSku) return
-    registerSkuOption(mainSku)
-    const relatedSkus = getRelatedSkus(product.id)
-    const skuVariants = buildSkuMatchVariants(product.sku).map((variant) => normalizeCell(variant))
-    const nameVariants = buildSkuMatchVariants(product.name).map((variant) => normalizeCell(variant))
-    const additionalVariants = Array.from(new Set([
-      ...relatedSkus,
-      ...skuVariants,
-      ...nameVariants,
-    ]))
-
-    additionalVariants.forEach((variant) => registerSkuOption(variant))
+  tableData.forEach((row) => {
+    registerSkuOption(row.sku, row.name)
   })
 
-  skuOptions.sort((a, b) => a.label.localeCompare(b.label))
+  skuOptions.sort((a, b) => a.sku.localeCompare(b.sku))
 
   const totalTodaySales = tableData.reduce((sum, item) => sum + item.todaySales, 0)
   const totalYesterdaySales = tableData.reduce((sum, item) => sum + item.yesterdaySales, 0)

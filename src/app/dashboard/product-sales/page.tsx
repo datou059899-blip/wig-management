@@ -3369,7 +3369,7 @@ export default function ProductSalesPage() {
                       <option value="">全部 SKU</option>
                       {skuOptions.map((option) => (
                         <option key={option.sku} value={option.sku}>
-                          {option.sku}
+                          {option.label}
                         </option>
                       ))}
                     </select>
@@ -3616,7 +3616,7 @@ export default function ProductSalesPage() {
                       <option value="">全部 SKU</option>
                       {skuOptions.map((option) => (
                         <option key={`persistent-sample-option-${option.sku}`} value={option.sku}>
-                          {option.sku}
+                          {option.label}
                         </option>
                       ))}
                     </select>
@@ -3856,7 +3856,7 @@ export default function ProductSalesPage() {
                                   <option value="">请选择 SKU</option>
                                   {skuOptions.map((option) => (
                                     <option key={option.sku} value={option.sku}>
-                                      {option.sku}
+                                      {option.label}
                                     </option>
                                   ))}
                                 </select>
@@ -4177,7 +4177,7 @@ export default function ProductSalesPage() {
                                   <option value="">请选择 SKU</option>
                                   {skuOptions.map((option) => (
                                     <option key={option.sku} value={option.sku}>
-                                      {option.sku}
+                                      {option.label}
                                     </option>
                                   ))}
                                 </select>
@@ -4790,7 +4790,7 @@ export default function ProductSalesPage() {
                                       onChange={() => toggleGroupSku(option.sku)}
                                       disabled={savingGroup}
                                     />
-                                    <span>{option.sku}</span>
+                                    <span>{option.label}</span>
                                   </label>
                                 ))}
                               </div>
