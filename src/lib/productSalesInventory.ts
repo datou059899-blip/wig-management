@@ -3,7 +3,6 @@ import {
   buildProductSkuResolver,
   isSpecialLinkSku,
   normalizeCell,
-  normalizeSkuForCompare,
 } from '@/lib/product-sku-resolver'
 
 export type RangeKey = 'today' | '7' | '30' | 'custom'
@@ -297,12 +296,32 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
 
   const skuResolver = buildProductSkuResolver(products, aliases)
   const {
-    relatedSkuSetByProductId,
     getPrimarySku,
     getFilterPrimarySkuForProduct,
-    getRelatedSkus,
     resolveProductBySku,
   } = skuResolver
+
+  const explicitAliasListByProductId = new Map<string, string[]>()
+  aliases.forEach((alias) => {
+    const normalizedAliasSku = normalizeCell(alias.aliasSku)
+    if (!normalizedAliasSku) return
+    const bucket = explicitAliasListByProductId.get(alias.productId) || []
+    if (!bucket.includes(normalizedAliasSku)) {
+      bucket.push(normalizedAliasSku)
+      explicitAliasListByProductId.set(alias.productId, bucket)
+    }
+  })
+
+  const inventorySkuListByProductId = new Map<string, string[]>()
+  products.forEach((product) => {
+    const canonicalSku = normalizeCell(getPrimarySku(product.id))
+    const explicitAliasSkus = explicitAliasListByProductId.get(product.id) || []
+    const inventorySkus = Array.from(new Set([
+      canonicalSku,
+      ...explicitAliasSkus,
+    ].filter(Boolean)))
+    inventorySkuListByProductId.set(product.id, inventorySkus)
+  })
 
   const displayProducts = Array.from(new Map(
     products.map((product) => {
@@ -312,7 +331,7 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
   ).values())
 
   const productSkus = Array.from(new Set(
-    Array.from(relatedSkuSetByProductId.values()).flatMap((skuSet) => Array.from(skuSet.values())),
+    Array.from(inventorySkuListByProductId.values()).flatMap((skuList) => skuList),
   ))
 
   const latestSnapshots = productSkus.length
@@ -354,7 +373,7 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
   })
 
   const baselineSkuList = Array.from(new Set(
-    Array.from(relatedSkuSetByProductId.values()).flatMap((skuSet) => Array.from(skuSet.values())),
+    Array.from(inventorySkuListByProductId.values()).flatMap((skuList) => skuList),
   ))
 
   const baselines = baselineSkuList.length
@@ -398,32 +417,18 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
     : []
 
   const exactBaselineMap = new Map<string, BaselineRow[]>()
-  const normalizedBaselineMap = new Map<string, BaselineRow[]>()
   const exactAdjustmentMap = new Map<string, AdjustmentRow[]>()
-  const normalizedAdjustmentMap = new Map<string, AdjustmentRow[]>()
 
   const registerBaseline = (sku: string, row: BaselineRow) => {
     const exactBucket = exactBaselineMap.get(sku) || []
     exactBucket.push(row)
     exactBaselineMap.set(sku, exactBucket)
-
-    const normalizedSku = normalizeSkuForCompare(sku)
-    if (!normalizedSku) return
-    const normalizedBucket = normalizedBaselineMap.get(normalizedSku) || []
-    normalizedBucket.push(row)
-    normalizedBaselineMap.set(normalizedSku, normalizedBucket)
   }
 
   const registerAdjustment = (sku: string, row: AdjustmentRow) => {
     const exactBucket = exactAdjustmentMap.get(sku) || []
     exactBucket.push(row)
     exactAdjustmentMap.set(sku, exactBucket)
-
-    const normalizedSku = normalizeSkuForCompare(sku)
-    if (!normalizedSku) return
-    const normalizedBucket = normalizedAdjustmentMap.get(normalizedSku) || []
-    normalizedBucket.push(row)
-    normalizedAdjustmentMap.set(normalizedSku, normalizedBucket)
   }
 
   baselines.forEach((baseline) => {
@@ -561,11 +566,7 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       selectedRange: 0,
     }
 
-    const orderedCandidateSkus = Array.from(new Set([
-      getPrimarySku(product.id),
-      product.sku,
-      ...getRelatedSkus(product.id),
-    ].map((sku) => normalizeCell(sku)).filter(Boolean)))
+    const orderedCandidateSkus = inventorySkuListByProductId.get(product.id) || []
 
     let selectedSnapshot: {
       totalQty: number | null
@@ -596,12 +597,8 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
     }
 
     const baselineCandidates = Array.from(new Map(
-      Array.from(relatedSkuSetByProductId.get(product.id) || []).flatMap((sku) => {
-        const normalizedSku = normalizeSkuForCompare(sku)
-        const rows = [
-          ...(exactBaselineMap.get(sku) || []),
-          ...(normalizedSku ? (normalizedBaselineMap.get(normalizedSku) || []) : []),
-        ]
+      orderedCandidateSkus.flatMap((sku) => {
+        const rows = exactBaselineMap.get(sku) || []
         return rows.map((row) => [`${row.sku}:${row.baselineDate.getTime()}`, row] as const)
       }),
     ).values()).sort((a, b) => a.baselineDate.getTime() - b.baselineDate.getTime())
@@ -611,12 +608,8 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       : null
 
     const adjustmentCandidates = Array.from(new Map(
-      Array.from(relatedSkuSetByProductId.get(product.id) || []).flatMap((sku) => {
-        const normalizedSku = normalizeSkuForCompare(sku)
-        const rows = [
-          ...(exactAdjustmentMap.get(sku) || []),
-          ...(normalizedSku ? (normalizedAdjustmentMap.get(normalizedSku) || []) : []),
-        ]
+      orderedCandidateSkus.flatMap((sku) => {
+        const rows = exactAdjustmentMap.get(sku) || []
         return rows.map((row) => [`${row.sku}:${row.adjustmentDate.getTime()}:${row.quantity}:${row.type}`, row] as const)
       }),
     ).values()).sort((a, b) => a.adjustmentDate.getTime() - b.adjustmentDate.getTime())
