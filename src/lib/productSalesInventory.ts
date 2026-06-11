@@ -72,7 +72,9 @@ export type ProductSalesInventoryProduct = {
   monthSales: number
   selectedRangeSales: number
   stock: number
+  platformSnapshotStock: number | null
   platformCurrentStock: number
+  currentAvailableStock: number
   platformStockSource: PlatformStockSource
   platformSnapshotDate: string | null
   platformAvailableQty: number | null
@@ -83,9 +85,17 @@ export type ProductSalesInventoryProduct = {
   estimatedStock: number
   inventoryDiff: number | null
   baselineQty: number
+  baselineDate: string | null
   adjustmentTotal: number
   cumulativeStockConsumedQty: number
   sampleConsumedQty: number
+  snapshotAdjustmentAfterQty: number
+  snapshotConsumedAfterQty: number
+  snapshotAgeDays: number | null
+  inventoryDiffAbnormal: boolean
+  syncStale: boolean
+  earliestConsumptionDate: string | null
+  dataReminders: string[]
   recent3DaySales: number
   sevenDaySales: number
   sevenDayAvgSales: number
@@ -108,11 +118,14 @@ export type ProductSalesInventorySummary = {
   monthSales: number
   totalStock: number
   platformCurrentStock: number
+  currentAvailableTotalStock: number
   estimatedTotalStock: number
   inventoryDiff: number
   lowStockCount: number
   outOfStockCount: number
   noPlatformSnapshotCount: number
+  staleSnapshotCount: number
+  inventoryDiffAbnormalCount: number
 }
 
 export type ProductSalesInventoryData = {
@@ -150,6 +163,11 @@ function formatNumber(value: number, digits = 2) {
 
 function formatPercent(value: number) {
   return `${formatNumber(value * 100, 1)}%`
+}
+
+function getDiffDays(later: Date, earlier: Date) {
+  const msPerDay = 24 * 60 * 60 * 1000
+  return Math.max(0, Math.floor((later.getTime() - earlier.getTime()) / msPerDay))
 }
 
 function getSalesRankPriority(rank: string) {
@@ -619,6 +637,7 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
         )
       : 0
     const baselineQty = activeBaseline ? activeBaseline.quantity : 0
+    const baselineDate = activeBaseline ? activeBaseline.baselineDate : null
     const adjustmentTotal = activeBaseline
       ? adjustmentCandidates.reduce((sum, row) => (
           row.adjustmentDate >= activeBaseline.baselineDate && row.adjustmentDate < tomorrow
@@ -636,7 +655,41 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
           row.date >= activeBaseline.baselineDate && row.date < tomorrow ? sum + row.sampleQty : sum
         ), 0)
       : 0
-    const inventoryDiff = hasBaseline && selectedHasPlatformSnapshot ? estimatedStock - selectedPlatformStock : null
+    const postSnapshotAdjustmentRows = selectedSnapshot
+      ? adjustmentCandidates.filter((row) => row.adjustmentDate > selectedSnapshot.date && row.adjustmentDate < tomorrow)
+      : []
+    const snapshotAdjustmentAfterQty = postSnapshotAdjustmentRows.reduce((sum, row) => sum + row.quantity, 0)
+    const postSnapshotConsumedRows = selectedSnapshot
+      ? (consumedRowsByProductId.get(product.id) || []).filter((row) => row.date > selectedSnapshot.date && row.date < tomorrow)
+      : []
+    const snapshotConsumedAfterQty = postSnapshotConsumedRows.reduce((sum, row) => sum + row.qty, 0)
+    const platformSnapshotStock = selectedHasPlatformSnapshot ? selectedPlatformStock : null
+    const currentAvailableStock = selectedHasPlatformSnapshot
+      ? Math.max(selectedPlatformStock + snapshotAdjustmentAfterQty - snapshotConsumedAfterQty, 0)
+      : selectedPlatformStock
+    const inventoryDiff = hasBaseline ? estimatedStock - currentAvailableStock : null
+    const snapshotAgeDays = selectedSnapshot ? getDiffDays(today, selectedSnapshot.date) : null
+    const syncStale = Boolean(selectedHasPlatformSnapshot && snapshotAgeDays !== null && snapshotAgeDays > 3)
+    const inventoryDiffAbnormal = Boolean(inventoryDiff !== null && Math.abs(inventoryDiff) > 10)
+    const earliestConsumptionDateValue = (consumedRowsByProductId.get(product.id) || []).reduce<Date | null>((earliest, row) => {
+      if (!earliest || row.date.getTime() < earliest.getTime()) return row.date
+      return earliest
+    }, null)
+    const dataReminders: string[] = []
+
+    if (!selectedHasPlatformSnapshot) {
+      dataReminders.push('无平台快照')
+    } else if (syncStale) {
+      dataReminders.push('平台库存未同步')
+    }
+
+    if (inventoryDiffAbnormal) {
+      dataReminders.push('库存差异较大')
+    }
+
+    if (baselineDate && earliestConsumptionDateValue && baselineDate.getTime() > earliestConsumptionDateValue.getTime()) {
+      dataReminders.push('入库日期可能异常')
+    }
 
     const rankDailySales = rankDailySalesByProductId.get(product.id) || new Map<string, number>()
     const orderedRankDailySales = Array.from(rankDailySales.entries()).sort((a, b) => a[0].localeCompare(b[0]))
@@ -725,15 +778,11 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       + orderShareRatio * 20
     ).toFixed(2))
 
-    let stockStatus = '未设置初始库存'
-    if (hasBaseline && !selectedHasPlatformSnapshot) {
-      stockStatus = '无平台快照'
-    } else if (hasBaseline && selectedPlatformStock === 0) {
-      stockStatus = '断货'
-    } else if (hasBaseline && selectedPlatformStock <= 10) {
+    let stockStatus = '正常'
+    if (currentAvailableStock === 0) {
+      stockStatus = '缺货'
+    } else if (currentAvailableStock <= 10) {
       stockStatus = '低库存'
-    } else if (hasBaseline) {
-      stockStatus = '正常'
     }
 
     return {
@@ -748,7 +797,9 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       monthSales: sales.month,
       selectedRangeSales: sales.selectedRange,
       stock: product.stock || 0,
-      platformCurrentStock: selectedPlatformStock,
+      platformSnapshotStock,
+      platformCurrentStock: currentAvailableStock,
+      currentAvailableStock,
       platformStockSource: selectedPlatformSource,
       platformSnapshotDate: selectedSnapshot ? selectedSnapshot.date.toISOString() : null,
       platformAvailableQty: selectedSnapshot?.availableQty ?? null,
@@ -759,9 +810,17 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       estimatedStock,
       inventoryDiff,
       baselineQty,
+      baselineDate: baselineDate ? baselineDate.toISOString() : null,
       adjustmentTotal,
       cumulativeStockConsumedQty,
       sampleConsumedQty,
+      snapshotAdjustmentAfterQty,
+      snapshotConsumedAfterQty,
+      snapshotAgeDays,
+      inventoryDiffAbnormal,
+      syncStale,
+      earliestConsumptionDate: earliestConsumptionDateValue ? earliestConsumptionDateValue.toISOString() : null,
+      dataReminders,
       recent3DaySales,
       sevenDaySales,
       sevenDayAvgSales,
@@ -801,16 +860,15 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
   const totalYesterdaySales = tableData.reduce((sum, item) => sum + item.yesterdaySales, 0)
   const totalWeekSales = tableData.reduce((sum, item) => sum + item.weekSales, 0)
   const totalMonthSales = tableData.reduce((sum, item) => sum + item.monthSales, 0)
-  const snapshotBackedProducts = tableData.filter((product) => product.hasPlatformSnapshot)
-  const totalStock = snapshotBackedProducts.reduce((sum, product) => sum + product.platformCurrentStock, 0)
+  const currentAvailableTotalStock = tableData.reduce((sum, product) => sum + product.currentAvailableStock, 0)
   const forecastableProducts = tableData.filter((product) => product.hasBaseline)
-  const forecastableWithSnapshot = forecastableProducts.filter((product) => product.hasPlatformSnapshot)
   const estimatedTotalStock = forecastableProducts.reduce((sum, product) => sum + product.estimatedStock, 0)
-  const estimatedTotalStockForReconciliation = forecastableWithSnapshot.reduce((sum, product) => sum + product.estimatedStock, 0)
-  const inventoryDiff = estimatedTotalStockForReconciliation - totalStock
-  const lowStockCount = forecastableWithSnapshot.filter((product) => product.platformCurrentStock > 0 && product.platformCurrentStock <= 10).length
-  const outOfStockCount = forecastableWithSnapshot.filter((product) => product.platformCurrentStock === 0).length
+  const inventoryDiff = forecastableProducts.reduce((sum, product) => sum + (product.inventoryDiff || 0), 0)
+  const lowStockCount = tableData.filter((product) => product.currentAvailableStock > 0 && product.currentAvailableStock <= 10).length
+  const outOfStockCount = tableData.filter((product) => product.currentAvailableStock === 0).length
   const noPlatformSnapshotCount = tableData.filter((product) => !product.hasPlatformSnapshot).length
+  const staleSnapshotCount = tableData.filter((product) => product.syncStale).length
+  const inventoryDiffAbnormalCount = tableData.filter((product) => product.inventoryDiffAbnormal).length
 
   return {
     summary: {
@@ -818,13 +876,16 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       yesterdaySales: totalYesterdaySales,
       weekSales: totalWeekSales,
       monthSales: totalMonthSales,
-      totalStock,
-      platformCurrentStock: totalStock,
+      totalStock: currentAvailableTotalStock,
+      platformCurrentStock: currentAvailableTotalStock,
+      currentAvailableTotalStock,
       estimatedTotalStock,
       inventoryDiff,
       lowStockCount,
       outOfStockCount,
       noPlatformSnapshotCount,
+      staleSnapshotCount,
+      inventoryDiffAbnormalCount,
     },
     products: tableData,
     skuOptions,
