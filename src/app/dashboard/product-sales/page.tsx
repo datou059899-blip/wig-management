@@ -5066,13 +5066,13 @@ export default function ProductSalesPage() {
                       <div>
                         <div className="font-semibold text-slate-900">动销库存总表</div>
                         <div className="mt-1 text-xs text-slate-500">
-                          主表优先展示当前可用库存、近7天销量和风险提醒；复杂库存公式保留到详情和对账里。
+                          主表保留运营最常用的库存、销量和动销等级；复杂库存公式保留到详情和对账里。
                         </div>
                       </div>
                       {tableRangeLoading && <span className="text-slate-500">筛选期销量刷新中...</span>}
                     </div>
                     <div className="overflow-x-auto">
-                      <table className="min-w-[1220px] w-full text-sm">
+                      <table className="min-w-[1460px] w-full text-sm">
                         <thead>
                           <tr className="bg-slate-50 border-b border-slate-200">
                             <th className="sticky top-0 left-0 z-30 min-w-[120px] bg-slate-50 px-6 py-3 text-left">
@@ -5100,6 +5100,22 @@ export default function ProductSalesPage() {
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
                                 7天销量 <SortIcon columnKey="weekSales" />
+                              </button>
+                            </th>
+                            <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('monthSales')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                30天销量 <SortIcon columnKey="monthSales" />
+                              </button>
+                            </th>
+                            <th className="sticky top-0 z-20 min-w-[140px] bg-slate-50 px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('salesRankPriority')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                动销等级 <SortIcon columnKey="salesRankPriority" />
                               </button>
                             </th>
                             <th className="sticky top-0 z-20 min-w-[120px] bg-slate-50 px-6 py-3 text-center">
@@ -5134,7 +5150,7 @@ export default function ProductSalesPage() {
                         <tbody>
                           {visibleProducts.length === 0 ? (
                             <tr>
-                              <td colSpan={8} className="px-6 py-8 text-center text-slate-500">
+                              <td colSpan={10} className="px-6 py-8 text-center text-slate-500">
                                 暂无产品数据
                               </td>
                             </tr>
@@ -5160,6 +5176,12 @@ export default function ProductSalesPage() {
                                       {product.currentAvailableStock}
                                     </td>
                                     <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.weekSales}</td>
+                                    <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.monthSales}</td>
+                                    <td className="min-w-[140px] px-6 py-4 text-sm text-center">
+                                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getRankBadgeClass(product.salesRank)}`}>
+                                        {getRankLabel(product.salesRank)}
+                                      </span>
+                                    </td>
                                     <td className={`min-w-[120px] px-6 py-4 text-sm text-center font-semibold ${getDaysOfSupplyTextClass(product)}`}>
                                       {getDaysOfSupplyDisplay(product)}
                                     </td>
@@ -5192,7 +5214,7 @@ export default function ProductSalesPage() {
                                   </tr>
                                   {expanded && (
                                     <tr className="border-b border-slate-200 bg-slate-50/70">
-                                      <td colSpan={8} className="px-6 py-5">
+                                      <td colSpan={10} className="px-6 py-5">
                                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
                                           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                             <div>
