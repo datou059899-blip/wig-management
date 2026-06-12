@@ -164,6 +164,81 @@ function formatPercent(value: number) {
   return `${formatNumber(value * 100, 1)}%`
 }
 
+const SKU_OPTION_MAX_LABEL_LENGTH = 30
+const SKU_OPTION_GENERIC_NAME_TOKENS = new Set([
+  'SUNNYMAY',
+  'WOMEN',
+  'WOMAN',
+  'FASHION',
+  'SYNTHETIC',
+  'WIG',
+  'WIGS',
+  'LAYERED',
+  'STYLE',
+  'INCHES',
+  'INCH',
+  'LACE',
+  'FRONT',
+  'GLUELESS',
+  'KNOTLESS',
+  'BUTTERFLY',
+  'CUT',
+  'LONG',
+  'CURLY',
+  'BOB',
+  'HIGHLIGHT',
+  'HIGHLIGHTS',
+  'HONEY',
+  'BLONDE',
+  'BROWN',
+  'ASH',
+  'HD',
+  'PRECUT',
+  'DENSITY',
+  'DESIGN',
+  'GEL',
+  'FRONTAL',
+  'FASHIONABLE',
+  'LAYER',
+  'COLORED',
+  'COLOUR',
+  'COLOR',
+  'COLORS',
+  'FOR',
+  'AND',
+  'WITH',
+])
+
+function getShortSkuOptionName(sku: string, productName: string | null | undefined) {
+  const normalizedName = normalizeCell(productName).replace(/\s+/g, ' ').trim()
+  if (!normalizedName || normalizedName === '-') return null
+
+  const maxNameLength = Math.max(SKU_OPTION_MAX_LABEL_LENGTH - sku.length - 3, 0)
+  if (maxNameLength <= 0) return null
+
+  const wordCount = normalizedName.split(' ').filter(Boolean).length
+  if (normalizedName.length <= maxNameLength && wordCount <= 3) {
+    return normalizedName
+  }
+
+  const uppercaseCandidates = Array.from(
+    new Set(
+      normalizedName
+        .match(/[A-Z]{3,20}/g)
+        ?.map((token) => token.trim())
+        .filter((token) => !SKU_OPTION_GENERIC_NAME_TOKENS.has(token))
+        || [],
+    ),
+  ).sort((a, b) => b.length - a.length)
+
+  const matchedUppercaseName = uppercaseCandidates.find((token) => token.length <= maxNameLength)
+  if (matchedUppercaseName) {
+    return matchedUppercaseName
+  }
+
+  return null
+}
+
 function getDiffDays(later: Date, earlier: Date) {
   const msPerDay = 24 * 60 * 60 * 1000
   return Math.max(0, Math.floor((later.getTime() - earlier.getTime()) / msPerDay))
@@ -836,10 +911,8 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
     const value = normalizeCell(sku)
     if (!value || value === '-' || skuOptionsSet.has(value)) return
     skuOptionsSet.add(value)
-    const normalizedName = normalizeCell(productName)
-    const label = normalizedName && normalizedName !== '-'
-      ? `${value} - ${normalizedName}`
-      : value
+    const shortName = getShortSkuOptionName(value, productName)
+    const label = shortName ? `${value} - ${shortName}` : value
     skuOptions.push({ sku: value, label })
   }
 

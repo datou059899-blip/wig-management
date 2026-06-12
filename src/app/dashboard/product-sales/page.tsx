@@ -1092,6 +1092,9 @@ export default function ProductSalesPage() {
       savingRankSettings,
     ],
   )
+  const baseSelectClassName = 'w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none'
+  const headerSelectClassName = `${baseSelectClassName} sm:w-56 xl:w-64`
+  const skuSelectClassName = `${baseSelectClassName} max-w-full`
 
   const closeStockBaselineModal = useCallback(() => {
     if (savingBaseline) return
@@ -3348,12 +3351,12 @@ export default function ProductSalesPage() {
           ) : (
             <>
               <div className="mb-8 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <h2 className="text-lg font-semibold text-slate-900">销售库存趋势</h2>
-                    <p className="mt-1 text-sm text-slate-600">{trendTitle}</p>
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                  <div className="min-w-0 xl:flex-1">
+                    <h2 className="whitespace-nowrap text-lg font-semibold text-slate-900">销售库存趋势</h2>
+                    <p className="mt-1 truncate text-sm text-slate-600">{trendTitle}</p>
                   </div>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center xl:max-w-[42rem] xl:flex-1 xl:justify-end">
                     <select
                       value={selectedGroupId}
                       onChange={(event) => {
@@ -3362,7 +3365,7 @@ export default function ProductSalesPage() {
                         setSelectedGroupId(nextGroupId)
                         void loadTrendData('', nextGroupId, trendRange, trendStartDate, trendEndDate)
                       }}
-                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                      className={headerSelectClassName}
                     >
                       <option value="">全部分组</option>
                       {groups.map((group) => (
@@ -3379,7 +3382,7 @@ export default function ProductSalesPage() {
                         setSelectedSku(nextSku)
                         void loadTrendData(nextSku, '', trendRange, trendStartDate, trendEndDate)
                       }}
-                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                      className={headerSelectClassName}
                     >
                       <option value="">全部 SKU</option>
                       {skuOptions.map((option) => (
@@ -3626,7 +3629,7 @@ export default function ProductSalesPage() {
                         setSampleStatsSku(nextSku)
                         void loadSampleStats(sampleStatsRange, nextSku, sampleStatsStartDate, sampleStatsEndDate)
                       }}
-                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                      className={headerSelectClassName}
                     >
                       <option value="">全部 SKU</option>
                       {skuOptions.map((option) => (
@@ -3865,7 +3868,7 @@ export default function ProductSalesPage() {
                                     setBaselineError(null)
                                     setBaselineSaveSummary(null)
                                   }}
-                                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                                  className={skuSelectClassName}
                                   disabled={savingBaseline}
                                 >
                                   <option value="">请选择 SKU</option>
@@ -4186,7 +4189,7 @@ export default function ProductSalesPage() {
                                     setAdjustmentSaveSummary(null)
                                     void loadAdjustments(nextSku)
                                   }}
-                                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                                  className={skuSelectClassName}
                                   disabled={savingAdjustment}
                                 >
                                   <option value="">请选择 SKU</option>
@@ -4798,14 +4801,14 @@ export default function ProductSalesPage() {
                             <div className="max-h-72 overflow-auto rounded-lg border border-slate-200 p-3">
                               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                                 {skuOptions.map((option) => (
-                                  <label key={option.sku} className="flex items-center gap-2 text-sm text-slate-700">
+                                  <label key={option.sku} className="flex min-w-0 items-center gap-2 text-sm text-slate-700">
                                     <input
                                       type="checkbox"
                                       checked={groupFormSkus.includes(option.sku)}
                                       onChange={() => toggleGroupSku(option.sku)}
                                       disabled={savingGroup}
                                     />
-                                    <span>{option.label}</span>
+                                    <span className="min-w-0 flex-1 truncate" title={option.label}>{option.label}</span>
                                   </label>
                                 ))}
                               </div>
