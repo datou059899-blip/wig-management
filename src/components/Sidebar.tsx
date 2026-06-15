@@ -47,7 +47,9 @@ export default function Sidebar() {
   
   // 使用新的权限系统获取菜单项
   const navItems = useMemo(() => {
-    return getAllowedMenuItems(role || 'viewer', permissionMode || 'role', allowedPages || '')
+    const rawItems = getAllowedMenuItems(role || 'viewer', permissionMode || 'role', allowedPages || '')
+    const hasViralVideos = rawItems.some((item) => item.id === 'viralVideos')
+    return rawItems.filter((item) => !(hasViralVideos && item.id === 'scripts'))
   }, [role, permissionMode, allowedPages])
   
   const [userMenuOpen, setUserMenuOpen] = useState(false)

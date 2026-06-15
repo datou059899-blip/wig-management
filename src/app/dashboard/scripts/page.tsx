@@ -1433,6 +1433,9 @@ export default function ScriptsPage() {
               <p className="mt-1 text-sm text-gray-600">
                 学习别人拆好的爆款脚本，也能自己新建拆解、沉淀方法，并结合任务与复盘完成训练闭环。
               </p>
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                爆款案例内容已逐步合并到“爆款案例库”，当前页面作为训练工作台兼容保留。
+              </div>
             </div>
               <div className="flex flex-col items-start md:items-end gap-2">
               <div className="flex gap-2 overflow-x-auto flex-nowrap md:flex-wrap md:overflow-visible w-full md:w-auto pr-1">
@@ -3256,6 +3259,9 @@ export default function ScriptsPage() {
             <p className="mt-1 text-sm text-gray-600">
               运营更新拆解，剪辑师按区块学习、执行与复盘。
             </p>
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              爆款案例内容已逐步合并到“爆款案例库”，当前页面作为训练工作台兼容保留。
+            </div>
           </div>
           {canEdit && (
             <button
@@ -4301,4 +4307,3 @@ export default function ScriptsPage() {
     </div>
   )
 }
-

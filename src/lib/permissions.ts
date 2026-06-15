@@ -66,7 +66,7 @@ const NAV_ITEMS: { name: string; href: string; icon: string; key: string; isSyst
   { name: '产品列表', href: '/dashboard/products', icon: '📦', key: 'products' },
   { name: '达人建联', href: '/dashboard/influencers', icon: '🤝', key: 'influencers' },
   { name: '脚本拆解', href: '/dashboard/scripts', icon: '✂️', key: 'scripts' },
-  { name: '热门视频拆解', href: '/dashboard/viral-videos', icon: '🔥', key: 'viral-videos' },
+  { name: '爆款案例库', href: '/dashboard/viral-videos', icon: '🔥', key: 'viral-videos' },
   { name: '视频数据分析', href: '/dashboard/video-metrics', icon: '📹', key: 'video-metrics' },
   { name: '经营数据', href: '/dashboard/performance', icon: '📈', key: 'performance' },
   // 系统模块（放到更多菜单）
@@ -220,6 +220,11 @@ export function canAccessScripts(role?: string): boolean {
   return ['admin', 'boss', 'product', 'operator', 'bd', 'editor', 'viewer'].includes(mapped || '')
 }
 
+export function canAccessViralVideos(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss', 'product', 'operator', 'bd', 'editor', 'viewer'].includes(mapped || '')
+}
+
 /** 是否可访问达人建联 */
 export function canAccessInfluencers(role?: string): boolean {
   const mapped = mapOldRole(role)
@@ -278,6 +283,7 @@ export function canAccessPath(pathname: string, role?: string): boolean {
   if (pathname === '/dashboard/price-check') return canAccessPriceCheck(mapped)
   if (pathname === '/dashboard/performance') return canAccessPerformance(mapped)
   if (pathname === '/dashboard/scripts') return canAccessScripts(mapped)
+  if (pathname === '/dashboard/viral-videos') return canAccessViralVideos(mapped)
   if (pathname === '/dashboard/influencers') return canAccessInfluencers(mapped)
   if (pathname === '/dashboard/overview') return ['viewer', 'admin', 'boss'].includes(mapped)
   if (pathname === '/dashboard' || pathname === '/dashboard/account') return true

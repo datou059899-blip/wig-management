@@ -93,7 +93,7 @@ export const PAGE_PERMISSIONS = {
   // 视频相关
   viralVideos: {
     id: 'viralVideos',
-    name: '热门视频拆解',
+    name: '爆款案例库',
     path: '/dashboard/viral-videos',
     icon: 'Video',
     category: '内容',

@@ -41,8 +41,30 @@ export async function GET(request: NextRequest) {
           select: {
             id: true,
             version: true,
+            content: true,
             updatedAt: true,
             editedBy: { select: { id: true, name: true, email: true, role: true } },
+          },
+        },
+        standardAnalysis: {
+          select: {
+            id: true,
+            commonMistakes: true,
+            whyItWorked: true,
+            whatToWatch: true,
+            todayExecution: true,
+            updatedAt: true,
+          },
+        },
+        updateLogs: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            summary: true,
+            impactScope: true,
+            impactArea: true,
+            createdAt: true,
           },
         },
       },
@@ -98,4 +120,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '创建脚本失败' }, { status: 500 })
   }
 }
-
