@@ -4,7 +4,9 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import {
+  Bar,
   CartesianGrid,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
@@ -491,14 +493,48 @@ interface WeeklyConsumptionTrendPoint {
   flags: string[]
 }
 
+interface WeeklyConsumptionStoreTrendPoint {
+  weekStart: string
+  weekEnd: string
+  label: string
+  ordinarySalesConsumedQty: number
+  denominatorOpeningStock: number
+  weightedSalesConsumedQty: number
+  weightedSalesConsumptionRate: number | null
+  validSkuCount: number
+  missingOpeningStockSkuCount: number
+  zeroOpeningStockSkuCount: number
+}
+
+interface WeeklyConsumptionRankingItem {
+  sku: string
+  productId: string
+  productName: string
+  currentAvailableStock: number | null
+  latestCompleteWeek: WeeklyConsumptionTrendPoint
+  previousCompleteWeek: WeeklyConsumptionTrendPoint | null
+  deltaQty: number
+  growthRate: number | null
+  growthLabel: string
+  stockoutImpactLikely: boolean
+}
+
 interface WeeklyConsumptionSkuMetric {
   sku: string
   productId: string
   productName: string
+  currentAvailableStock: number | null
   currentWeek: WeeklyConsumptionTrendPoint | null
   previousComparable: WeeklyConsumptionTrendPoint | null
   unitChange: number | null
   ratePointChange: number | null
+  latestCompleteWeek: WeeklyConsumptionTrendPoint | null
+  previousCompleteWeek: WeeklyConsumptionTrendPoint | null
+  recent4WeekAverageSales: number | null
+  estimatedWeeksOfSupply: number | null
+  trendSummary: string[]
+  earliestValidOpeningStockWeek: string | null
+  missingOpeningStockWeekCount: number
   recentCompleteWeeks: WeeklyConsumptionTrendPoint[]
 }
 
@@ -529,6 +565,10 @@ interface WeeklyConsumptionData {
     missingOpeningStockSkuCount: number
     zeroOpeningStockSkuCount: number
   } | null
+  previousCompleteWeek: WeeklyConsumptionStoreTrendPoint | null
+  weekBeforePrevious: WeeklyConsumptionStoreTrendPoint | null
+  storeCompleteWeekTrend: WeeklyConsumptionStoreTrendPoint[]
+  storeTrendSummary: string[]
   skuOptions: SkuOption[]
   skuMetrics: WeeklyConsumptionSkuMetric[]
   selectedSkuMetric: WeeklyConsumptionSkuMetric | null
@@ -536,6 +576,9 @@ interface WeeklyConsumptionData {
     byConsumedQty: WeeklyConsumptionSkuMetric[]
     byConsumptionRate: WeeklyConsumptionSkuMetric[]
   }
+  rankingByLatestCompleteWeekSales: WeeklyConsumptionRankingItem[]
+  rankingByGrowth: WeeklyConsumptionRankingItem[]
+  rankingByDecline: WeeklyConsumptionRankingItem[]
   notes: string[]
 }
 
@@ -1048,6 +1091,9 @@ export default function ProductSalesPage() {
   const [weeklyConsumptionLoading, setWeeklyConsumptionLoading] = useState(false)
   const [weeklyConsumptionError, setWeeklyConsumptionError] = useState<string | null>(null)
   const [weeklyConsumptionSku, setWeeklyConsumptionSku] = useState('')
+  const [weeklyRankingTab, setWeeklyRankingTab] = useState<'sales' | 'growth' | 'decline'>('sales')
+  const [weeklyMethodOpen, setWeeklyMethodOpen] = useState(false)
+  const [weeklyDetailOpen, setWeeklyDetailOpen] = useState(false)
 
   const [loading, setLoading] = useState(true)
   const [trendLoading, setTrendLoading] = useState(false)
@@ -2801,6 +2847,24 @@ export default function ProductSalesPage() {
     return value > 0 ? `+${text}` : text
   }
 
+  const formatGrowthRate = (value: number | null, fallback: string) => {
+    if (value === null) return fallback
+    return `${value > 0 ? '+' : ''}${(value * 100).toFixed(0)}%`
+  }
+
+  const formatWeeksOfSupply = (value: number | null) => {
+    if (value === null) return '最近无稳定销售，暂无法估算'
+    return `约 ${value.toFixed(1)} 周`
+  }
+
+  const getInclusiveDayCount = (startDate?: string, endDate?: string) => {
+    if (!startDate || !endDate) return 0
+    const start = new Date(`${startDate}T00:00:00`)
+    const end = new Date(`${endDate}T00:00:00`)
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0
+    return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1)
+  }
+
   const formatOpeningStock = (point: WeeklyConsumptionTrendPoint) => {
     if (point.openingStockStatus === 'missing') return '缺少周初库存'
     if (point.openingStockStatus === 'zero') return '周初库存为0'
@@ -2810,6 +2874,13 @@ export default function ProductSalesPage() {
   const getWeeklyChangeTextClass = (value: number | null) => {
     if (value === null || value === 0) return 'text-slate-600'
     return value > 0 ? 'text-emerald-700' : 'text-red-700'
+  }
+
+  const getWeeklyRankingItems = () => {
+    if (!weeklyConsumption) return []
+    if (weeklyRankingTab === 'growth') return weeklyConsumption.rankingByGrowth || []
+    if (weeklyRankingTab === 'decline') return weeklyConsumption.rankingByDecline || []
+    return weeklyConsumption.rankingByLatestCompleteWeekSales || []
   }
 
   const getReminderBadgeClass = (reminder: string) => {
@@ -3701,16 +3772,31 @@ export default function ProductSalesPage() {
                   <div>
                     <h2 className="text-lg font-semibold text-slate-900">周销售消耗趋势</h2>
                     <p className="mt-1 text-sm text-slate-600">
-                      本周口径为周一至当前日期，对比上周同期；样品不计入销售消耗，但会参与周初库存余额重建。
+                      默认看最近 8 个完整自然周；销售消耗不含样品，样品仅参与库存余额重建。
                     </p>
                   </div>
-                  <button
-                    onClick={() => setWeeklyConsumptionExpanded((value) => !value)}
-                    className="inline-flex items-center justify-center rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  >
-                    {weeklyConsumptionExpanded ? '收起' : '展开'}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => setWeeklyMethodOpen((value) => !value)}
+                      className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                    >
+                      查看口径
+                    </button>
+                    <button
+                      onClick={() => setWeeklyConsumptionExpanded((value) => !value)}
+                      className="inline-flex items-center justify-center rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      {weeklyConsumptionExpanded ? '收起' : '展开'}
+                    </button>
+                  </div>
                 </div>
+
+                {weeklyMethodOpen && (
+                  <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    分子只统计普通真实销售订单的 ProductOrderItem.stockConsumedQty；样品不进入销售分子，但会作为真实库存消耗参与下一期周初库存重建。
+                    消耗率只在周初库存可重建且大于 0 时计算；退货退款第一版不使用 netQty 抵消。
+                  </div>
+                )}
 
                 {weeklyConsumptionError && (
                   <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -3718,94 +3804,160 @@ export default function ProductSalesPage() {
                   </div>
                 )}
 
-                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-sm text-slate-500">本周真实销售消耗</div>
+                    <div className="text-sm text-slate-500">上一个完整周真实销售消耗</div>
                     <div className="mt-2 text-2xl font-bold text-slate-900">
-                      {weeklyConsumptionLoading && !weeklyConsumption ? '加载中' : `${weeklyConsumption?.summary?.currentWeekConsumedQty ?? 0} 件`}
+                      {weeklyConsumptionLoading && !weeklyConsumption ? '加载中' : `${weeklyConsumption?.previousCompleteWeek?.ordinarySalesConsumedQty ?? 0} 件`}
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
-                      {weeklyConsumption?.currentWeekRange ? `${weeklyConsumption.currentWeekRange.startDate} ~ ${weeklyConsumption.currentWeekRange.endDate}` : '周一至当前日期'}
+                      {weeklyConsumption?.previousCompleteWeek ? `${weeklyConsumption.previousCompleteWeek.weekStart} ~ ${weeklyConsumption.previousCompleteWeek.weekEnd}` : '最近完整自然周'}
                     </div>
                   </div>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-sm text-slate-500">全店加权销售消耗率</div>
-                    <div className="mt-2 text-2xl font-bold text-slate-900">
-                      {formatWeeklyPercent(weeklyConsumption?.summary?.weightedSalesConsumptionRate ?? null)}
+                    <div className="text-sm text-slate-500">较前一个完整周</div>
+                    <div className={`mt-2 text-2xl font-bold ${getWeeklyChangeTextClass((weeklyConsumption?.previousCompleteWeek?.ordinarySalesConsumedQty ?? 0) - (weeklyConsumption?.weekBeforePrevious?.ordinarySalesConsumedQty ?? 0))}`}>
+                      {formatSignedNumber((weeklyConsumption?.previousCompleteWeek?.ordinarySalesConsumedQty ?? 0) - (weeklyConsumption?.weekBeforePrevious?.ordinarySalesConsumedQty ?? 0))} 件
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
-                      分母 {weeklyConsumption?.summary?.denominatorOpeningStock ?? 0} 件，{weeklyConsumption?.summary?.validSkuCount ?? 0} 个有效 SKU
+                      {weeklyConsumption?.weekBeforePrevious ? `对比 ${weeklyConsumption.weekBeforePrevious.weekStart} ~ ${weeklyConsumption.weekBeforePrevious.weekEnd}` : '数据不足'}
                     </div>
                   </div>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-sm text-slate-500">较上周同期销售件数变化</div>
-                    <div className={`mt-2 text-2xl font-bold ${getWeeklyChangeTextClass(weeklyConsumption?.summary?.consumedQtyChange ?? 0)}`}>
-                      {formatSignedNumber(weeklyConsumption?.summary?.consumedQtyChange ?? 0)} 件
+                    <div className="text-sm text-slate-500">完整周加权销售消耗率</div>
+                    <div className="mt-2 text-2xl font-bold text-slate-900">
+                      {formatWeeklyPercent(weeklyConsumption?.previousCompleteWeek?.weightedSalesConsumptionRate ?? null)}
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
-                      对比 {weeklyConsumption ? `${weeklyConsumption.previousComparableRange.startDate} ~ ${weeklyConsumption.previousComparableRange.endDate}` : '上周同期'}
+                      分母 {weeklyConsumption?.previousCompleteWeek?.denominatorOpeningStock ?? 0} 件
                     </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-sm text-slate-500">有效 SKU 数</div>
+                    <div className="mt-2 text-2xl font-bold text-slate-900">
+                      {weeklyConsumption?.previousCompleteWeek?.validSkuCount ?? 0} 个
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">周初库存可重建且大于 0</div>
                   </div>
                 </div>
 
+                {weeklyConsumption?.currentWeekRange && (
+                  <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3">
+                    <div className="flex flex-col gap-2 text-sm md:flex-row md:items-center md:justify-between">
+                      <div className="font-medium text-slate-900">
+                        本周进度：第 {getInclusiveDayCount(weeklyConsumption.currentWeekRange.startDate, weeklyConsumption.currentWeekRange.endDate)} 天 / 共 7 天
+                      </div>
+                      <div className="text-slate-600">
+                        本周至今销售 {weeklyConsumption.summary?.currentWeekConsumedQty ?? 0} 件；上周同期 {weeklyConsumption.summary?.previousComparableConsumedQty ?? 0} 件；变化
+                        <span className={`ml-1 font-semibold ${getWeeklyChangeTextClass(weeklyConsumption.summary?.consumedQtyChange ?? 0)}`}>
+                          {formatSignedNumber(weeklyConsumption.summary?.consumedQtyChange ?? 0)} 件
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {weeklyConsumption.currentWeekRange.startDate} ～ {weeklyConsumption.currentWeekRange.endDate}
+                      {' '}对比 {weeklyConsumption.previousComparableRange.startDate} ～ {weeklyConsumption.previousComparableRange.endDate}
+                    </div>
+                  </div>
+                )}
+
                 {weeklyConsumptionExpanded && (
                   <div className="mt-5 space-y-5">
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                      口径提示：分子只统计普通真实销售订单的 ProductOrderItem.stockConsumedQty；退货退款第一版不使用 netQty 抵消，不假设退回库存已恢复可售。
-                      消耗率排行默认只展示周初库存可重建且周初库存 ≥ 5 的 SKU。
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                      <div className="rounded-lg border border-slate-200">
-                        <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900">本周销售消耗件数排行</div>
-                        <div className="divide-y divide-slate-100">
-                          {(weeklyConsumption?.rankings.byConsumedQty || []).length === 0 ? (
-                            <div className="px-4 py-6 text-sm text-slate-500">暂无本周普通销售消耗。</div>
-                          ) : (
-                            weeklyConsumption!.rankings.byConsumedQty.map((item, index) => (
-                              <button
-                                key={item.productId}
-                                onClick={() => void loadWeeklyConsumption(item.sku)}
-                                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50"
-                              >
-                                <div className="min-w-0">
-                                  <div className="text-sm font-semibold text-slate-900">#{index + 1} {item.sku}</div>
-                                  <div className="truncate text-xs text-slate-500">{item.productName}</div>
-                                </div>
-                                <div className="text-right">
-                                  <div className="text-sm font-semibold text-slate-900">{item.currentWeek?.ordinarySalesConsumedQty ?? 0} 件</div>
-                                  <div className="text-xs text-slate-500">{formatWeeklyPercent(item.currentWeek?.salesConsumptionRate ?? null)}</div>
-                                </div>
-                              </button>
-                            ))
-                          )}
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_1fr]">
+                      <div className="rounded-lg border border-slate-200 bg-white p-4">
+                        <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">最近 8 个完整周全店趋势</div>
+                            <div className="text-xs text-slate-500">柱形为真实销售消耗件数，折线为全店加权销售消耗率。</div>
+                          </div>
+                        </div>
+                        <div className="mt-4 h-72">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <ComposedChart
+                              data={(weeklyConsumption?.storeCompleteWeekTrend || []).map((point) => ({
+                                ...point,
+                                ratePercent: point.weightedSalesConsumptionRate === null ? null : Number((point.weightedSalesConsumptionRate * 100).toFixed(1)),
+                              }))}
+                              margin={{ top: 8, right: 8, left: 0, bottom: 8 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                              <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                              <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 12 }} />
+                              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} tickFormatter={(value) => `${value}%`} />
+                              <Tooltip formatter={(value, name) => (name === '加权消耗率' ? `${value}%` : `${value} 件`)} />
+                              <Legend />
+                              <Bar yAxisId="left" dataKey="ordinarySalesConsumedQty" name="销售消耗" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                              <Line yAxisId="right" type="monotone" dataKey="ratePercent" name="加权消耗率" stroke="#db2777" strokeWidth={2} dot={{ r: 3 }} />
+                            </ComposedChart>
+                          </ResponsiveContainer>
                         </div>
                       </div>
 
-                      <div className="rounded-lg border border-slate-200">
-                        <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900">本周销售消耗率排行</div>
-                        <div className="divide-y divide-slate-100">
-                          {(weeklyConsumption?.rankings.byConsumptionRate || []).length === 0 ? (
-                            <div className="px-4 py-6 text-sm text-slate-500">暂无满足周初库存 ≥ 5 的消耗率排行。</div>
-                          ) : (
-                            weeklyConsumption!.rankings.byConsumptionRate.map((item, index) => (
-                              <button
-                                key={item.productId}
-                                onClick={() => void loadWeeklyConsumption(item.sku)}
-                                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50"
-                              >
-                                <div className="min-w-0">
-                                  <div className="text-sm font-semibold text-slate-900">#{index + 1} {item.sku}</div>
-                                  <div className="truncate text-xs text-slate-500">{item.productName}</div>
-                                </div>
-                                <div className="text-right">
-                                  <div className="text-sm font-semibold text-slate-900">{formatWeeklyPercent(item.currentWeek?.salesConsumptionRate ?? null)}</div>
-                                  <div className="text-xs text-slate-500">周初 {item.currentWeek?.openingStock ?? '—'}｜销售 {item.currentWeek?.ordinarySalesConsumedQty ?? 0}</div>
-                                </div>
-                              </button>
-                            ))
-                          )}
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                        <div className="text-sm font-semibold text-slate-900">规则结论</div>
+                        <div className="mt-3 space-y-2">
+                          {(weeklyConsumption?.storeTrendSummary || ['数据不足，暂不判断趋势。']).map((message) => (
+                            <div key={message} className="rounded-lg bg-white px-3 py-2 text-sm text-slate-700">
+                              {message}
+                            </div>
+                          ))}
                         </div>
+                        {weeklyConsumption?.summary?.currentWeekConsumedQty === 0 && (
+                          <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                            本周数据尚少，当前展示最近完整周结果。
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-200">
+                      <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">SKU 变化榜</div>
+                          <div className="text-xs text-slate-500">最近完整周对比前一个完整周，默认最多展示前 5 名。</div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {[
+                            { key: 'sales' as const, label: '销售最多' },
+                            { key: 'growth' as const, label: '增长最快' },
+                            { key: 'decline' as const, label: '放缓最多' },
+                          ].map((tab) => (
+                            <button
+                              key={tab.key}
+                              onClick={() => setWeeklyRankingTab(tab.key)}
+                              className={`rounded-lg px-3 py-1.5 text-sm font-medium ${weeklyRankingTab === tab.key ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                            >
+                              {tab.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {getWeeklyRankingItems().slice(0, 5).length === 0 ? (
+                          <div className="px-4 py-6 text-sm text-slate-500">最近完整周暂无可展示排行。</div>
+                        ) : (
+                          getWeeklyRankingItems().slice(0, 5).map((item, index) => (
+                            <button
+                              key={`${weeklyRankingTab}-${item.productId}`}
+                              onClick={() => void loadWeeklyConsumption(item.sku)}
+                              className="grid w-full grid-cols-1 gap-2 px-4 py-3 text-left hover:bg-slate-50 md:grid-cols-[1.2fr_repeat(4,minmax(0,1fr))]"
+                            >
+                              <div className="min-w-0">
+                                <div className="text-sm font-semibold text-slate-900">#{index + 1} {item.sku}</div>
+                                <div className="truncate text-xs text-slate-500">{item.productName}</div>
+                              </div>
+                              <div className="text-sm text-slate-700">最近周 <span className="font-semibold text-slate-900">{item.latestCompleteWeek.ordinarySalesConsumedQty}</span> 件</div>
+                              <div className="text-sm text-slate-700">前一周 <span className="font-semibold text-slate-900">{item.previousCompleteWeek?.ordinarySalesConsumedQty ?? 0}</span> 件</div>
+                              <div className={`text-sm font-semibold ${getWeeklyChangeTextClass(item.deltaQty)}`}>
+                                {formatSignedNumber(item.deltaQty)} 件 / {formatGrowthRate(item.growthRate, item.growthLabel)}
+                              </div>
+                              <div className="text-sm text-slate-700">
+                                消耗率 {formatWeeklyPercent(item.latestCompleteWeek.salesConsumptionRate)}｜库存 {item.currentAvailableStock ?? '—'}
+                                {weeklyRankingTab === 'decline' && item.stockoutImpactLikely ? <span className="ml-2 text-xs text-red-600">可能缺货影响</span> : null}
+                              </div>
+                            </button>
+                          ))
+                        )}
                       </div>
                     </div>
 
@@ -3833,58 +3985,116 @@ export default function ProductSalesPage() {
                         <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">周销售消耗趋势加载中...</div>
                       ) : weeklySelectedMetric ? (
                         <div className="mt-4 space-y-4">
-                          <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
-                            <div className="rounded-lg bg-white p-3">
-                              <div className="text-xs text-slate-500">本周销售消耗</div>
-                              <div className="mt-1 text-lg font-semibold text-slate-900">{weeklySelectedMetric.currentWeek?.ordinarySalesConsumedQty ?? 0} 件</div>
+                          <div className="rounded-lg border border-slate-200 bg-white p-4">
+                            <div className="text-sm font-semibold text-slate-900">运营结论</div>
+                            <div className="mt-3 space-y-2">
+                              {weeklySelectedMetric.trendSummary.map((message) => (
+                                <div key={message} className="text-sm text-slate-700">{message}</div>
+                              ))}
                             </div>
-                            <div className="rounded-lg bg-white p-3">
-                              <div className="text-xs text-slate-500">本周周初库存</div>
-                              <div className="mt-1 text-lg font-semibold text-slate-900">{weeklySelectedMetric.currentWeek ? formatOpeningStock(weeklySelectedMetric.currentWeek) : '—'}</div>
-                            </div>
-                            <div className="rounded-lg bg-white p-3">
-                              <div className="text-xs text-slate-500">本周销售消耗率</div>
-                              <div className="mt-1 text-lg font-semibold text-slate-900">{formatWeeklyPercent(weeklySelectedMetric.currentWeek?.salesConsumptionRate ?? null)}</div>
-                            </div>
-                            <div className="rounded-lg bg-white p-3">
-                              <div className="text-xs text-slate-500">上周同期销售</div>
-                              <div className="mt-1 text-lg font-semibold text-slate-900">{weeklySelectedMetric.previousComparable?.ordinarySalesConsumedQty ?? 0} 件</div>
-                            </div>
-                            <div className="rounded-lg bg-white p-3">
-                              <div className="text-xs text-slate-500">件数环比</div>
-                              <div className={`mt-1 text-lg font-semibold ${getWeeklyChangeTextClass(weeklySelectedMetric.unitChange)}`}>{formatSignedNumber(weeklySelectedMetric.unitChange)} 件</div>
-                            </div>
-                            <div className="rounded-lg bg-white p-3">
-                              <div className="text-xs text-slate-500">消耗率变化</div>
-                              <div className={`mt-1 text-lg font-semibold ${getWeeklyChangeTextClass(weeklySelectedMetric.ratePointChange)}`}>{formatWeeklyRatePoint(weeklySelectedMetric.ratePointChange)}</div>
+                            <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                              {weeklySelectedMetric.missingOpeningStockWeekCount > 0
+                                ? `该 SKU 有 ${weeklySelectedMetric.missingOpeningStockWeekCount} 个历史周无法计算销售消耗率。最早可用库存锚点为 ${weeklySelectedMetric.earliestValidOpeningStockWeek || '暂无'}，缺失周期仅展示销售件数。`
+                                : '该 SKU 最近完整周均可重建周初库存，可同时查看销量和销售消耗率。'}
                             </div>
                           </div>
 
-                          <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-                            <table className="w-full text-sm">
-                              <thead>
-                                <tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-500">
-                                  <th className="px-4 py-3">周期</th>
-                                  <th className="px-4 py-3">周初库存</th>
-                                  <th className="px-4 py-3">普通销售消耗</th>
-                                  <th className="px-4 py-3">销售消耗率</th>
-                                  <th className="px-4 py-3">样品消耗</th>
-                                  <th className="px-4 py-3">异常标记</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {weeklySelectedMetric.recentCompleteWeeks.map((point) => (
-                                  <tr key={point.weekStart} className="border-b border-slate-100">
-                                    <td className="px-4 py-3 text-slate-700">{point.label}</td>
-                                    <td className="px-4 py-3 text-slate-700">{formatOpeningStock(point)}</td>
-                                    <td className="px-4 py-3 font-semibold text-slate-900">{point.ordinarySalesConsumedQty}</td>
-                                    <td className="px-4 py-3 text-slate-700">{formatWeeklyPercent(point.salesConsumptionRate)}</td>
-                                    <td className="px-4 py-3 text-slate-700">{point.sampleConsumedQty}</td>
-                                    <td className="px-4 py-3 text-slate-500">{point.flags.length > 0 ? point.flags.join(' / ') : '—'}</td>
-                                  </tr>
+                          <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
+                            <div className="rounded-lg bg-white p-3">
+                              <div className="text-xs text-slate-500">最近完整周销售</div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900">{weeklySelectedMetric.latestCompleteWeek?.ordinarySalesConsumedQty ?? 0} 件</div>
+                            </div>
+                            <div className="rounded-lg bg-white p-3">
+                              <div className="text-xs text-slate-500">最近完整周周初库存</div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900">{weeklySelectedMetric.latestCompleteWeek ? formatOpeningStock(weeklySelectedMetric.latestCompleteWeek) : '—'}</div>
+                            </div>
+                            <div className="rounded-lg bg-white p-3">
+                              <div className="text-xs text-slate-500">最近完整周消耗率</div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900">{formatWeeklyPercent(weeklySelectedMetric.latestCompleteWeek?.salesConsumptionRate ?? null)}</div>
+                            </div>
+                            <div className="rounded-lg bg-white p-3">
+                              <div className="text-xs text-slate-500">前一完整周销售</div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900">{weeklySelectedMetric.previousCompleteWeek?.ordinarySalesConsumedQty ?? 0} 件</div>
+                            </div>
+                            <div className="rounded-lg bg-white p-3">
+                              <div className="text-xs text-slate-500">当前库存</div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900">{weeklySelectedMetric.currentAvailableStock ?? '—'} 件</div>
+                            </div>
+                            <div className="rounded-lg bg-white p-3">
+                              <div className="text-xs text-slate-500">预计可售周数</div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900">{formatWeeksOfSupply(weeklySelectedMetric.estimatedWeeksOfSupply)}</div>
+                            </div>
+                          </div>
+
+                          <div className="rounded-lg border border-slate-200 bg-white p-4">
+                            <div className="text-sm font-semibold text-slate-900">最近 8 个完整周 SKU 趋势</div>
+                            <div className="mt-4 h-72">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart
+                                  data={weeklySelectedMetric.recentCompleteWeeks.map((point) => ({
+                                    ...point,
+                                    ratePercent: point.salesConsumptionRate === null ? null : Number((point.salesConsumptionRate * 100).toFixed(1)),
+                                  }))}
+                                  margin={{ top: 8, right: 8, left: 0, bottom: 8 }}
+                                >
+                                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                  <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                                  <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 12 }} />
+                                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} tickFormatter={(value) => `${value}%`} />
+                                  <Tooltip formatter={(value, name) => (name === '销售消耗率' ? `${value}%` : `${value} 件`)} />
+                                  <Legend />
+                                  <Bar yAxisId="left" dataKey="ordinarySalesConsumedQty" name="销售消耗" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                                  <Line yAxisId="right" type="monotone" dataKey="ratePercent" name="销售消耗率" stroke="#db2777" strokeWidth={2} dot={{ r: 3 }} />
+                                </ComposedChart>
+                              </ResponsiveContainer>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {weeklySelectedMetric.recentCompleteWeeks
+                                .filter((point) => point.flags.length > 0)
+                                .map((point) => (
+                                  <span key={`${point.weekStart}-flags`} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">
+                                    {point.label}: {point.flags.join(' / ')}
+                                  </span>
                                 ))}
-                              </tbody>
-                            </table>
+                            </div>
+                          </div>
+
+                          <div className="rounded-lg border border-slate-200 bg-white">
+                            <button
+                              onClick={() => setWeeklyDetailOpen((value) => !value)}
+                              className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-slate-900 hover:bg-slate-50"
+                            >
+                              <span>查看每周明细</span>
+                              <span className="text-xs text-slate-500">{weeklyDetailOpen ? '收起' : '展开'}</span>
+                            </button>
+                            {weeklyDetailOpen && (
+                              <div className="overflow-x-auto border-t border-slate-200">
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-500">
+                                      <th className="px-4 py-3">周期</th>
+                                      <th className="px-4 py-3">周初库存</th>
+                                      <th className="px-4 py-3">普通销售消耗</th>
+                                      <th className="px-4 py-3">销售消耗率</th>
+                                      <th className="px-4 py-3">样品消耗</th>
+                                      <th className="px-4 py-3">异常标记</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {weeklySelectedMetric.recentCompleteWeeks.map((point) => (
+                                      <tr key={point.weekStart} className="border-b border-slate-100">
+                                        <td className="px-4 py-3 text-slate-700">{point.label}</td>
+                                        <td className="px-4 py-3 text-slate-700">{formatOpeningStock(point)}</td>
+                                        <td className="px-4 py-3 font-semibold text-slate-900">{point.ordinarySalesConsumedQty}</td>
+                                        <td className="px-4 py-3 text-slate-700">{formatWeeklyPercent(point.salesConsumptionRate)}</td>
+                                        <td className="px-4 py-3 text-slate-700">{point.sampleConsumedQty}</td>
+                                        <td className="px-4 py-3 text-slate-500">{point.flags.length > 0 ? point.flags.join(' / ') : '—'}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
                           </div>
                         </div>
                       ) : (

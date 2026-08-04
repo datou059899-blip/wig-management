@@ -23,14 +23,48 @@ export type WeeklyConsumptionTrendPoint = {
   flags: string[]
 }
 
+export type WeeklyConsumptionStoreTrendPoint = {
+  weekStart: string
+  weekEnd: string
+  label: string
+  ordinarySalesConsumedQty: number
+  denominatorOpeningStock: number
+  weightedSalesConsumedQty: number
+  weightedSalesConsumptionRate: number | null
+  validSkuCount: number
+  missingOpeningStockSkuCount: number
+  zeroOpeningStockSkuCount: number
+}
+
+export type WeeklyConsumptionRankingItem = {
+  sku: string
+  productId: string
+  productName: string
+  currentAvailableStock: number | null
+  latestCompleteWeek: WeeklyConsumptionTrendPoint
+  previousCompleteWeek: WeeklyConsumptionTrendPoint | null
+  deltaQty: number
+  growthRate: number | null
+  growthLabel: string
+  stockoutImpactLikely: boolean
+}
+
 export type WeeklyConsumptionSkuMetric = {
   sku: string
   productId: string
   productName: string
+  currentAvailableStock: number | null
   currentWeek: WeeklyConsumptionTrendPoint | null
   previousComparable: WeeklyConsumptionTrendPoint | null
   unitChange: number | null
   ratePointChange: number | null
+  latestCompleteWeek: WeeklyConsumptionTrendPoint | null
+  previousCompleteWeek: WeeklyConsumptionTrendPoint | null
+  recent4WeekAverageSales: number | null
+  estimatedWeeksOfSupply: number | null
+  trendSummary: string[]
+  earliestValidOpeningStockWeek: string | null
+  missingOpeningStockWeekCount: number
   recentCompleteWeeks: WeeklyConsumptionTrendPoint[]
 }
 
@@ -63,6 +97,10 @@ export type WeeklyConsumptionData = {
     endExclusive: string
   }
   summary: WeeklyConsumptionSummary | null
+  previousCompleteWeek: WeeklyConsumptionStoreTrendPoint | null
+  weekBeforePrevious: WeeklyConsumptionStoreTrendPoint | null
+  storeCompleteWeekTrend: WeeklyConsumptionStoreTrendPoint[]
+  storeTrendSummary: string[]
   skuOptions: Array<{ sku: string; label: string }>
   skuMetrics: WeeklyConsumptionSkuMetric[]
   selectedSkuMetric: WeeklyConsumptionSkuMetric | null
@@ -70,6 +108,9 @@ export type WeeklyConsumptionData = {
     byConsumedQty: WeeklyConsumptionSkuMetric[]
     byConsumptionRate: WeeklyConsumptionSkuMetric[]
   }
+  rankingByLatestCompleteWeekSales: WeeklyConsumptionRankingItem[]
+  rankingByGrowth: WeeklyConsumptionRankingItem[]
+  rankingByDecline: WeeklyConsumptionRankingItem[]
   queryWindow: {
     earliestRequestedWeekStart: string
     earliestRequiredAnchorDate: string | null
@@ -83,6 +124,7 @@ type ProductRow = {
   id: string
   name: string
   sku: string | null
+  stock: number
   aliases: Array<{ aliasSku: string | null }>
 }
 
@@ -362,6 +404,80 @@ function createEmptySummary(): WeeklyConsumptionSummary {
   }
 }
 
+function createEmptyStoreTrendPoint(range: WeekRange): WeeklyConsumptionStoreTrendPoint {
+  return {
+    weekStart: formatDateKey(range.startDate),
+    weekEnd: formatDateKey(range.endDate),
+    label: `${formatDateKey(range.startDate).slice(5)}~${formatDateKey(range.endDate).slice(5)}`,
+    ordinarySalesConsumedQty: 0,
+    denominatorOpeningStock: 0,
+    weightedSalesConsumedQty: 0,
+    weightedSalesConsumptionRate: null,
+    validSkuCount: 0,
+    missingOpeningStockSkuCount: 0,
+    zeroOpeningStockSkuCount: 0,
+  }
+}
+
+function buildStoreTrendPoint(range: WeekRange, points: WeeklyConsumptionTrendPoint[]): WeeklyConsumptionStoreTrendPoint {
+  const validPoints = points.filter((point) => (
+    point.openingStockStatus === 'ok'
+    && point.openingStock !== null
+    && point.openingStock > 0
+  ))
+  const denominatorOpeningStock = validPoints.reduce((sum, point) => sum + (point.openingStock || 0), 0)
+  const weightedSalesConsumedQty = validPoints.reduce((sum, point) => sum + point.ordinarySalesConsumedQty, 0)
+
+  return {
+    ...createEmptyStoreTrendPoint(range),
+    ordinarySalesConsumedQty: points.reduce((sum, point) => sum + point.ordinarySalesConsumedQty, 0),
+    denominatorOpeningStock,
+    weightedSalesConsumedQty,
+    weightedSalesConsumptionRate: denominatorOpeningStock > 0 ? weightedSalesConsumedQty / denominatorOpeningStock : null,
+    validSkuCount: validPoints.length,
+    missingOpeningStockSkuCount: points.filter((point) => point.openingStockStatus === 'missing').length,
+    zeroOpeningStockSkuCount: points.filter((point) => point.openingStockStatus === 'zero').length,
+  }
+}
+
+function buildStoreCompleteWeekTrend(contexts: ProductInventoryContext[], ranges: WeekRange[]) {
+  return ranges.map((range) => buildStoreTrendPoint(
+    range,
+    contexts.map((context) => buildWeekPoint({ range, context })),
+  ))
+}
+
+function buildStoreTrendSummary(trend: WeeklyConsumptionStoreTrendPoint[]) {
+  const latest = trend[trend.length - 1]
+  const previous = trend[trend.length - 2]
+  if (!latest || !previous) return ['数据不足，暂不判断趋势。']
+
+  const messages: string[] = []
+  const delta = latest.ordinarySalesConsumedQty - previous.ordinarySalesConsumedQty
+  if (delta > 0) messages.push(`最近一周较前一周增长 ${delta} 件。`)
+  else if (delta < 0) messages.push(`最近一周较前一周回落 ${Math.abs(delta)} 件。`)
+  else messages.push('最近一周与前一周销量持平。')
+
+  let streak = 0
+  for (let index = trend.length - 1; index > 0; index -= 1) {
+    const current = trend[index]
+    const before = trend[index - 1]
+    if (current.ordinarySalesConsumedQty > before.ordinarySalesConsumedQty) streak += 1
+    else break
+  }
+  if (streak >= 2) messages.push(`已连续 ${streak} 周增长。`)
+
+  const average = trend.reduce((sum, point) => sum + point.ordinarySalesConsumedQty, 0) / trend.length
+  if (average > 0) {
+    const diffRate = (latest.ordinarySalesConsumedQty - average) / average
+    if (Math.abs(diffRate) >= 0.05) {
+      messages.push(`最近一周较 ${trend.length} 周平均${diffRate > 0 ? '高' : '低'} ${Math.abs(diffRate * 100).toFixed(0)}%。`)
+    }
+  }
+
+  return messages
+}
+
 function buildWeightedSummary(metrics: WeeklyConsumptionSkuMetric[]) {
   const withCurrent = metrics.filter((metric) => metric.currentWeek)
   if (withCurrent.length === 0) return createEmptySummary()
@@ -406,6 +522,7 @@ async function loadProductsAndAliases() {
       id: true,
       name: true,
       sku: true,
+      stock: true,
       aliases: { select: { aliasSku: true } },
     },
     orderBy: { sku: 'asc' },
@@ -462,6 +579,45 @@ function buildProductContexts(
   })
 }
 
+function resolveCurrentAvailableStock(context: ProductInventoryContext) {
+  const latestSnapshot = context.snapshots[0]
+  if (latestSnapshot) return latestSnapshot.quantity
+  return context.product.stock
+}
+
+function averageRecentSales(points: WeeklyConsumptionTrendPoint[], count: number) {
+  const recent = points.slice(-count)
+  if (recent.length === 0) return null
+  return recent.reduce((sum, point) => sum + point.ordinarySalesConsumedQty, 0) / recent.length
+}
+
+function buildSkuTrendSummary(metric: WeeklyConsumptionSkuMetric) {
+  const latest = metric.latestCompleteWeek
+  const previous = metric.previousCompleteWeek
+  if (!latest || !previous) return ['完整周数据不足，暂不判断趋势。']
+
+  const messages: string[] = []
+  const delta = latest.ordinarySalesConsumedQty - previous.ordinarySalesConsumedQty
+  if (delta > 0) messages.push(`${metric.sku} 最近完整周销售 ${latest.ordinarySalesConsumedQty} 件，较前一周增加 ${delta} 件。`)
+  else if (delta < 0) messages.push(`${metric.sku} 最近完整周销售 ${latest.ordinarySalesConsumedQty} 件，较前一周减少 ${Math.abs(delta)} 件。`)
+  else messages.push(`${metric.sku} 最近完整周销售 ${latest.ordinarySalesConsumedQty} 件，与前一周持平。`)
+
+  if (latest.salesConsumptionRate !== null && previous.salesConsumptionRate !== null) {
+    const rateDelta = latest.salesConsumptionRate - previous.salesConsumptionRate
+    messages.push(`销售消耗率由 ${(previous.salesConsumptionRate * 100).toFixed(1)}% ${rateDelta >= 0 ? '上升至' : '下降至'} ${(latest.salesConsumptionRate * 100).toFixed(1)}%。`)
+  } else if (metric.missingOpeningStockWeekCount > 0) {
+    messages.push('部分历史周缺少周初库存，只能看销量，不能计算销售消耗率。')
+  }
+
+  if (metric.recent4WeekAverageSales !== null && metric.recent4WeekAverageSales > 0 && metric.estimatedWeeksOfSupply !== null) {
+    messages.push(`按最近 4 个完整周平均销售速度，当前库存预计可售约 ${metric.estimatedWeeksOfSupply.toFixed(1)} 周。`)
+  } else {
+    messages.push('最近无稳定销售，暂无法估算可售周数。')
+  }
+
+  return messages
+}
+
 function buildMetric(params: {
   context: ProductInventoryContext
   ranges: ReturnType<typeof buildWeekRanges>
@@ -478,18 +634,40 @@ function buildMetric(params: {
   const recentCompleteWeeks = params.includeRecentWeeks
     ? params.ranges.completeWeekRanges.map((range) => buildWeekPoint({ range, context: params.context }))
     : []
+  const latestCompleteWeek = recentCompleteWeeks[recentCompleteWeeks.length - 1] || null
+  const previousCompleteWeek = recentCompleteWeeks[recentCompleteWeeks.length - 2] || null
+  const currentAvailableStock = resolveCurrentAvailableStock(params.context)
+  const recent4WeekAverageSales = params.includeRecentWeeks ? averageRecentSales(recentCompleteWeeks, 4) : null
+  const estimatedWeeksOfSupply = recent4WeekAverageSales && recent4WeekAverageSales > 0
+    ? currentAvailableStock / recent4WeekAverageSales
+    : null
+  const earliestValidOpeningStockWeek = recentCompleteWeeks.find((point) => point.openingStockStatus === 'ok')?.weekStart || null
+  const missingOpeningStockWeekCount = recentCompleteWeeks.filter((point) => point.openingStockStatus !== 'ok').length
 
-  return {
+  const metric: WeeklyConsumptionSkuMetric = {
     sku: params.context.primarySku,
     productId: params.context.product.id,
     productName: params.context.product.name,
+    currentAvailableStock,
     currentWeek,
     previousComparable,
     unitChange: currentWeek ? currentWeek.ordinarySalesConsumedQty - previousComparable.ordinarySalesConsumedQty : null,
     ratePointChange: currentWeek?.salesConsumptionRate !== null && currentWeek?.salesConsumptionRate !== undefined && previousComparable.salesConsumptionRate !== null
       ? currentWeek.salesConsumptionRate - previousComparable.salesConsumptionRate
       : null,
+    latestCompleteWeek,
+    previousCompleteWeek,
+    recent4WeekAverageSales,
+    estimatedWeeksOfSupply,
+    trendSummary: [],
+    earliestValidOpeningStockWeek,
+    missingOpeningStockWeekCount,
     recentCompleteWeeks,
+  }
+
+  return {
+    ...metric,
+    trendSummary: params.includeRecentWeeks ? buildSkuTrendSummary(metric) : [],
   }
 }
 
@@ -506,6 +684,60 @@ function buildRankings(metrics: WeeklyConsumptionSkuMetric[]) {
         && metric.currentWeek?.salesConsumptionRate !== null
       ))
       .sort((a, b) => (b.currentWeek?.salesConsumptionRate || 0) - (a.currentWeek?.salesConsumptionRate || 0))
+      .slice(0, 10),
+  }
+}
+
+function formatGrowthLabel(latestQty: number, previousQty: number) {
+  const delta = latestQty - previousQty
+  if (previousQty === 0 && latestQty > 0) return `由 0 增至 ${latestQty} 件`
+  if (previousQty === 0) return '—'
+  const rate = delta / previousQty
+  return `${rate > 0 ? '+' : ''}${(rate * 100).toFixed(0)}%`
+}
+
+function toRankingItem(metric: WeeklyConsumptionSkuMetric): WeeklyConsumptionRankingItem | null {
+  if (!metric.latestCompleteWeek) return null
+  const latestQty = metric.latestCompleteWeek.ordinarySalesConsumedQty
+  const previousQty = metric.previousCompleteWeek?.ordinarySalesConsumedQty || 0
+  const deltaQty = latestQty - previousQty
+  return {
+    sku: metric.sku,
+    productId: metric.productId,
+    productName: metric.productName,
+    currentAvailableStock: metric.currentAvailableStock,
+    latestCompleteWeek: metric.latestCompleteWeek,
+    previousCompleteWeek: metric.previousCompleteWeek,
+    deltaQty,
+    growthRate: previousQty > 0 ? deltaQty / previousQty : null,
+    growthLabel: formatGrowthLabel(latestQty, previousQty),
+    stockoutImpactLikely: (metric.currentAvailableStock || 0) <= 0 || metric.latestCompleteWeek.openingStockStatus === 'zero',
+  }
+}
+
+function buildCompleteWeekRankings(metrics: WeeklyConsumptionSkuMetric[]) {
+  const items = metrics
+    .map(toRankingItem)
+    .filter((item): item is WeeklyConsumptionRankingItem => item !== null)
+
+  return {
+    rankingByLatestCompleteWeekSales: [...items]
+      .filter((item) => item.latestCompleteWeek.ordinarySalesConsumedQty > 0)
+      .sort((a, b) => b.latestCompleteWeek.ordinarySalesConsumedQty - a.latestCompleteWeek.ordinarySalesConsumedQty)
+      .slice(0, 10),
+    rankingByGrowth: [...items]
+      .filter((item) => Math.max(
+        item.latestCompleteWeek.ordinarySalesConsumedQty,
+        item.previousCompleteWeek?.ordinarySalesConsumedQty || 0,
+      ) >= 2 && item.deltaQty > 0)
+      .sort((a, b) => b.deltaQty - a.deltaQty)
+      .slice(0, 10),
+    rankingByDecline: [...items]
+      .filter((item) => Math.max(
+        item.latestCompleteWeek.ordinarySalesConsumedQty,
+        item.previousCompleteWeek?.ordinarySalesConsumedQty || 0,
+      ) >= 2 && item.deltaQty < 0)
+      .sort((a, b) => a.deltaQty - b.deltaQty)
       .slice(0, 10),
   }
 }
@@ -648,6 +880,24 @@ export async function getProductSalesWeeklyConsumptionData(options: {
         includeRecentWeeks: false,
       }))
     : []
+  const completeWeekMetrics = mode === 'summary'
+    ? contexts.map((context) => buildMetric({
+        context,
+        ranges,
+        includeCurrentWeek: false,
+        includeRecentWeeks: true,
+      }))
+    : []
+  const storeCompleteWeekTrend = mode === 'summary'
+    ? buildStoreCompleteWeekTrend(contexts, ranges.completeWeekRanges)
+    : []
+  const completeWeekRankings = mode === 'summary'
+    ? buildCompleteWeekRankings(completeWeekMetrics)
+    : {
+        rankingByLatestCompleteWeekSales: [],
+        rankingByGrowth: [],
+        rankingByDecline: [],
+      }
   const selectedContext = selectedSkuKey ? resolveSelectedContext(contexts, options.sku || '') : null
   const selectedSkuMetric = mode === 'detail' && selectedContext
     ? buildMetric({
@@ -676,17 +926,15 @@ export async function getProductSalesWeeklyConsumptionData(options: {
       endExclusive: formatDateKey(ranges.previousComparable.endExclusive),
     },
     summary: mode === 'summary' ? buildWeightedSummary(summaryMetrics) : null,
+    previousCompleteWeek: storeCompleteWeekTrend[storeCompleteWeekTrend.length - 1] || null,
+    weekBeforePrevious: storeCompleteWeekTrend[storeCompleteWeekTrend.length - 2] || null,
+    storeCompleteWeekTrend,
+    storeTrendSummary: mode === 'summary' ? buildStoreTrendSummary(storeCompleteWeekTrend) : [],
     skuOptions,
-    skuMetrics: mode === 'detail'
-      ? targetContexts.map((context) => buildMetric({
-          context,
-          ranges,
-          includeCurrentWeek,
-          includeRecentWeeks: true,
-        }))
-      : [],
+    skuMetrics: mode === 'detail' && selectedSkuMetric ? [selectedSkuMetric] : [],
     selectedSkuMetric,
     rankings: mode === 'summary' ? buildRankings(summaryMetrics) : { byConsumedQty: [], byConsumptionRate: [] },
+    ...completeWeekRankings,
     queryWindow: {
       earliestRequestedWeekStart: formatDateKey(ranges.earliestRequestedWeekStart),
       earliestRequiredAnchorDate: earliestAnchorDate ? formatDateKey(earliestAnchorDate) : null,
