@@ -604,7 +604,19 @@ function buildSkuTrendSummary(metric: WeeklyConsumptionSkuMetric) {
 
   if (latest.salesConsumptionRate !== null && previous.salesConsumptionRate !== null) {
     const rateDelta = latest.salesConsumptionRate - previous.salesConsumptionRate
-    messages.push(`销售消耗率由 ${(previous.salesConsumptionRate * 100).toFixed(1)}% ${rateDelta >= 0 ? '上升至' : '下降至'} ${(latest.salesConsumptionRate * 100).toFixed(1)}%。`)
+    const previousRateText = `${(previous.salesConsumptionRate * 100).toFixed(1)}%`
+    const latestRateText = `${(latest.salesConsumptionRate * 100).toFixed(1)}%`
+    if (rateDelta === 0) {
+      messages.push(`销售消耗率保持在 ${latestRateText}。`)
+    } else {
+      messages.push(`销售消耗率由 ${previousRateText} ${rateDelta > 0 ? '上升至' : '下降至'} ${latestRateText}。`)
+    }
+  } else if (latest.salesConsumptionRate === null && previous.salesConsumptionRate === null) {
+    messages.push('最近两个完整周均缺少可计算的周初库存，暂无法比较销售消耗率。')
+  } else if (latest.salesConsumptionRate === null) {
+    messages.push('最近完整周缺少可计算的周初库存，暂无法与前一周比较销售消耗率。')
+  } else if (previous.salesConsumptionRate === null) {
+    messages.push('前一完整周缺少可计算的周初库存，暂无法与最近完整周比较销售消耗率。')
   } else if (metric.missingOpeningStockWeekCount > 0) {
     messages.push('部分历史周缺少周初库存，只能看销量，不能计算销售消耗率。')
   }

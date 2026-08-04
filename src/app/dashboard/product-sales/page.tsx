@@ -582,6 +582,18 @@ interface WeeklyConsumptionData {
   notes: string[]
 }
 
+type StoreWeeklyChartPoint = WeeklyConsumptionStoreTrendPoint & {
+  ratePercent: number | null
+}
+
+type SkuWeeklyChartPoint = WeeklyConsumptionTrendPoint & {
+  ratePercent: number | null
+}
+
+type WeeklyTooltipPayload<T> = ReadonlyArray<{
+  payload?: T
+}>
+
 interface ProductSalesGroup {
   id: string
   name: string
@@ -2871,6 +2883,60 @@ export default function ProductSalesPage() {
     return String(point.openingStock)
   }
 
+  const formatChartRatePercent = (value: number | null) => {
+    if (value === null) return '无法计算'
+    return `${value.toFixed(1)}%`
+  }
+
+  const renderStoreWeeklyTooltip = ({
+    active,
+    payload,
+  }: {
+    active?: boolean
+    payload?: WeeklyTooltipPayload<StoreWeeklyChartPoint>
+  }) => {
+    const point = payload?.[0]?.payload
+    if (!active || !point) return null
+
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
+        <div className="mb-1 font-semibold text-slate-900">{point.weekStart} ~ {point.weekEnd}</div>
+        <div className="text-slate-600">真实销售消耗：<span className="font-medium text-slate-900">{point.ordinarySalesConsumedQty} 件</span></div>
+        <div className="text-slate-600">有效周初库存：<span className="font-medium text-slate-900">{point.denominatorOpeningStock} 件</span></div>
+        <div className="text-slate-600">加权销售消耗率：<span className="font-medium text-slate-900">{formatChartRatePercent(point.ratePercent)}</span></div>
+        <div className="text-slate-600">有效 SKU 数：<span className="font-medium text-slate-900">{point.validSkuCount} 个</span></div>
+      </div>
+    )
+  }
+
+  const renderSkuWeeklyTooltip = ({
+    active,
+    payload,
+  }: {
+    active?: boolean
+    payload?: WeeklyTooltipPayload<SkuWeeklyChartPoint>
+  }) => {
+    const point = payload?.[0]?.payload
+    if (!active || !point) return null
+
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg">
+        <div className="mb-1 font-semibold text-slate-900">{point.weekStart} ~ {point.weekEnd}</div>
+        <div className="text-slate-600">普通销售消耗：<span className="font-medium text-slate-900">{point.ordinarySalesConsumedQty} 件</span></div>
+        <div className="text-slate-600">周初库存：<span className="font-medium text-slate-900">{formatOpeningStock(point)}</span></div>
+        <div className="text-slate-600">销售消耗率：<span className="font-medium text-slate-900">{formatChartRatePercent(point.ratePercent)}</span></div>
+        <div className="text-slate-600">样品消耗：<span className="font-medium text-slate-900">{point.sampleConsumedQty} 件</span></div>
+        <div className="text-slate-600">周中补货：<span className="font-medium text-slate-900">{point.hasReplenishment ? '是' : '否'}</span></div>
+        <div className="text-slate-600">周中人工调整：<span className="font-medium text-slate-900">{point.hasManualAdjustment ? '是' : '否'}</span></div>
+        {point.openingStockStatus !== 'ok' && (
+          <div className="mt-1 text-amber-700">
+            {point.openingStockStatus === 'zero' ? '周初库存为 0，消耗率无法计算。' : '缺少周初库存，消耗率无法计算。'}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const getWeeklyChangeTextClass = (value: number | null) => {
     if (value === null || value === 0) return 'text-slate-600'
     return value > 0 ? 'text-emerald-700' : 'text-red-700'
@@ -3881,13 +3947,23 @@ export default function ProductSalesPage() {
                               margin={{ top: 8, right: 8, left: 0, bottom: 8 }}
                             >
                               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                              <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                              <XAxis dataKey="label" interval={0} angle={-25} textAnchor="end" height={52} tick={{ fontSize: 10 }} />
                               <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 12 }} />
                               <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} tickFormatter={(value) => `${value}%`} />
-                              <Tooltip formatter={(value, name) => (name === '加权消耗率' ? `${value}%` : `${value} 件`)} />
+                              <Tooltip content={renderStoreWeeklyTooltip} />
                               <Legend />
                               <Bar yAxisId="left" dataKey="ordinarySalesConsumedQty" name="销售消耗" fill="#2563eb" radius={[4, 4, 0, 0]} />
-                              <Line yAxisId="right" type="monotone" dataKey="ratePercent" name="加权消耗率" stroke="#db2777" strokeWidth={2} dot={{ r: 3 }} />
+                              <Line
+                                yAxisId="right"
+                                type="linear"
+                                dataKey="ratePercent"
+                                name="加权消耗率"
+                                stroke="#db2777"
+                                strokeWidth={2}
+                                connectNulls={false}
+                                dot={{ r: 4 }}
+                                activeDot={{ r: 6 }}
+                              />
                             </ComposedChart>
                           </ResponsiveContainer>
                         </div>
@@ -4038,13 +4114,23 @@ export default function ProductSalesPage() {
                                   margin={{ top: 8, right: 8, left: 0, bottom: 8 }}
                                 >
                                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                                  <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                                  <XAxis dataKey="label" interval={0} angle={-25} textAnchor="end" height={52} tick={{ fontSize: 10 }} />
                                   <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 12 }} />
                                   <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} tickFormatter={(value) => `${value}%`} />
-                                  <Tooltip formatter={(value, name) => (name === '销售消耗率' ? `${value}%` : `${value} 件`)} />
+                                  <Tooltip content={renderSkuWeeklyTooltip} />
                                   <Legend />
                                   <Bar yAxisId="left" dataKey="ordinarySalesConsumedQty" name="销售消耗" fill="#2563eb" radius={[4, 4, 0, 0]} />
-                                  <Line yAxisId="right" type="monotone" dataKey="ratePercent" name="销售消耗率" stroke="#db2777" strokeWidth={2} dot={{ r: 3 }} />
+                                  <Line
+                                    yAxisId="right"
+                                    type="linear"
+                                    dataKey="ratePercent"
+                                    name="销售消耗率"
+                                    stroke="#db2777"
+                                    strokeWidth={2}
+                                    connectNulls={false}
+                                    dot={{ r: 4 }}
+                                    activeDot={{ r: 6 }}
+                                  />
                                 </ComposedChart>
                               </ResponsiveContainer>
                             </div>
