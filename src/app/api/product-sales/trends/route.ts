@@ -9,6 +9,7 @@ import {
   normalizeCell,
   normalizeSkuForCompare,
 } from '@/lib/product-sku-resolver'
+import { buildEffectiveInventorySnapshotWhere } from '@/lib/productInventorySnapshots'
 
 type RangeKey = 'today' | '7' | '30' | 'custom'
 type ProductLookup = {
@@ -616,14 +617,14 @@ export async function GET(request: NextRequest) {
 
     const snapshotRows = snapshotSkuList.length
       ? await prisma.productInventorySnapshot.findMany({
-          where: {
+          where: buildEffectiveInventorySnapshotWhere({
             sku: {
               in: snapshotSkuList,
             },
             date: {
               lt: selectedRange.endExclusive,
             },
-          },
+          }),
           select: {
             sku: true,
             date: true,

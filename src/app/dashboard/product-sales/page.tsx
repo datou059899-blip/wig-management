@@ -1768,7 +1768,8 @@ export default function ProductSalesPage() {
   }
 
   const handleImportInventory = () => {
-    inventoryInputRef.current?.click()
+    setInventoryError('库存导入已迁移至“库存与订货中心”，请到 /dashboard/inventory-purchasing 生成预览并确认导入。')
+    setError('库存导入已迁移至“库存与订货中心”。')
   }
 
   const handleImportSkus = () => {
@@ -2439,6 +2440,9 @@ export default function ProductSalesPage() {
   }
 
   const handleEditStock = (product: ProductData) => {
+    setError('手动编辑库存为 legacy 特殊入口，正式库存请使用“库存与订货中心”。')
+    return
+
     if (!product.sku || product.sku === '-') {
       setError('该产品缺少 SKU，无法修改库存')
       return
@@ -2505,6 +2509,9 @@ export default function ProductSalesPage() {
   }
 
   const handleDeleteInventory = async (product: ProductData) => {
+    setError('删除库存为 legacy 特殊入口，正式库存请使用“库存与订货中心”。')
+    return
+
     if (!product.sku || product.sku === '-') {
       setError('该产品缺少 SKU，无法删除库存')
       return
@@ -2535,8 +2542,8 @@ export default function ProductSalesPage() {
       }
 
       await refreshAfterMutation()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '删除库存失败')
+    } catch {
+      setError('删除库存失败')
     } finally {
       setDeletingStockSku(null)
     }
@@ -2977,10 +2984,11 @@ export default function ProductSalesPage() {
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={handleImportInventory}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
-                  disabled={importingInventory || importingOrders || loading}
+                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-200 text-slate-500 text-sm font-medium disabled:opacity-80"
+                  disabled
+                  title="库存导入已迁移至库存与订货中心"
                 >
-                  {importingInventory ? '正在导入库存表...' : '导入库存表'}
+                  库存导入已迁移
                 </button>
                 <button
                   onClick={openStockBaselineModal}
@@ -5860,16 +5868,18 @@ export default function ProductSalesPage() {
                                               <button
                                                 onClick={() => handleEditStock(product)}
                                                 className="inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-                                                disabled={editingStockSku === product.sku || deletingStockSku === product.sku || product.sku === '-'}
+                                                disabled
+                                                title="正式库存请使用库存与订货中心"
                                               >
-                                                {editingStockSku === product.sku ? '保存中...' : '编辑库存'}
+                                                编辑库存（legacy）
                                               </button>
                                               <button
                                                 onClick={() => void handleDeleteInventory(product)}
                                                 className="inline-flex items-center justify-center rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                                disabled={deletingStockSku === product.sku || editingStockSku === product.sku || product.sku === '-'}
+                                                disabled
+                                                title="正式库存请使用库存与订货中心"
                                               >
-                                                {deletingStockSku === product.sku ? '删除中...' : '删除库存'}
+                                                删除库存（legacy）
                                               </button>
                                             </div>
                                           </div>

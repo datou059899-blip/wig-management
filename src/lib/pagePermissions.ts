@@ -58,6 +58,15 @@ export const PAGE_PERMISSIONS = {
     adminDefault: true,
     sidebarVisible: true,
   },
+  inventoryPurchasing: {
+    id: 'inventoryPurchasing',
+    name: '库存与订货',
+    path: '/dashboard/inventory-purchasing',
+    icon: 'Boxes',
+    category: '产品',
+    adminDefault: true,
+    sidebarVisible: true,
+  },
   materials: {
     id: 'materials',
     name: '耗材管理',
@@ -195,9 +204,9 @@ export const ROLE_DEFAULT_PAGES: Record<string, PagePermissionKey[]> = {
   admin: PAGE_PERMISSION_OPTIONS
     .filter((page) => page.adminDefault)
     .map((page) => page.id as PagePermissionKey),
-  boss: ['overview', 'performance', 'productSales', 'materials', 'products', 'influencers', 'scripts', 'viralVideos', 'videoMetrics'],
-  product: ['workbench', 'products', 'productOpportunities', 'productSales', 'materials', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance'],
-  operator: ['workbench', 'products', 'productOpportunities', 'productSales', 'materials', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance', 'tiktokSync', 'priceCheck'],
+  boss: ['overview', 'performance', 'productSales', 'inventoryPurchasing', 'materials', 'products', 'influencers', 'scripts', 'viralVideos', 'videoMetrics'],
+  product: ['workbench', 'products', 'productOpportunities', 'productSales', 'inventoryPurchasing', 'materials', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance'],
+  operator: ['workbench', 'products', 'productOpportunities', 'productSales', 'inventoryPurchasing', 'materials', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance', 'tiktokSync', 'priceCheck'],
   bd: ['workbench', 'influencers', 'products', 'scripts', 'viralVideos'],
   editor: ['workbench', 'scripts', 'viralVideos'],
   viewer: ['overview', 'products', 'productSales', 'materials', 'performance', 'scripts', 'viralVideos', 'videoMetrics', 'influencers'],
@@ -280,6 +289,10 @@ export function canManagePage(
   ctx: SessionPermissionContext | null | undefined,
   pageId: PagePermissionKey
 ): boolean {
+  if (pageId === 'inventoryPurchasing') {
+    return ctx?.role === 'admin' || ctx?.role === 'boss'
+  }
+
   return canAccessPage(ctx, pageId)
 }
 

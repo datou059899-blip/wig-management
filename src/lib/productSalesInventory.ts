@@ -4,6 +4,7 @@ import {
   isSpecialLinkSku,
   normalizeCell,
 } from '@/lib/product-sku-resolver'
+import { buildEffectiveInventorySnapshotWhere } from '@/lib/productInventorySnapshots'
 
 export type RangeKey = 'today' | '7' | '30' | 'custom'
 
@@ -33,6 +34,11 @@ type InventoryConsumptionRow = {
   date: Date
   qty: number
   sampleQty: number
+}
+
+type OrderInventoryConsumptionRow = {
+  paidDate: Date
+  qty: number
 }
 
 type RankSettings = {
@@ -411,11 +417,11 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
 
   const latestSnapshots = productSkus.length
     ? await prisma.productInventorySnapshot.findMany({
-        where: {
+        where: buildEffectiveInventorySnapshotWhere({
           sku: {
             in: productSkus,
           },
-        },
+        }),
         select: {
           sku: true,
           date: true,
@@ -528,7 +534,13 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
     return baselineDate.getTime() < earliest.getTime() ? baselineDate : earliest
   }, today)
 
-  const [salesPerformanceData, inventoryPerformanceData, rankPerformanceData] = await Promise.all([
+  const earliestLatestSnapshotDate = Array.from(latestSnapshotBySku.values()).reduce<Date | null>((earliest, snapshot) => {
+    if (!earliest || snapshot.date.getTime() < earliest.getTime()) return snapshot.date
+    return earliest
+  }, null)
+  const productOrderItemStartDate = earliestLatestSnapshotDate || inventoryConsumptionStartDate
+
+  const [salesPerformanceData, inventoryPerformanceData, rankPerformanceData, postSnapshotOrderItems] = await Promise.all([
     prisma.performanceDaily.findMany({
       where: {
         date: {
@@ -570,6 +582,24 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
         date: true,
       },
     }),
+    productSkus.length
+      ? prisma.productOrderItem.findMany({
+          where: {
+            productMatched: true,
+            stockConsumedQty: { gt: 0 },
+            sellerSku: { in: productSkus },
+            paidDate: {
+              gt: productOrderItemStartDate,
+              lt: tomorrow,
+            },
+          },
+          select: {
+            sellerSku: true,
+            paidDate: true,
+            stockConsumedQty: true,
+          },
+        })
+      : [],
   ])
 
   const salesByProductId = new Map<string, {
@@ -580,6 +610,7 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
     selectedRange: number
   }>()
   const consumedRowsByProductId = new Map<string, InventoryConsumptionRow[]>()
+  const orderConsumedRowsByProductId = new Map<string, OrderInventoryConsumptionRow[]>()
   const rankDailySalesByProductId = new Map<string, Map<string, number>>()
   const storeSalesByDate = new Map<string, number>()
 
@@ -616,6 +647,18 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       sampleQty: perf.sampleQty || 0,
     })
     consumedRowsByProductId.set(productId, bucket)
+  })
+
+  postSnapshotOrderItems.forEach((item) => {
+    if (!item.sellerSku) return
+    const productId = resolveProductBySku(item.sellerSku)?.product.id
+    if (!productId) return
+    const bucket = orderConsumedRowsByProductId.get(productId) || []
+    bucket.push({
+      paidDate: item.paidDate,
+      qty: item.stockConsumedQty || 0,
+    })
+    orderConsumedRowsByProductId.set(productId, bucket)
   })
 
   rankPerformanceData.forEach((perf) => {
@@ -728,7 +771,7 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       : []
     const snapshotAdjustmentAfterQty = postSnapshotAdjustmentRows.reduce((sum, row) => sum + row.quantity, 0)
     const postSnapshotConsumedRows = selectedSnapshot
-      ? (consumedRowsByProductId.get(product.id) || []).filter((row) => row.date > selectedSnapshot.date && row.date < tomorrow)
+      ? (orderConsumedRowsByProductId.get(product.id) || []).filter((row) => row.paidDate > selectedSnapshot.date && row.paidDate < tomorrow)
       : []
     const snapshotConsumedAfterQty = postSnapshotConsumedRows.reduce((sum, row) => sum + row.qty, 0)
     const platformSnapshotStock = selectedHasPlatformSnapshot ? selectedPlatformStock : null

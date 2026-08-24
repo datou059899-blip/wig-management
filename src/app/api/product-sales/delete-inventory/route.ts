@@ -15,6 +15,12 @@ export async function POST(request: NextRequest) {
     if (!canManagePage(permissionContext, 'productSales')) {
       return NextResponse.json({ error: '无权限操作销售库存' }, { status: 403 })
     }
+    if (permissionContext?.role !== 'admin') {
+      return NextResponse.json(
+        { error: '删除库存为 legacy 特殊入口，仅管理员可用；正式库存请使用库存与订货中心。' },
+        { status: 409 },
+      )
+    }
 
     const body = await request.json()
     const sku = String(body?.sku || '').trim()

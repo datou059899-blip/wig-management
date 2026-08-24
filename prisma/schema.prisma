@@ -178,6 +178,7 @@ model ProductInventorySnapshot {
   id              String   @id @default(cuid())
   sku             String
   date            DateTime
+  importBatchId   String?
   availableQty    Int      @default(0)
   lockedQty       Int      @default(0)
   sunnymayHairQty Int      @default(0)
@@ -188,10 +189,34 @@ model ProductInventorySnapshot {
   sourceFileName  String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  importBatch     InventoryImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
 
   @@unique([sku, date])
   @@index([sku])
   @@index([date])
+  @@index([importBatchId])
+}
+
+model InventoryImportBatch {
+  id              String   @id @default(cuid())
+  fileName        String
+  fileHash        String
+  stockCapturedAt DateTime
+  importedAt      DateTime?
+  rowCount        Int      @default(0)
+  matchedCount    Int      @default(0)
+  unmatchedCount  Int      @default(0)
+  status          String   @default("PREVIEW")
+  note            String?
+  matchedRows     Json     @default("[]")
+  unmatchedRows   Json     @default("[]")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  snapshots       ProductInventorySnapshot[]
+
+  @@index([fileHash])
+  @@index([status])
+  @@index([stockCapturedAt])
 }
 
 model ProductStockBaseline {

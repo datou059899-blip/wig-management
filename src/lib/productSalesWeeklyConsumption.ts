@@ -6,6 +6,7 @@ import {
   normalizeSkuForCompare,
   normalizeSkuText,
 } from '@/lib/product-sku-resolver'
+import { buildEffectiveInventorySnapshotWhere } from '@/lib/productInventorySnapshots'
 
 export type WeeklyConsumptionMode = 'summary' | 'detail'
 
@@ -306,6 +307,16 @@ function sumOrderConsumedBetween(rows: OrderEventRow[], startInclusive: Date, en
   }, 0)
 }
 
+function sumOrderConsumedAfterBefore(rows: OrderEventRow[], startExclusive: Date, endExclusive: Date, sampleMode: 'all' | 'ordinary' | 'sample') {
+  return rows.reduce((sum, row) => {
+    if (row.paidDate.getTime() <= startExclusive.getTime()) return sum
+    if (row.paidDate.getTime() >= endExclusive.getTime()) return sum
+    if (sampleMode === 'ordinary' && row.isSample) return sum
+    if (sampleMode === 'sample' && !row.isSample) return sum
+    return sum + row.stockConsumedQty
+  }, 0)
+}
+
 function buildWeekPointFlags(point: Omit<WeeklyConsumptionTrendPoint, 'flags'>) {
   const flags: string[] = []
   if (point.openingStockStatus === 'missing') flags.push('缺少周初库存')
@@ -350,7 +361,7 @@ function buildWeekPoint({ range, context }: BuildWeekPointParams): WeeklyConsump
 
   if (anchor) {
     const adjustmentQty = sumAdjustmentsBetween(context.adjustments, anchor.date, range.startDate)
-    const consumedQty = sumOrderConsumedBetween(context.orders, addDays(anchor.date, 1), range.startDate, 'all')
+    const consumedQty = sumOrderConsumedAfterBefore(context.orders, anchor.date, range.startDate, 'all')
     openingStock = anchor.quantity + adjustmentQty - consumedQty
   }
 
@@ -788,7 +799,7 @@ export async function getProductSalesWeeklyConsumptionData(options: {
 
   const [snapshots, baselines, adjustments] = await Promise.all([
     prisma.productInventorySnapshot.findMany({
-      where: { date: { lt: ranges.orderEndExclusive } },
+      where: buildEffectiveInventorySnapshotWhere({ date: { lt: ranges.orderEndExclusive } }),
       select: {
         sku: true,
         date: true,
