@@ -39,11 +39,11 @@ export async function POST(
 
       const matchedRows = jsonRows<InventoryPreviewMatchedRow>(batch.matchedRows)
       const unmatchedRows = jsonRows<InventoryPreviewUnmatchedRow>(batch.unmatchedRows)
-      const duplicateRows = unmatchedRows.filter((row) => row.reason.includes('重复 SKU 冲突'))
+      const duplicateRows = unmatchedRows.filter((row) => row.kind === 'duplicate_conflict' || row.reason.includes('重复 SKU 冲突'))
       if (duplicateRows.length > 0) {
         return {
           blocked: true,
-          error: '存在重复 SKU 冲突，请先修正库存文件后重新生成预览',
+          error: '存在未人工确认合并的重复 SKU 冲突，请先在预览中确认合并或修正库存文件',
           duplicateRows,
         }
       }
@@ -53,6 +53,20 @@ export async function POST(
           blocked: true,
           error: '存在未匹配 SKU，请处理后再确认，或明确选择忽略未匹配 SKU',
           unmatchedRows,
+        }
+      }
+
+      const matchedSkuCounts = new Map<string, number>()
+      matchedRows.forEach((row) => {
+        const key = row.canonicalSku.trim().toUpperCase()
+        matchedSkuCounts.set(key, (matchedSkuCounts.get(key) || 0) + 1)
+      })
+      const duplicateMatchedSkus = Array.from(matchedSkuCounts.entries()).filter(([, count]) => count > 1)
+      if (duplicateMatchedSkus.length > 0) {
+        return {
+          blocked: true,
+          error: '预览中仍存在重复 canonical SKU，禁止确认导入',
+          duplicateMatchedSkus: duplicateMatchedSkus.map(([sku, count]) => ({ sku, count })),
         }
       }
 

@@ -30,15 +30,26 @@ type ImportBatch = {
   updatedAt: string
 }
 
+type SourceRow = {
+  rowNumber: number
+  inputSku: string
+  productName: string
+  inputProductName?: string
+  totalQty: number
+}
+
 type MatchedRow = {
   rowNumber: number
   inputSku: string
   canonicalSku: string
   productId: string
   productName: string
+  inputProductName?: string
   totalQty: number
   previousTotalQty: number | null
   diffQty: number | null
+  sourceRows?: SourceRow[]
+  resolution?: 'duplicate_merge_approved'
 }
 
 type UnmatchedRow = {
@@ -46,6 +57,13 @@ type UnmatchedRow = {
   inputSku: string
   totalQty: number | null
   reason: string
+  kind?: 'unmatched' | 'duplicate_conflict'
+  canonicalSku?: string
+  productId?: string
+  productName?: string
+  inputProductName?: string
+  previousTotalQty?: number | null
+  diffQty?: number | null
 }
 
 function formatDateTime(value: string | null) {
@@ -91,6 +109,29 @@ export default function InventoryPurchasingPage() {
   const sortedSummaryItems = useMemo(() => {
     return [...summaryItems].sort((a, b) => (a.sku || '').localeCompare(b.sku || ''))
   }, [summaryItems])
+
+  const duplicateGroups = useMemo(() => {
+    const groups = new Map<string, UnmatchedRow[]>()
+    unmatchedRows.forEach((row) => {
+      if (row.kind !== 'duplicate_conflict' && !row.reason.includes('重复 SKU 冲突')) return
+      const key = row.canonicalSku || row.reason.match(/canonical SKU (.+)$/)?.[1] || row.inputSku
+      const bucket = groups.get(key) || []
+      bucket.push(row)
+      groups.set(key, bucket)
+    })
+    return Array.from(groups.entries()).map(([canonicalSku, rows]) => ({
+      canonicalSku,
+      rows: rows.sort((a, b) => a.rowNumber - b.rowNumber),
+      totalQty: rows.reduce((sum, row) => sum + (row.totalQty || 0), 0),
+      productName: rows.find((row) => row.productName)?.productName || '—',
+    }))
+  }, [unmatchedRows])
+
+  const regularUnmatchedRows = useMemo(() => {
+    return unmatchedRows.filter((row) => row.kind !== 'duplicate_conflict' && !row.reason.includes('重复 SKU 冲突'))
+  }, [unmatchedRows])
+
+  const unresolvedDuplicateCount = duplicateGroups.length
 
   async function loadSummary() {
     const response = await fetch('/api/inventory-purchasing/summary')
@@ -164,7 +205,11 @@ export default function InventoryPurchasingPage() {
       setError('仅管理员/老板可确认库存导入。')
       return
     }
-    if (unmatchedRows.length > 0 && !ignoreUnmatched) {
+    if (unresolvedDuplicateCount > 0) {
+      setError('存在未人工确认合并的重复 SKU，请先处理 duplicate group。')
+      return
+    }
+    if (regularUnmatchedRows.length > 0 && !ignoreUnmatched) {
       setError('存在未匹配 SKU。请勾选“确认忽略未匹配 SKU”后再导入。')
       return
     }
@@ -216,6 +261,39 @@ export default function InventoryPurchasingPage() {
       await refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : '回滚失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleApproveDuplicateMerge(canonicalSku: string) {
+    if (!previewBatch) return
+    if (!canManageInventory) {
+      setError('仅管理员/老板可确认合并重复 SKU。')
+      return
+    }
+    if (!window.confirm(`确认将重复 SKU ${canonicalSku} 的原始行合并为同一个 canonical SKU？`)) {
+      return
+    }
+
+    setLoading(true)
+    setError('')
+    setMessage('')
+    try {
+      const response = await fetch(`/api/inventory-purchasing/import-batches/${previewBatch.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approveDuplicateMerge', canonicalSku }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || '确认合并失败')
+      setPreviewBatch(data.batch)
+      setMatchedRows(data.matchedRows || [])
+      setUnmatchedRows(data.unmatchedRows || [])
+      setMessage(`已确认合并重复 SKU ${canonicalSku}。`)
+      await loadBatches()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '确认合并失败')
     } finally {
       setLoading(false)
     }
@@ -387,14 +465,14 @@ export default function InventoryPurchasingPage() {
                     <div>
                       <h2 className="text-lg font-semibold text-slate-900">导入预览</h2>
                       <p className="mt-1 text-sm text-slate-500">
-                        {previewBatch.fileName}｜匹配 {matchedRows.length} 行｜未匹配 {unmatchedRows.length} 行
+                        {previewBatch.fileName}｜可确认 SKU {matchedRows.length} 个｜未匹配 {regularUnmatchedRows.length} 行｜未解决重复 {unresolvedDuplicateCount} 组
                       </p>
                     </div>
                     {previewBatch.status === 'PREVIEW' && (
                       <button
                         type="button"
                         onClick={handleConfirm}
-                        disabled={!canManageInventory || loading || (unmatchedRows.length > 0 && !ignoreUnmatched)}
+                        disabled={!canManageInventory || loading || unresolvedDuplicateCount > 0 || (regularUnmatchedRows.length > 0 && !ignoreUnmatched)}
                         className="rounded-lg bg-pink-600 px-4 py-2 text-sm font-semibold text-white hover:bg-pink-700 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {canManageInventory ? '确认导入快照' : '仅管理员/老板可确认'}
@@ -402,7 +480,13 @@ export default function InventoryPurchasingPage() {
                     )}
                   </div>
 
-                  {unmatchedRows.length > 0 && (
+                  {unresolvedDuplicateCount > 0 && (
+                    <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
+                      <p className="text-sm font-semibold text-orange-800">存在重复 canonical SKU，必须由管理员/老板逐组人工确认合并后才能导入。</p>
+                    </div>
+                  )}
+
+                  {regularUnmatchedRows.length > 0 && (
                     <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
                       <p className="text-sm font-semibold text-amber-800">存在未匹配 SKU，默认阻止确认导入。</p>
                       <label className="mt-3 flex items-center gap-2 text-sm text-amber-900">
@@ -428,10 +512,18 @@ export default function InventoryPurchasingPage() {
                       <tbody className="divide-y divide-slate-100">
                         {matchedRows.map((row) => (
                           <tr key={`${row.rowNumber}-${row.canonicalSku}`}>
-                            <td className="px-3 py-2 text-slate-500">{row.rowNumber}</td>
-                            <td className="px-3 py-2">{row.inputSku}</td>
+                            <td className="px-3 py-2 text-slate-500">{row.sourceRows?.length ? row.sourceRows.map((source) => source.rowNumber).join(', ') : row.rowNumber}</td>
+                            <td className="px-3 py-2">{row.sourceRows?.length ? `${row.sourceRows.length} 行来源` : row.inputSku}</td>
                             <td className="px-3 py-2 font-semibold text-slate-900">{row.canonicalSku}</td>
-                            <td className="px-3 py-2 text-slate-700">{row.productName}</td>
+                            <td className="px-3 py-2 text-slate-700">
+                              {row.productName}
+                              {row.resolution === 'duplicate_merge_approved' && <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">已人工合并</span>}
+                              {row.sourceRows?.length ? (
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {row.sourceRows.map((source) => `${source.productName || source.inputSku} / ${source.totalQty}`).join('；')}
+                                </div>
+                              ) : null}
+                            </td>
                             <td className="px-3 py-2 font-medium">{row.totalQty}</td>
                             <td className="px-3 py-2">{formatQty(row.previousTotalQty)}</td>
                             <td className="px-3 py-2">{formatChange(row.diffQty)}</td>
@@ -441,13 +533,47 @@ export default function InventoryPurchasingPage() {
                     </table>
                   </div>
 
-                  {unmatchedRows.length > 0 && (
+                  {duplicateGroups.length > 0 && (
+                    <div className="mt-6">
+                      <h3 className="text-sm font-semibold text-slate-900">重复 SKU 待人工确认</h3>
+                      <div className="mt-3 space-y-3">
+                        {duplicateGroups.map((group) => (
+                          <div key={group.canonicalSku} className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm">
+                            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                              <div>
+                                <p className="font-semibold text-orange-900">{group.canonicalSku}｜合并后库存 {group.totalQty}</p>
+                                <p className="mt-1 text-orange-800">{group.productName}</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleApproveDuplicateMerge(group.canonicalSku)}
+                                disabled={!canManageInventory || loading || previewBatch.status !== 'PREVIEW'}
+                                className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {canManageInventory ? '确认合并为同一 SKU' : '仅管理员/老板可合并'}
+                              </button>
+                            </div>
+                            <div className="mt-3 grid gap-2 md:grid-cols-2">
+                              {group.rows.map((row) => (
+                                <div key={`${group.canonicalSku}-${row.rowNumber}`} className="rounded-lg bg-white px-3 py-2 ring-1 ring-orange-100">
+                                  <p className="text-xs text-slate-500">第 {row.rowNumber} 行｜{row.inputSku}</p>
+                                  <p className="font-medium text-slate-900">{row.inputProductName || row.productName || row.inputSku} — {formatQty(row.totalQty)}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {regularUnmatchedRows.length > 0 && (
                     <div className="mt-6">
                       <h3 className="text-sm font-semibold text-slate-900">未匹配行</h3>
                       <div className="mt-2 overflow-x-auto">
                         <table className="min-w-full divide-y divide-slate-200 text-sm">
                           <tbody className="divide-y divide-slate-100">
-                            {unmatchedRows.map((row) => (
+                            {regularUnmatchedRows.map((row) => (
                               <tr key={`${row.rowNumber}-${row.inputSku}`}>
                                 <td className="px-3 py-2 text-slate-500">第 {row.rowNumber} 行</td>
                                 <td className="px-3 py-2 font-medium">{row.inputSku}</td>

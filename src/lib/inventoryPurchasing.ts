@@ -22,15 +22,26 @@ export const INVENTORY_BATCH_STATUS = {
 
 export type InventoryBatchStatus = (typeof INVENTORY_BATCH_STATUS)[keyof typeof INVENTORY_BATCH_STATUS]
 
+export type InventoryPreviewSourceRow = {
+  rowNumber: number
+  inputSku: string
+  productName: string
+  inputProductName?: string
+  totalQty: number
+}
+
 export type InventoryPreviewMatchedRow = {
   rowNumber: number
   inputSku: string
   canonicalSku: string
   productId: string
   productName: string
+  inputProductName?: string
   totalQty: number
   previousTotalQty: number | null
   diffQty: number | null
+  sourceRows?: InventoryPreviewSourceRow[]
+  resolution?: 'duplicate_merge_approved'
 }
 
 export type InventoryPreviewUnmatchedRow = {
@@ -38,6 +49,13 @@ export type InventoryPreviewUnmatchedRow = {
   inputSku: string
   totalQty: number | null
   reason: string
+  kind?: 'unmatched' | 'duplicate_conflict'
+  canonicalSku?: string
+  productId?: string
+  productName?: string
+  inputProductName?: string
+  previousTotalQty?: number | null
+  diffQty?: number | null
 }
 
 export type InventorySummaryItem = {
@@ -66,7 +84,7 @@ type ParsedInventoryRows = {
   sheetName?: string
 }
 
-const MAX_IMPORT_STOCK_QTY = 1_000_000
+export const MAX_IMPORT_STOCK_QTY = 1_000_000
 
 function strictSkuKey(value: string | null | undefined) {
   const normalized = normalizeSkuText(value)
@@ -231,19 +249,20 @@ export async function parseInventoryPreviewFile(file: File, stockCapturedAt: Dat
 
   rowRecords.forEach(({ rowNumber, record }) => {
     const inputSku = normalizeSkuText(String(pickCell(record, ['商家 SKU', '商家SKU', 'SKU', 'seller sku', 'seller_sku']) || ''))
+    const inputProductName = normalizeImportCell(pickCell(record, ['SKU / 款式', 'SKU/款式', '款式', '产品', '产品名', '产品名称', '商品', '商品名', '商品名称', 'product', 'product name']))
     const totalQtyResult = parseInventoryQty(pickCell(record, ['总库存', 'total stock', 'totalqty', 'total qty', '库存']))
 
     if (!inputSku) {
       return
     }
     if (totalQtyResult.error || totalQtyResult.value === null) {
-      unmatchedRows.push({ rowNumber, inputSku, totalQty: totalQtyResult.value, reason: totalQtyResult.error || '总库存异常' })
+      unmatchedRows.push({ rowNumber, inputSku, totalQty: totalQtyResult.value, reason: totalQtyResult.error || '总库存异常', kind: 'unmatched' })
       return
     }
 
     const product = skuMap.get(strictSkuKey(inputSku))
     if (!product || !product.sku) {
-      unmatchedRows.push({ rowNumber, inputSku, totalQty: totalQtyResult.value, reason: '未匹配到 canonical SKU 或明确 alias' })
+      unmatchedRows.push({ rowNumber, inputSku, totalQty: totalQtyResult.value, reason: '未匹配到 canonical SKU 或明确 alias', kind: 'unmatched' })
       return
     }
 
@@ -255,6 +274,7 @@ export async function parseInventoryPreviewFile(file: File, stockCapturedAt: Dat
       canonicalSku,
       productId: product.id,
       productName: product.name,
+      inputProductName,
       totalQty: totalQtyResult.value,
       previousTotalQty,
       diffQty: previousTotalQty === null ? null : totalQtyResult.value - previousTotalQty,
@@ -282,6 +302,13 @@ export async function parseInventoryPreviewFile(file: File, stockCapturedAt: Dat
         inputSku: row.inputSku,
         totalQty: row.totalQty,
         reason: `重复 SKU 冲突：多行最终指向 canonical SKU ${row.canonicalSku}`,
+        kind: 'duplicate_conflict',
+        canonicalSku: row.canonicalSku,
+        productId: row.productId,
+        productName: row.productName,
+        inputProductName: row.inputProductName,
+        previousTotalQty: row.previousTotalQty,
+        diffQty: row.diffQty,
       })
     })
   })
