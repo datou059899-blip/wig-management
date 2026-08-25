@@ -110,11 +110,39 @@ function detectHeaderIndexes(rawRows: ImportCellValue[][]) {
     )
 
     if (skuIndex >= 0 && totalIndex >= 0) {
-      return { headerRowIndex: rowIndex, dataStartRowIndex: rowIndex + 1 }
+      return { headerRowIndex: rowIndex, dataStartRowIndex: rowIndex + 1, skuIndex, totalIndex }
     }
   }
 
   return null
+}
+
+
+function isInventorySectionBoundary(row: ImportCellValue[], skuIndex: number) {
+  const skuCell = normalizeImportCell(row[skuIndex])
+  const nonEmptyCells = row.map((cell) => normalizeImportCell(cell)).filter(Boolean)
+  const firstCell = nonEmptyCells[0] || ''
+  const joined = nonEmptyCells.join(' ')
+
+  if (!nonEmptyCells.length) return false
+  if (/期货|订货/.test(firstCell)) return true
+  if (/期货总数量|订货总数量/.test(joined)) return true
+  if (skuCell === '产品/款式') return true
+
+  return false
+}
+
+function sliceInventorySectionRows(
+  rawRows: ImportCellValue[][],
+  detected: { headerRowIndex: number; dataStartRowIndex: number; skuIndex: number },
+) {
+  const endRowIndex = rawRows.findIndex((row, rowIndex) => {
+    if (rowIndex < detected.dataStartRowIndex) return false
+    return isInventorySectionBoundary(row || [], detected.skuIndex)
+  })
+
+  if (endRowIndex < 0) return rawRows
+  return rawRows.slice(0, endRowIndex)
 }
 
 function pickCell(record: Record<string, ImportCellValue>, names: string[]) {
@@ -181,7 +209,8 @@ export async function parseInventoryPreviewFile(file: File, stockCapturedAt: Dat
     throw new Error('未找到包含“商家 SKU”和“总库存”的表头行')
   }
 
-  const built = buildImportRowRecords(initial.rawRows, detected)
+  const inventorySectionRows = sliceInventorySectionRows(initial.rawRows, detected)
+  const built = buildImportRowRecords(inventorySectionRows, detected)
   const rowRecords = built.rowRecords
   const products = await prisma.product.findMany({
     where: { isActive: true },
