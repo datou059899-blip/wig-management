@@ -26,7 +26,11 @@ type ConfirmBatchInput = {
   unmatchedRows: Prisma.JsonValue
 }
 
-function prepareConfirmRows(batch: ConfirmBatchInput, ignoreUnmatched: boolean) {
+function prepareConfirmRows(
+  batch: ConfirmBatchInput,
+  ignoreUnmatched: boolean,
+  canonicalSkuByProductId?: Map<string, string>,
+) {
   const matchedRows = jsonRows<InventoryPreviewMatchedRow>(batch.matchedRows)
   const unmatchedRows = jsonRows<InventoryPreviewUnmatchedRow>(batch.unmatchedRows)
   const duplicateRows = unmatchedRows.filter((row) => row.kind === 'duplicate_conflict' || row.reason.includes('重复 SKU 冲突'))
@@ -46,8 +50,28 @@ function prepareConfirmRows(batch: ConfirmBatchInput, ignoreUnmatched: boolean) 
     }
   }
 
+  const rowsWithDatabaseCanonicalSku = matchedRows.map((row) => ({
+    ...row,
+    canonicalSku: canonicalSkuByProductId?.get(row.productId) || row.canonicalSku,
+  }))
+
+  const missingProducts = canonicalSkuByProductId
+    ? matchedRows.filter((row) => !canonicalSkuByProductId.get(row.productId))
+    : []
+  if (missingProducts.length > 0) {
+    return {
+      blocked: true as const,
+      error: '存在无法重新确认 Product.sku 的匹配行，禁止确认导入',
+      missingProducts: missingProducts.map((row) => ({
+        rowNumber: row.rowNumber,
+        canonicalSku: row.canonicalSku,
+        productId: row.productId,
+      })),
+    }
+  }
+
   const matchedSkuCounts = new Map<string, number>()
-  matchedRows.forEach((row) => {
+  rowsWithDatabaseCanonicalSku.forEach((row) => {
     const key = row.canonicalSku.trim().toUpperCase()
     matchedSkuCounts.set(key, (matchedSkuCounts.get(key) || 0) + 1)
   })
@@ -60,7 +84,7 @@ function prepareConfirmRows(batch: ConfirmBatchInput, ignoreUnmatched: boolean) 
     }
   }
 
-  const invalidRows = matchedRows.filter((row) => (
+  const invalidRows = rowsWithDatabaseCanonicalSku.filter((row) => (
     !row.productId ||
     !row.canonicalSku ||
     !Number.isSafeInteger(row.totalQty) ||
@@ -80,8 +104,8 @@ function prepareConfirmRows(batch: ConfirmBatchInput, ignoreUnmatched: boolean) 
     }
   }
 
-  const matchedSkus = Array.from(new Set(matchedRows.map((row) => row.canonicalSku).filter(Boolean)))
-  const snapshotCreateData = matchedRows.map((row) => ({
+  const matchedSkus = Array.from(new Set(rowsWithDatabaseCanonicalSku.map((row) => row.canonicalSku).filter(Boolean)))
+  const snapshotCreateData = rowsWithDatabaseCanonicalSku.map((row) => ({
     sku: row.canonicalSku,
     date: batch.stockCapturedAt,
     availableQty: 0,
@@ -93,7 +117,7 @@ function prepareConfirmRows(batch: ConfirmBatchInput, ignoreUnmatched: boolean) 
 
   return {
     blocked: false as const,
-    matchedRows,
+    matchedRows: rowsWithDatabaseCanonicalSku,
     matchedSkus,
     snapshotCreateData,
   }
@@ -159,6 +183,27 @@ export async function POST(
         return finalRows
       }
 
+      const productIds = Array.from(new Set(finalRows.matchedRows.map((row) => row.productId).filter(Boolean)))
+      const products = productIds.length
+        ? await tx.product.findMany({
+            where: {
+              id: { in: productIds },
+              isActive: true,
+            },
+            select: {
+              id: true,
+              sku: true,
+            },
+          })
+        : []
+      const canonicalSkuByProductId = new Map(
+        products.flatMap((product) => (product.sku ? [[product.id, product.sku] as const] : [])),
+      )
+      const finalRowsWithDatabaseSku = prepareConfirmRows(lockedBatch, ignoreUnmatched, canonicalSkuByProductId)
+      if (finalRowsWithDatabaseSku.blocked) {
+        return finalRowsWithDatabaseSku
+      }
+
       const duplicate = await tx.inventoryImportBatch.findFirst({
         where: {
           id: { not: lockedBatch.id },
@@ -171,10 +216,10 @@ export async function POST(
         throw new Error('相同文件已存在 CONFIRMED 批次，禁止重复确认导入')
       }
 
-      const staleSnapshots = finalRows.matchedSkus.length
+      const staleSnapshots = finalRowsWithDatabaseSku.matchedSkus.length
         ? await tx.productInventorySnapshot.findMany({
             where: buildEffectiveInventorySnapshotWhere({
-              sku: { in: finalRows.matchedSkus },
+              sku: { in: finalRowsWithDatabaseSku.matchedSkus },
               date: { gte: lockedBatch.stockCapturedAt },
             }),
             select: {
@@ -201,7 +246,7 @@ export async function POST(
       }
 
       const created = await tx.productInventorySnapshot.createMany({
-        data: finalRows.snapshotCreateData,
+        data: finalRowsWithDatabaseSku.snapshotCreateData,
       })
 
       const updatedBatch = await tx.inventoryImportBatch.update({

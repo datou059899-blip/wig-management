@@ -4,7 +4,10 @@ import {
   isSpecialLinkSku,
   normalizeCell,
 } from '@/lib/product-sku-resolver'
-import { buildEffectiveInventorySnapshotWhere } from '@/lib/productInventorySnapshots'
+import {
+  buildEffectiveInventorySnapshotWhere,
+  getCurrentInventoryByProduct,
+} from '@/lib/productInventorySnapshots'
 
 export type RangeKey = 'today' | '7' | '30' | 'custom'
 
@@ -411,6 +414,12 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
     }),
   ).values())
 
+  const inventoryProducts = products.map((product) => ({
+    ...product,
+    aliases: (explicitAliasListByProductId.get(product.id) || []).map((aliasSku) => ({ aliasSku })),
+  }))
+  const currentInventoryByProductId = await getCurrentInventoryByProduct(inventoryProducts, { endExclusive: tomorrow })
+
   const productSkus = Array.from(new Set(
     Array.from(inventorySkuListByProductId.values()).flatMap((skuList) => skuList),
   ))
@@ -774,13 +783,23 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       ? (orderConsumedRowsByProductId.get(product.id) || []).filter((row) => row.paidDate > selectedSnapshot.date && row.paidDate < tomorrow)
       : []
     const snapshotConsumedAfterQty = postSnapshotConsumedRows.reduce((sum, row) => sum + row.qty, 0)
-    const platformSnapshotStock = selectedHasPlatformSnapshot ? selectedPlatformStock : null
-    const currentAvailableStock = selectedHasPlatformSnapshot
+    const sharedInventory = currentInventoryByProductId.get(product.id) || null
+    const effectiveSelectedSnapshot = sharedInventory?.selectedSnapshot ?? selectedSnapshot
+    const effectiveHasPlatformSnapshot = sharedInventory?.hasSnapshot ?? selectedHasPlatformSnapshot
+    const effectivePlatformSource = sharedInventory?.source ?? selectedPlatformSource
+    const effectiveSnapshotAdjustmentAfterQty = sharedInventory?.snapshotAdjustmentAfterQty ?? snapshotAdjustmentAfterQty
+    const effectiveSnapshotConsumedAfterQty = sharedInventory?.snapshotConsumedAfterQty ?? snapshotConsumedAfterQty
+    const platformSnapshotStock = sharedInventory
+      ? sharedInventory.snapshotStock
+      : selectedHasPlatformSnapshot ? selectedPlatformStock : null
+    const currentAvailableStock = sharedInventory
+      ? sharedInventory.currentStock
+      : selectedHasPlatformSnapshot
       ? Math.max(selectedPlatformStock + snapshotAdjustmentAfterQty - snapshotConsumedAfterQty, 0)
       : selectedPlatformStock
     const inventoryDiff = hasBaseline ? estimatedStock - currentAvailableStock : null
-    const snapshotAgeDays = selectedSnapshot ? getDiffDays(today, selectedSnapshot.date) : null
-    const syncStale = Boolean(selectedHasPlatformSnapshot && snapshotAgeDays !== null && snapshotAgeDays > 3)
+    const snapshotAgeDays = effectiveSelectedSnapshot ? getDiffDays(today, effectiveSelectedSnapshot.date) : null
+    const syncStale = Boolean(effectiveHasPlatformSnapshot && snapshotAgeDays !== null && snapshotAgeDays > 3)
     const inventoryDiffAbnormal = Boolean(inventoryDiff !== null && Math.abs(inventoryDiff) > 10)
     const earliestConsumptionDateValue = (consumedRowsByProductId.get(product.id) || []).reduce<Date | null>((earliest, row) => {
       if (!earliest || row.date.getTime() < earliest.getTime()) return row.date
@@ -788,7 +807,7 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
     }, null)
     const dataReminders: string[] = []
 
-    if (!selectedHasPlatformSnapshot) {
+    if (!effectiveHasPlatformSnapshot) {
       dataReminders.push('无平台快照')
     } else if (syncStale) {
       dataReminders.push('平台库存未同步')
@@ -898,7 +917,7 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
 
     return {
       id: product.id,
-      sku: getFilterPrimarySkuForProduct(product) || getPrimarySku(product.id) || product.sku || '-',
+      sku: product.sku || getFilterPrimarySkuForProduct(product) || getPrimarySku(product.id) || '-',
       name: product.name,
       color: product.color || '-',
       length: product.length || '-',
@@ -911,12 +930,12 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       platformSnapshotStock,
       platformCurrentStock: currentAvailableStock,
       currentAvailableStock,
-      platformStockSource: selectedPlatformSource,
-      platformSnapshotDate: selectedSnapshot ? selectedSnapshot.date.toISOString() : null,
-      platformAvailableQty: selectedSnapshot?.availableQty ?? null,
-      platformLockedQty: selectedSnapshot?.lockedQty ?? null,
-      platformTotalQty: selectedSnapshot?.totalQty ?? null,
-      hasPlatformSnapshot: selectedHasPlatformSnapshot,
+      platformStockSource: effectivePlatformSource,
+      platformSnapshotDate: effectiveSelectedSnapshot ? effectiveSelectedSnapshot.date.toISOString() : null,
+      platformAvailableQty: effectiveSelectedSnapshot?.availableQty ?? null,
+      platformLockedQty: effectiveSelectedSnapshot?.lockedQty ?? null,
+      platformTotalQty: effectiveSelectedSnapshot?.totalQty ?? null,
+      hasPlatformSnapshot: effectiveHasPlatformSnapshot,
       hasBaseline,
       estimatedStock,
       inventoryDiff,
@@ -925,8 +944,8 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       adjustmentTotal,
       cumulativeStockConsumedQty,
       sampleConsumedQty,
-      snapshotAdjustmentAfterQty,
-      snapshotConsumedAfterQty,
+      snapshotAdjustmentAfterQty: effectiveSnapshotAdjustmentAfterQty,
+      snapshotConsumedAfterQty: effectiveSnapshotConsumedAfterQty,
       snapshotAgeDays,
       inventoryDiffAbnormal,
       syncStale,

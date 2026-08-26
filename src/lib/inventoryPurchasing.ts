@@ -8,9 +8,10 @@ import {
   type ImportCellValue,
   type ParsedImportRowRecord,
 } from '@/lib/import-file-parser'
-import { normalizeSkuForCompare, normalizeSkuText } from '@/lib/product-sku-resolver'
+import { normalizeSkuText } from '@/lib/product-sku-resolver'
 import {
   buildEffectiveInventorySnapshotWhere,
+  getCurrentInventoryByProduct,
   resolveInventorySnapshotQuantity,
 } from '@/lib/productInventorySnapshots'
 
@@ -364,41 +365,14 @@ export async function getInventorySummaryItems(): Promise<InventorySummaryItem[]
     orderBy: { sku: 'asc' },
   })
 
-  const skuCandidates = products.flatMap((product) => uniqueStrictSkus(product))
-  const snapshots = skuCandidates.length
-    ? await prisma.productInventorySnapshot.findMany({
-        where: buildEffectiveInventorySnapshotWhere({ sku: { in: skuCandidates } }),
-        select: {
-          sku: true,
-          date: true,
-          totalQty: true,
-          availableQty: true,
-          lockedQty: true,
-        },
-        orderBy: [
-          { sku: 'asc' },
-          { date: 'desc' },
-        ],
-      })
-    : []
-
-  const snapshotsBySku = new Map<string, typeof snapshots>()
-  snapshots.forEach((snapshot) => {
-    const key = normalizeSkuForCompare(snapshot.sku)
-    const bucket = snapshotsBySku.get(key) || []
-    bucket.push(snapshot)
-    snapshotsBySku.set(key, bucket)
-  })
+  const currentInventoryByProductId = await getCurrentInventoryByProduct(products)
 
   return products.flatMap((product) => {
     if (!product.sku) return []
-    const candidates = uniqueStrictSkus(product)
-    const productSnapshots = candidates
-      .flatMap((sku) => snapshotsBySku.get(normalizeSkuForCompare(sku)) || [])
-      .sort((a, b) => b.date.getTime() - a.date.getTime())
-    const latest = productSnapshots[0]
-    const previous = productSnapshots[1]
-    const latestQty = latest ? resolveInventorySnapshotQuantity(latest).quantity : null
+    const inventory = currentInventoryByProductId.get(product.id) || null
+    const latest = inventory?.selectedSnapshot || null
+    const previous = inventory?.previousSnapshot || null
+    const latestQty = inventory ? inventory.currentStock : null
     const previousQty = previous ? resolveInventorySnapshotQuantity(previous).quantity : null
 
     return [{
