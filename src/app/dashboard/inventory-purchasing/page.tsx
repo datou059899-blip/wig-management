@@ -30,6 +30,15 @@ type ImportBatch = {
   updatedAt: string
 }
 
+type Supplier = {
+  id: string
+  name: string
+  notes: string | null
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 type SourceRow = {
   rowNumber: number
   inputSku: string
@@ -87,14 +96,30 @@ function getDefaultCapturedAt() {
   return new Date(now.getTime() - offsetMs).toISOString().slice(0, 16)
 }
 
+function getSupplierErrorMessage(status: number, fallback: string) {
+  if (status === 400) return fallback || '输入错误，请检查供应商名称和备注。'
+  if (status === 403) return '无管理权限，仅管理员/老板可管理供应商。'
+  if (status === 409) return '供应商名称已存在，请勿重复创建。'
+  if (status >= 500) return '供应商操作失败，请稍后重试。'
+  return fallback || '供应商操作失败'
+}
+
 export default function InventoryPurchasingPage() {
   const { data: session } = useSession()
   const role = mapOldRole((session?.user as { role?: string } | undefined)?.role)
   const canManageInventory = role === 'admin' || role === 'boss'
-  const [activeTab, setActiveTab] = useState<'overview' | 'import' | 'ordering'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'import' | 'suppliers' | 'ordering'>('overview')
   const [summaryItems, setSummaryItems] = useState<SummaryItem[]>([])
   const [summary, setSummary] = useState({ skuCount: 0, currentTotalStock: 0, changedSkuCount: 0, snapshotBackedSkuCount: 0 })
   const [batches, setBatches] = useState<ImportBatch[]>([])
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [showInactiveSuppliers, setShowInactiveSuppliers] = useState(false)
+  const [supplierName, setSupplierName] = useState('')
+  const [supplierNotes, setSupplierNotes] = useState('')
+  const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null)
+  const [editingSupplierName, setEditingSupplierName] = useState('')
+  const [editingSupplierNotes, setEditingSupplierNotes] = useState('')
+  const [editingSupplierActive, setEditingSupplierActive] = useState(true)
   const [previewBatch, setPreviewBatch] = useState<ImportBatch | null>(null)
   const [matchedRows, setMatchedRows] = useState<MatchedRow[]>([])
   const [unmatchedRows, setUnmatchedRows] = useState<UnmatchedRow[]>([])
@@ -148,10 +173,17 @@ export default function InventoryPurchasingPage() {
     setBatches(data.batches || [])
   }
 
+  async function loadSuppliers(includeInactive = showInactiveSuppliers) {
+    const response = await fetch(`/api/inventory-purchasing/suppliers${includeInactive ? '?includeInactive=true' : ''}`)
+    const data = await response.json()
+    if (!response.ok) throw new Error(getSupplierErrorMessage(response.status, data.error || '供应商列表加载失败'))
+    setSuppliers(data.suppliers || [])
+  }
+
   async function refresh() {
     setError('')
     try {
-      await Promise.all([loadSummary(), loadBatches()])
+      await Promise.all([loadSummary(), loadBatches(), loadSuppliers(showInactiveSuppliers)])
     } catch (err) {
       setError(err instanceof Error ? err.message : '页面数据加载失败')
     }
@@ -159,7 +191,125 @@ export default function InventoryPurchasingPage() {
 
   useEffect(() => {
     refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    loadSuppliers(showInactiveSuppliers).catch((err) => {
+      setError(err instanceof Error ? err.message : '供应商列表加载失败')
+    })
+  }, [showInactiveSuppliers])
+
+  async function handleCreateSupplier(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError('')
+    setMessage('')
+    if (!canManageInventory) {
+      setError('仅管理员/老板可管理供应商。')
+      return
+    }
+    const name = supplierName.trim()
+    if (!name) {
+      setError('供应商名称不能为空。')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const response = await fetch('/api/inventory-purchasing/suppliers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, notes: supplierNotes }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(getSupplierErrorMessage(response.status, data.error || '创建供应商失败'))
+      setSupplierName('')
+      setSupplierNotes('')
+      setMessage(`供应商“${data.supplier?.name || name}”已创建。`)
+      await loadSuppliers(showInactiveSuppliers)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建供应商失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function startEditSupplier(supplier: Supplier) {
+    setEditingSupplierId(supplier.id)
+    setEditingSupplierName(supplier.name)
+    setEditingSupplierNotes(supplier.notes || '')
+    setEditingSupplierActive(supplier.isActive)
+  }
+
+  function cancelEditSupplier() {
+    setEditingSupplierId(null)
+    setEditingSupplierName('')
+    setEditingSupplierNotes('')
+    setEditingSupplierActive(true)
+  }
+
+  async function handleUpdateSupplier(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!editingSupplierId) return
+    setError('')
+    setMessage('')
+    if (!canManageInventory) {
+      setError('仅管理员/老板可管理供应商。')
+      return
+    }
+    const name = editingSupplierName.trim()
+    if (!name) {
+      setError('供应商名称不能为空。')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const response = await fetch(`/api/inventory-purchasing/suppliers/${editingSupplierId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, notes: editingSupplierNotes, isActive: editingSupplierActive }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(getSupplierErrorMessage(response.status, data.error || '更新供应商失败'))
+      setMessage(`供应商“${data.supplier?.name || name}”已更新。`)
+      cancelEditSupplier()
+      await loadSuppliers(showInactiveSuppliers)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新供应商失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleDeactivateSupplier(supplier: Supplier) {
+    if (!canManageInventory) {
+      setError('仅管理员/老板可停用供应商。')
+      return
+    }
+    if (!window.confirm('确认停用该供应商？已经绑定该供应商的历史数据不会被删除。')) {
+      return
+    }
+
+    setLoading(true)
+    setError('')
+    setMessage('')
+    try {
+      const response = await fetch(`/api/inventory-purchasing/suppliers/${supplier.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: supplier.name, notes: supplier.notes || '', isActive: false }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(getSupplierErrorMessage(response.status, data.error || '停用供应商失败'))
+      setMessage(`供应商“${data.supplier?.name || supplier.name}”已停用。`)
+      await loadSuppliers(showInactiveSuppliers)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '停用供应商失败')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   async function handlePreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -328,7 +478,7 @@ export default function InventoryPurchasingPage() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2 text-sm">
-              {(['overview', 'import', 'ordering'] as const).map((tab) => (
+              {(['overview', 'import', 'suppliers', 'ordering'] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -339,7 +489,7 @@ export default function InventoryPurchasingPage() {
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                   }`}
                 >
-                  {tab === 'overview' ? '库存概览' : tab === 'import' ? '库存导入' : '订货/在途'}
+                  {tab === 'overview' ? '库存概览' : tab === 'import' ? '库存导入' : tab === 'suppliers' ? '供应商管理' : '订货/在途'}
                 </button>
               ))}
             </div>
@@ -630,6 +780,177 @@ export default function InventoryPurchasingPage() {
                 ))}
                 {batches.length === 0 && <p className="text-sm text-slate-500">暂无导入批次。</p>}
               </div>
+            </aside>
+          </section>
+        )}
+
+        {activeTab === 'suppliers' && (
+          <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+            <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+              <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">供应商管理</h2>
+                  <p className="mt-1 text-sm text-slate-500">只维护供应商主数据；不会修改 Product 经营字段，也不会创建采购单。</p>
+                </div>
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={showInactiveSuppliers}
+                    onChange={(event) => setShowInactiveSuppliers(event.target.checked)}
+                    className="rounded border-slate-300"
+                  />
+                  显示已停用
+                </label>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3">供应商名称</th>
+                      <th className="px-4 py-3">状态</th>
+                      <th className="px-4 py-3">备注</th>
+                      <th className="px-4 py-3">创建时间</th>
+                      <th className="px-4 py-3">更新时间</th>
+                      {canManageInventory && <th className="px-4 py-3">操作</th>}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {suppliers.map((supplier) => (
+                      <tr key={supplier.id} className="hover:bg-slate-50">
+                        <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">{supplier.name}</td>
+                        <td className="px-4 py-3">
+                          <span className={`rounded-full px-2 py-1 text-xs font-semibold ${supplier.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                            {supplier.isActive ? '启用' : '已停用'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">{supplier.notes || '—'}</td>
+                        <td className="px-4 py-3 text-slate-600">{formatDateTime(supplier.createdAt)}</td>
+                        <td className="px-4 py-3 text-slate-600">{formatDateTime(supplier.updatedAt)}</td>
+                        {canManageInventory && (
+                          <td className="whitespace-nowrap px-4 py-3">
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => startEditSupplier(supplier)}
+                                disabled={loading}
+                                className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                编辑
+                              </button>
+                              {supplier.isActive && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeactivateSupplier(supplier)}
+                                  disabled={loading}
+                                  className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  停用
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                    {suppliers.length === 0 && (
+                      <tr>
+                        <td colSpan={canManageInventory ? 6 : 5} className="px-4 py-8 text-center text-slate-500">
+                          暂无供应商。管理员/老板可以在右侧新增供应商。
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <aside className="space-y-6">
+              {canManageInventory ? (
+                <form onSubmit={handleCreateSupplier} className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                  <h2 className="text-lg font-semibold text-slate-900">新增供应商</h2>
+                  <p className="mt-1 text-sm text-slate-500">仅填写名称和备注；isActive 默认启用。</p>
+                  <label className="mt-5 block">
+                    <span className="text-sm font-medium text-slate-700">供应商名称</span>
+                    <input
+                      value={supplierName}
+                      onChange={(event) => setSupplierName(event.target.value)}
+                      placeholder="例如：桃红"
+                      className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <label className="mt-4 block">
+                    <span className="text-sm font-medium text-slate-700">备注</span>
+                    <textarea
+                      value={supplierNotes}
+                      onChange={(event) => setSupplierNotes(event.target.value)}
+                      rows={3}
+                      placeholder="可留空"
+                      className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="mt-5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {loading ? '处理中...' : '创建供应商'}
+                  </button>
+                </form>
+              ) : (
+                <div className="rounded-2xl bg-white p-5 text-sm text-slate-600 shadow-sm ring-1 ring-slate-200">
+                  仅管理员/老板可管理供应商；当前账号只能查看供应商列表。
+                </div>
+              )}
+
+              {canManageInventory && editingSupplierId && (
+                <form onSubmit={handleUpdateSupplier} className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                  <h2 className="text-lg font-semibold text-slate-900">编辑供应商</h2>
+                  <label className="mt-5 block">
+                    <span className="text-sm font-medium text-slate-700">供应商名称</span>
+                    <input
+                      value={editingSupplierName}
+                      onChange={(event) => setEditingSupplierName(event.target.value)}
+                      className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <label className="mt-4 block">
+                    <span className="text-sm font-medium text-slate-700">备注</span>
+                    <textarea
+                      value={editingSupplierNotes}
+                      onChange={(event) => setEditingSupplierNotes(event.target.value)}
+                      rows={3}
+                      className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <label className="mt-4 flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={editingSupplierActive}
+                      onChange={(event) => setEditingSupplierActive(event.target.checked)}
+                      className="rounded border-slate-300"
+                    />
+                    启用该供应商
+                  </label>
+                  <div className="mt-5 flex gap-2">
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      保存修改
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEditSupplier}
+                      disabled={loading}
+                      className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </form>
+              )}
             </aside>
           </section>
         )}
