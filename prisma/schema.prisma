@@ -77,8 +77,11 @@ model Product {
   nextAction               String?
   outreachLinkedAt         DateTime?
   pickedUpAt               DateTime?
+  defaultSupplierId        String?
   aliases                  ProductSkuAlias[]
+  defaultSupplier          Supplier?   @relation(fields: [defaultSupplierId], references: [id], onDelete: SetNull)
   postedAt                 DateTime?
+  purchaseOrderItems       PurchaseOrderItem[]
   sampleSentAt             DateTime?
   scriptReadyAt            DateTime?
   storyboardReadyAt        DateTime?
@@ -86,6 +89,8 @@ model Product {
   productUrl               String?
   isActive                 Boolean     @default(true)
   tiktokSync               TiktokSync?
+
+  @@index([defaultSupplierId])
 }
 
 model TiktokSync {
@@ -217,6 +222,69 @@ model InventoryImportBatch {
   @@index([fileHash])
   @@index([status])
   @@index([stockCapturedAt])
+}
+
+model Supplier {
+  id             String          @id @default(cuid())
+  name           String          @unique
+  isActive       Boolean         @default(true)
+  notes          String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  products       Product[]
+  purchaseOrders PurchaseOrder[]
+
+  @@index([isActive])
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  ORDERED
+  PRODUCING
+  IN_TRANSIT
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id                   String              @id @default(cuid())
+  orderNo              String              @unique
+  supplierId           String?
+  supplierNameSnapshot String?
+  status               PurchaseOrderStatus @default(DRAFT)
+  orderedAt            DateTime?
+  expectedArrivalDate  DateTime?
+  note                 String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  supplier             Supplier?           @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  items                PurchaseOrderItem[]
+
+  @@index([supplierId])
+  @@index([status])
+  @@index([orderedAt])
+  @@index([expectedArrivalDate])
+}
+
+model PurchaseOrderItem {
+  id                  String        @id @default(cuid())
+  purchaseOrderId     String
+  productId           String?
+  skuSnapshot         String?
+  productNameSnapshot String
+  orderedQty          Int           @default(0)
+  receivedQty         Int           @default(0)
+  unitCostRmb         Float?
+  note                String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  purchaseOrder       PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product             Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([purchaseOrderId])
+  @@index([productId])
+  @@index([skuSnapshot])
 }
 
 model ProductStockBaseline {
