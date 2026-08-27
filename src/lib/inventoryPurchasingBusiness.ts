@@ -2,6 +2,10 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getCurrentInventoryByProduct } from '@/lib/productInventorySnapshots'
 import { resolveCurrentSellingPriceUsd } from '@/lib/productPricing'
+import {
+  buildProductSkuResolver,
+  isSpecialLinkSku,
+} from '@/lib/product-sku-resolver'
 
 export type SupplierInput = {
   name?: unknown
@@ -160,71 +164,50 @@ function addDays(date: Date, days: number) {
   return next
 }
 
-function strictSkuKey(value: string | null | undefined) {
-  const text = typeof value === 'string' ? value.trim() : ''
-  return text ? text.toUpperCase() : ''
-}
-
-function uniqueProductSkus(product: { sku: string | null; aliases: Array<{ aliasSku: string | null }> }) {
-  const seen = new Set<string>()
-  return [product.sku, ...product.aliases.map((alias) => alias.aliasSku)].flatMap((value) => {
-    const sku = typeof value === 'string' ? value.trim() : ''
-    const key = strictSkuKey(sku)
-    if (!sku || !key || seen.has(key)) return []
-    seen.add(key)
-    return [sku]
-  })
-}
-
 async function getSalesByProductId(
-  products: Array<{ id: string; sku: string | null; aliases: Array<{ aliasSku: string | null }> }>,
+  products: Array<{
+    id: string
+    sku: string | null
+    name?: string | null
+    aliases: Array<{ aliasSku: string | null }>
+  }>,
 ) {
   const today = startOfDay(new Date())
   const endExclusive = addDays(today, 1)
   const start30 = addDays(today, -29)
   const start7 = addDays(today, -6)
-  const skuToProductIds = new Map<string, Set<string>>()
+  const salesProducts = products.filter((product) => !isSpecialLinkSku(product.sku))
+  const aliases = salesProducts.flatMap((product) => product.aliases.map((alias) => ({
+    productId: product.id,
+    aliasSku: alias.aliasSku,
+  })))
+  const { resolveProductBySku } = buildProductSkuResolver(salesProducts, aliases)
 
-  products.forEach((product) => {
-    uniqueProductSkus(product).forEach((sku) => {
-      const key = strictSkuKey(sku)
-      const bucket = skuToProductIds.get(key) || new Set<string>()
-      bucket.add(product.id)
-      skuToProductIds.set(key, bucket)
-    })
+  const rows = await prisma.performanceDaily.findMany({
+    where: {
+      date: {
+        gte: start30,
+        lt: endExclusive,
+      },
+    },
+    select: {
+      sku: true,
+      date: true,
+      orders: true,
+    },
   })
-
-  const sellerSkus = Array.from(skuToProductIds.keys())
-  const rows = sellerSkus.length
-    ? await prisma.productOrderItem.findMany({
-        where: {
-          productMatched: true,
-          isSample: false,
-          stockConsumedQty: { gt: 0 },
-          sellerSku: { in: sellerSkus },
-          paidDate: {
-            gte: start30,
-            lt: endExclusive,
-          },
-        },
-        select: {
-          sellerSku: true,
-          paidDate: true,
-          stockConsumedQty: true,
-        },
-      })
-    : []
 
   const result = new Map<string, { sales7d: number; sales30d: number }>()
   rows.forEach((row) => {
-    const productIds = skuToProductIds.get(strictSkuKey(row.sellerSku))
-    productIds?.forEach((productId) => {
-      const current = result.get(productId) || { sales7d: 0, sales30d: 0 }
-      const qty = row.stockConsumedQty || 0
-      current.sales30d += qty
-      if (row.paidDate >= start7) current.sales7d += qty
-      result.set(productId, current)
-    })
+    if (!row.sku) return
+    const match = resolveProductBySku(row.sku)
+    if (!match) return
+    const current = result.get(match.product.id) || { sales7d: 0, sales30d: 0 }
+    const qty = row.orders || 0
+    const date = startOfDay(new Date(row.date))
+    current.sales30d += qty
+    if (date >= start7) current.sales7d += qty
+    result.set(match.product.id, current)
   })
 
   return result
