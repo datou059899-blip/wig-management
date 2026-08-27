@@ -846,7 +846,7 @@ export default function InventoryPurchasingPage() {
                   <tbody className="divide-y divide-slate-100">
                     {filteredBusinessItems.map((item) => {
                       const isSmh11 = item.sku.toUpperCase() === 'SMH-11'
-                      const isSmh1 = item.sku.toUpperCase() === 'SMH-1'
+                      const isSmh1 = item.sku === 'SMH-1（SM412）'
                       return (
                         <tr key={item.productId} className="hover:bg-slate-50">
                           <td className="whitespace-nowrap px-3 py-2.5 font-semibold text-slate-900">{item.sku}</td>
