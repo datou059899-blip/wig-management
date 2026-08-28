@@ -46,6 +46,9 @@ type ProductBusinessItem = {
   sku: string
   name: string
   currentInventory: number
+  orderedOpenQty: number
+  inTransitQty: number
+  futureInventory: number
   sales7d: number
   sales30d: number
   priceUsd: number | null
@@ -1192,7 +1195,7 @@ export default function InventoryPurchasingPage() {
               </div>
 
               <div className="max-h-[calc(100vh-260px)] overflow-auto">
-                <table className="min-w-[1080px] divide-y divide-slate-200 text-sm">
+                <table className="min-w-[1220px] divide-y divide-slate-200 text-sm">
                   <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs font-semibold text-slate-500 shadow-sm">
                     <tr>
                       <th className="whitespace-nowrap px-3 py-2">
@@ -1205,6 +1208,9 @@ export default function InventoryPurchasingPage() {
                           当前库存{getBusinessSortLabel('currentInventory')}
                         </button>
                       </th>
+                      <th className="whitespace-nowrap px-3 py-2 text-right">订货中</th>
+                      <th className="whitespace-nowrap px-3 py-2 text-right">在途</th>
+                      <th className="whitespace-nowrap px-3 py-2 text-right">未来库存</th>
                       <th className="whitespace-nowrap px-3 py-2 text-right">
                         <button type="button" onClick={() => toggleBusinessSort('sales7d')} className="font-semibold hover:text-slate-900">
                           7天销量{getBusinessSortLabel('sales7d')}
@@ -1243,6 +1249,9 @@ export default function InventoryPurchasingPage() {
                             <div className="mt-0.5 line-clamp-2 text-xs leading-snug text-slate-500">{item.name}</div>
                           </td>
                           <td className="px-3 py-2 text-right font-medium text-slate-900">{item.currentInventory.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{item.orderedOpenQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{item.inTransitQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2 text-right font-medium text-slate-900">{item.futureInventory.toLocaleString('zh-CN')}</td>
                           <td className="px-3 py-2 text-right text-slate-700">{item.sales7d.toLocaleString('zh-CN')}</td>
                           <td className="px-3 py-2 text-right text-slate-700">{item.sales30d.toLocaleString('zh-CN')}</td>
                           <td className="px-3 py-2 text-right">
@@ -1286,7 +1295,7 @@ export default function InventoryPurchasingPage() {
                     })}
                     {filteredBusinessItems.length === 0 && (
                       <tr>
-                        <td colSpan={canManageInventory ? 11 : 10} className="px-4 py-8 text-center text-slate-500">
+                        <td colSpan={canManageInventory ? 14 : 13} className="px-4 py-8 text-center text-slate-500">
                           没有符合条件的商品。
                         </td>
                       </tr>

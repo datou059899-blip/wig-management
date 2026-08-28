@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client'
+import { Prisma, PurchaseOrderStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getCurrentInventoryByProduct } from '@/lib/productInventorySnapshots'
 import { resolveCurrentSellingPriceUsd } from '@/lib/productPricing'
@@ -213,6 +213,51 @@ async function getSalesByProductId(
   return result
 }
 
+async function getPurchaseStockByProductId(productIds: string[]) {
+  if (!productIds.length) return new Map<string, { orderedOpenQty: number; inTransitQty: number }>()
+
+  const rows = await prisma.purchaseOrderItem.findMany({
+    where: {
+      productId: { in: productIds },
+      purchaseOrder: {
+        status: {
+          in: [
+            PurchaseOrderStatus.ORDERED,
+            PurchaseOrderStatus.PRODUCING,
+            PurchaseOrderStatus.IN_TRANSIT,
+            PurchaseOrderStatus.PARTIALLY_RECEIVED,
+          ],
+        },
+      },
+    },
+    select: {
+      productId: true,
+      orderedQty: true,
+      receivedQty: true,
+      purchaseOrder: {
+        select: { status: true },
+      },
+    },
+  })
+
+  const result = new Map<string, { orderedOpenQty: number; inTransitQty: number }>()
+  rows.forEach((row) => {
+    if (!row.productId) return
+    const openQty = Math.max(row.orderedQty - row.receivedQty, 0)
+    if (openQty <= 0) return
+    const current = result.get(row.productId) || { orderedOpenQty: 0, inTransitQty: 0 }
+    if (row.purchaseOrder.status === PurchaseOrderStatus.ORDERED || row.purchaseOrder.status === PurchaseOrderStatus.PRODUCING) {
+      current.orderedOpenQty += openQty
+    }
+    if (row.purchaseOrder.status === PurchaseOrderStatus.IN_TRANSIT || row.purchaseOrder.status === PurchaseOrderStatus.PARTIALLY_RECEIVED) {
+      current.inTransitQty += openQty
+    }
+    result.set(row.productId, current)
+  })
+
+  return result
+}
+
 export async function getProductBusinessItems() {
   const products = await prisma.product.findMany({
     where: { isActive: true },
@@ -238,15 +283,19 @@ export async function getProductBusinessItems() {
     orderBy: { sku: 'asc' },
   })
 
-  const [inventoryByProductId, salesByProductId] = await Promise.all([
+  const productIds = products.map((product) => product.id)
+  const [inventoryByProductId, salesByProductId, purchaseStockByProductId] = await Promise.all([
     getCurrentInventoryByProduct(products),
     getSalesByProductId(products),
+    getPurchaseStockByProductId(productIds),
   ])
 
   return products.flatMap((product) => {
     if (!product.sku) return []
     const inventory = inventoryByProductId.get(product.id)
     const currentInventory = inventory?.currentStock ?? 0
+    const purchaseStock = purchaseStockByProductId.get(product.id) || { orderedOpenQty: 0, inTransitQty: 0 }
+    const futureInventory = currentInventory + purchaseStock.orderedOpenQty + purchaseStock.inTransitQty
     const sales = salesByProductId.get(product.id) || { sales7d: 0, sales30d: 0 }
     const { currentSellingPriceUsd, priceSource } = resolveCurrentSellingPriceUsd(product)
     const costCny = product.costCny || 0
@@ -256,6 +305,9 @@ export async function getProductBusinessItems() {
       sku: product.sku,
       name: product.name,
       currentInventory,
+      orderedOpenQty: purchaseStock.orderedOpenQty,
+      inTransitQty: purchaseStock.inTransitQty,
+      futureInventory,
       sales7d: sales.sales7d,
       sales30d: sales.sales30d,
       discountPriceUsd: product.discountPriceUsd,
