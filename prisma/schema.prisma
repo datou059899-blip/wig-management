@@ -253,6 +253,7 @@ model PurchaseOrder {
   supplierId           String?
   supplierNameSnapshot String?
   status               PurchaseOrderStatus @default(DRAFT)
+  paidAmountRmb        Float               @default(0)
   orderedAt            DateTime?
   expectedArrivalDate  DateTime?
   note                 String?

@@ -75,6 +75,7 @@ type BusinessFilter = 'all' | 'missingCost' | 'missingPrice' | 'missingSupplier'
 type BusinessSortKey = 'sku' | 'currentInventory' | 'sales7d' | 'sales30d'
 type SortDirection = 'asc' | 'desc'
 type PurchaseOrderStatus = 'DRAFT' | 'ORDERED' | 'PRODUCING' | 'IN_TRANSIT' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED'
+type PurchasePaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'AMOUNT_INCOMPLETE'
 
 type PurchaseOrderItem = {
   id?: string
@@ -102,6 +103,9 @@ type PurchaseOrder = {
   orderedQty: number
   receivedQty: number
   openQty: number
+  paidAmountRmb: number
+  remainingPaymentRmb: number | null
+  paymentStatus: PurchasePaymentStatus
   orderAmountRmb: number
   calculablePurchaseAmountRmb: number
   missingUnitCostItemCount: number
@@ -119,6 +123,8 @@ type PurchaseOrderSummary = {
   inTransitQty: number
   orderAmountRmb: number
   calculablePurchaseAmountRmb: number
+  paidAmountRmb: number
+  remainingPaymentRmb: number | null
   missingUnitCostItemCount: number
   amountComplete: boolean
   supplierCount: number
@@ -195,6 +201,13 @@ function formatRmb(value: number | null) {
   return `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+function paymentStatusLabel(status: PurchasePaymentStatus) {
+  if (status === 'AMOUNT_INCOMPLETE') return '金额待完善'
+  if (status === 'PAID') return '已付清'
+  if (status === 'PARTIALLY_PAID') return '部分付款'
+  return '未付款'
+}
+
 function toDateInputValue(value: string | null) {
   if (!value) return ''
   const date = new Date(value)
@@ -252,6 +265,8 @@ export default function InventoryPurchasingPage() {
     inTransitQty: 0,
     orderAmountRmb: 0,
     calculablePurchaseAmountRmb: 0,
+    paidAmountRmb: 0,
+    remainingPaymentRmb: 0,
     missingUnitCostItemCount: 0,
     amountComplete: true,
     supplierCount: 0,
@@ -259,6 +274,7 @@ export default function InventoryPurchasingPage() {
   const [selectedPurchaseOrder, setSelectedPurchaseOrder] = useState<PurchaseOrder | null>(null)
   const [purchaseSupplierId, setPurchaseSupplierId] = useState('')
   const [purchaseStatus, setPurchaseStatus] = useState<PurchaseOrderStatus>('DRAFT')
+  const [purchasePaidAmountRmb, setPurchasePaidAmountRmb] = useState('0')
   const [purchaseOrderedAt, setPurchaseOrderedAt] = useState('')
   const [purchaseExpectedArrivalDate, setPurchaseExpectedArrivalDate] = useState('')
   const [purchaseNote, setPurchaseNote] = useState('')
@@ -380,6 +396,8 @@ export default function InventoryPurchasingPage() {
       inTransitQty: 0,
       orderAmountRmb: 0,
       calculablePurchaseAmountRmb: 0,
+      paidAmountRmb: 0,
+      remainingPaymentRmb: 0,
       missingUnitCostItemCount: 0,
       amountComplete: true,
       supplierCount: 0,
@@ -753,6 +771,7 @@ export default function InventoryPurchasingPage() {
     setSelectedPurchaseOrder(null)
     setPurchaseSupplierId('')
     setPurchaseStatus('DRAFT')
+    setPurchasePaidAmountRmb('0')
     setPurchaseOrderedAt('')
     setPurchaseExpectedArrivalDate('')
     setPurchaseNote('')
@@ -763,6 +782,7 @@ export default function InventoryPurchasingPage() {
     return {
       supplierId: purchaseSupplierId || null,
       status: purchaseStatus,
+      paidAmountRmb: Number(purchasePaidAmountRmb || 0),
       orderedAt: purchaseOrderedAt || null,
       expectedArrivalDate: purchaseExpectedArrivalDate || null,
       note: purchaseNote,
@@ -794,6 +814,7 @@ export default function InventoryPurchasingPage() {
     setSelectedPurchaseOrder(order)
     setPurchaseSupplierId(order.supplierId || '')
     setPurchaseStatus(order.status)
+    setPurchasePaidAmountRmb(String(order.paidAmountRmb || 0))
     setPurchaseOrderedAt(toDateInputValue(order.orderedAt))
     setPurchaseExpectedArrivalDate(toDateInputValue(order.expectedArrivalDate))
     setPurchaseNote(order.note || '')
@@ -1604,7 +1625,7 @@ export default function InventoryPurchasingPage() {
 
         {activeTab === 'ordering' && (
           <section className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
               <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
                 <p className="text-xs font-medium text-slate-500">待到货总数</p>
                 <p className="mt-2 text-2xl font-bold text-slate-900">{purchaseSummary.openPurchaseQty.toLocaleString('zh-CN')}</p>
@@ -1623,6 +1644,16 @@ export default function InventoryPurchasingPage() {
                 </p>
               </div>
               <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <p className="text-xs font-medium text-slate-500">已付款</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{formatRmb(purchaseSummary.paidAmountRmb)}</p>
+                <p className="mt-1 text-xs text-slate-500">累计已向供应商支付</p>
+              </div>
+              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <p className="text-xs font-medium text-slate-500">待付款</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{formatRmb(purchaseSummary.remainingPaymentRmb)}</p>
+                <p className="mt-1 text-xs text-slate-500">订单金额 - 已付款</p>
+              </div>
+              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
                 <p className="text-xs font-medium text-slate-500">供应商数</p>
                 <p className="mt-2 text-2xl font-bold text-slate-900">{purchaseSummary.supplierCount.toLocaleString('zh-CN')}</p>
                 <p className="mt-1 text-xs text-slate-500">当前采购单关联供应商</p>
@@ -1631,7 +1662,6 @@ export default function InventoryPurchasingPage() {
 
             <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
               到货登记只更新采购进度，不会增加可售库存；真正库存增加仍必须走库存 Excel → PREVIEW → CONFIRM → InventorySnapshot。
-              当前 schema 暂无定金/待付款字段，因此本页不展示付款卡片。
             </div>
 
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_440px]">
@@ -1650,7 +1680,7 @@ export default function InventoryPurchasingPage() {
                   </button>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="min-w-[1060px] divide-y divide-slate-200 text-sm">
+                  <table className="min-w-[1260px] divide-y divide-slate-200 text-sm">
                     <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                       <tr>
                         <th className="px-3 py-3">订单号</th>
@@ -1660,6 +1690,9 @@ export default function InventoryPurchasingPage() {
                         <th className="px-3 py-3">已到货</th>
                         <th className="px-3 py-3">待到货</th>
                         <th className="px-3 py-3">订单金额</th>
+                        <th className="px-3 py-3">已付款</th>
+                        <th className="px-3 py-3">待付款</th>
+                        <th className="px-3 py-3">付款状态</th>
                         <th className="px-3 py-3">下单时间</th>
                         <th className="px-3 py-3">预计到货</th>
                         <th className="px-3 py-3">更新时间</th>
@@ -1689,6 +1722,9 @@ export default function InventoryPurchasingPage() {
                             {formatRmb(order.calculablePurchaseAmountRmb)}
                             {!order.amountComplete && <div className="mt-0.5 text-xs text-amber-700">部分商品未维护单价</div>}
                           </td>
+                          <td className="px-3 py-2.5 text-slate-700">{formatRmb(order.paidAmountRmb)}</td>
+                          <td className="px-3 py-2.5 font-medium text-slate-900">{formatRmb(order.remainingPaymentRmb)}</td>
+                          <td className="px-3 py-2.5 text-slate-700">{paymentStatusLabel(order.paymentStatus)}</td>
                           <td className="px-3 py-2.5 text-slate-600">{formatDateTime(order.orderedAt)}</td>
                           <td className="px-3 py-2.5 text-slate-600">{formatDateTime(order.expectedArrivalDate)}</td>
                           <td className="px-3 py-2.5 text-slate-600">{formatDateTime(order.updatedAt)}</td>
@@ -1705,7 +1741,7 @@ export default function InventoryPurchasingPage() {
                       ))}
                       {purchaseOrders.length === 0 && (
                         <tr>
-                          <td colSpan={11} className="px-4 py-10 text-center text-slate-500">
+                          <td colSpan={14} className="px-4 py-10 text-center text-slate-500">
                             暂无采购单。不会自动导入期货 Excel；管理员/老板可从右侧手工创建。
                           </td>
                         </tr>
@@ -1750,6 +1786,11 @@ export default function InventoryPurchasingPage() {
                     <label className="block">
                       <span className="text-sm font-medium text-slate-700">下单时间</span>
                       <input type="datetime-local" value={purchaseOrderedAt} onChange={(event) => setPurchaseOrderedAt(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    </label>
+                    <label className="block">
+                      <span className="text-sm font-medium text-slate-700">已付款金额 RMB</span>
+                      <input type="number" min="0" step="0.01" value={purchasePaidAmountRmb} onChange={(event) => setPurchasePaidAmountRmb(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                      <span className="mt-1 block text-xs text-slate-500">累计已向供应商支付；待付款由订单金额自动计算。</span>
                     </label>
                     <label className="block">
                       <span className="text-sm font-medium text-slate-700">备注</span>
@@ -1842,14 +1883,22 @@ export default function InventoryPurchasingPage() {
                       {!selectedPurchaseOrder.amountComplete && <p className="mt-1 text-xs text-amber-700">部分商品未维护单价</p>}
                     </div>
                     <div className="rounded-xl bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500">已付款 / 待付款</p>
+                      <p className="mt-1 font-semibold text-slate-900">{formatRmb(selectedPurchaseOrder.paidAmountRmb)} / {formatRmb(selectedPurchaseOrder.remainingPaymentRmb)}</p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3">
                       <p className="text-xs text-slate-500">状态</p>
                       <p className="mt-1 font-semibold text-slate-900">{selectedPurchaseOrder.statusLabel}</p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500">付款状态</p>
+                      <p className="mt-1 font-semibold text-slate-900">{paymentStatusLabel(selectedPurchaseOrder.paymentStatus)}</p>
                     </div>
                   </div>
 
                   {canManageInventory ? (
                     <div className="mt-5 space-y-4">
-                      <div className="grid gap-3 md:grid-cols-4">
+                      <div className="grid gap-3 md:grid-cols-5">
                         <label className="block">
                           <span className="text-sm font-medium text-slate-700">供应商</span>
                           <select value={purchaseSupplierId} onChange={(event) => setPurchaseSupplierId(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
@@ -1876,6 +1925,10 @@ export default function InventoryPurchasingPage() {
                         <label className="block">
                           <span className="text-sm font-medium text-slate-700">下单时间</span>
                           <input type="datetime-local" value={purchaseOrderedAt} onChange={(event) => setPurchaseOrderedAt(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                        </label>
+                        <label className="block">
+                          <span className="text-sm font-medium text-slate-700">已付款 RMB</span>
+                          <input type="number" min="0" step="0.01" value={purchasePaidAmountRmb} onChange={(event) => setPurchasePaidAmountRmb(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
                         </label>
                       </div>
                       <label className="block">

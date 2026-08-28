@@ -47,6 +47,7 @@ type PurchaseItemInput = {
 type PurchaseOrderInput = {
   supplierId?: string | null
   status?: PurchaseOrderStatus
+  paidAmountRmb?: number | null
   orderedAt?: string | null
   expectedArrivalDate?: string | null
   note?: string | null
@@ -76,6 +77,12 @@ function optionalNumber(value: unknown) {
   if (value === null || value === undefined || value === '') return null
   const numberValue = Number(value)
   if (!Number.isFinite(numberValue) || numberValue < 0) throw new Error('金额必须是大于等于0的数字')
+  return numberValue
+}
+
+function nonNegativeAmount(value: unknown, fieldName: string) {
+  const numberValue = value === null || value === undefined || value === '' ? 0 : Number(value)
+  if (!Number.isFinite(numberValue) || numberValue < 0) throw new Error(`${fieldName}必须是大于等于0的数字`)
   return numberValue
 }
 
@@ -137,6 +144,21 @@ function assertStatusMatchesReceivedQty(
   }
 }
 
+function assertPaidAmountWithinOrderAmount(paidAmountRmb: number, orderAmountRmb: number) {
+  if (paidAmountRmb > orderAmountRmb) {
+    throw new Error('已付款金额不能大于订单金额')
+  }
+}
+
+function assertPaymentCanBeRecorded(paidAmountRmb: number, missingUnitCostItemCount: number, orderAmountRmb: number) {
+  if (paidAmountRmb > 0 && missingUnitCostItemCount > 0) {
+    throw new Error('请先补全所有商品单价，再登记付款金额')
+  }
+  if (missingUnitCostItemCount === 0) {
+    assertPaidAmountWithinOrderAmount(paidAmountRmb, orderAmountRmb)
+  }
+}
+
 async function resolveSupplierSnapshot(supplierId: string | null) {
   if (!supplierId) return { supplierId: null, supplierNameSnapshot: null }
   const supplier = await prisma.supplier.findUnique({
@@ -191,6 +213,15 @@ function summarizeOrder(order: Prisma.PurchaseOrderGetPayload<{ include: typeof 
   const openQty = Math.max(orderedQty - receivedQty, 0)
   const missingUnitCostItemCount = order.items.filter((item) => item.orderedQty > 0 && item.unitCostRmb === null).length
   const calculablePurchaseAmountRmb = order.items.reduce((sum, item) => sum + item.orderedQty * (item.unitCostRmb || 0), 0)
+  const amountComplete = missingUnitCostItemCount === 0
+  const remainingPaymentRmb = amountComplete ? Math.max(calculablePurchaseAmountRmb - order.paidAmountRmb, 0) : null
+  const paymentStatus = !amountComplete
+    ? 'AMOUNT_INCOMPLETE'
+    : order.paidAmountRmb <= 0
+      ? 'UNPAID'
+      : order.paidAmountRmb < calculablePurchaseAmountRmb
+        ? 'PARTIALLY_PAID'
+        : 'PAID'
 
   return {
     ...order,
@@ -200,8 +231,10 @@ function summarizeOrder(order: Prisma.PurchaseOrderGetPayload<{ include: typeof 
     openQty,
     orderAmountRmb: calculablePurchaseAmountRmb,
     calculablePurchaseAmountRmb,
+    remainingPaymentRmb,
+    paymentStatus,
     missingUnitCostItemCount,
-    amountComplete: missingUnitCostItemCount === 0,
+    amountComplete,
     openPurchaseQty: ACTIVE_OPEN_STATUSES.includes(order.status) ? openQty : 0,
     inTransitQty: IN_TRANSIT_STATUSES.includes(order.status) ? openQty : 0,
   }
@@ -223,11 +256,13 @@ export async function listPurchaseOrders() {
       acc.inTransitQty += order.inTransitQty
       acc.orderAmountRmb += order.orderAmountRmb
       acc.calculablePurchaseAmountRmb += order.calculablePurchaseAmountRmb
+      acc.paidAmountRmb += order.paidAmountRmb
+      acc.remainingPaymentRmb += order.remainingPaymentRmb || 0
       acc.missingUnitCostItemCount += order.missingUnitCostItemCount
       if (order.supplierId) acc.supplierIds.add(order.supplierId)
       return acc
     },
-    { openPurchaseQty: 0, inTransitQty: 0, orderAmountRmb: 0, calculablePurchaseAmountRmb: 0, missingUnitCostItemCount: 0, supplierIds: new Set<string>() },
+    { openPurchaseQty: 0, inTransitQty: 0, orderAmountRmb: 0, calculablePurchaseAmountRmb: 0, paidAmountRmb: 0, remainingPaymentRmb: 0, missingUnitCostItemCount: 0, supplierIds: new Set<string>() },
   )
 
   return {
@@ -237,6 +272,8 @@ export async function listPurchaseOrders() {
       inTransitQty: summary.inTransitQty,
       orderAmountRmb: summary.orderAmountRmb,
       calculablePurchaseAmountRmb: summary.calculablePurchaseAmountRmb,
+      paidAmountRmb: summary.paidAmountRmb,
+      remainingPaymentRmb: summary.missingUnitCostItemCount === 0 ? summary.remainingPaymentRmb : null,
       missingUnitCostItemCount: summary.missingUnitCostItemCount,
       amountComplete: summary.missingUnitCostItemCount === 0,
       supplierCount: summary.supplierIds.size,
@@ -266,6 +303,10 @@ export async function createPurchaseOrder(input: PurchaseOrderInput) {
   const supplierSnapshot = await resolveSupplierSnapshot(nullableString(input.supplierId))
   const itemData = await buildItemCreateData(rawItems)
   assertStatusMatchesReceivedQty(status, itemData)
+  const paidAmountRmb = nonNegativeAmount(input.paidAmountRmb, '已付款金额')
+  const orderAmountRmb = itemData.reduce((sum, item) => sum + item.orderedQty * (item.unitCostRmb || 0), 0)
+  const missingUnitCostItemCount = itemData.filter((item) => item.orderedQty > 0 && item.unitCostRmb === null).length
+  assertPaymentCanBeRecorded(paidAmountRmb, missingUnitCostItemCount, orderAmountRmb)
   const orderNo = buildManualOrderNo()
 
   const order = await prisma.purchaseOrder.create({
@@ -273,6 +314,7 @@ export async function createPurchaseOrder(input: PurchaseOrderInput) {
       orderNo,
       ...supplierSnapshot,
       status,
+      paidAmountRmb,
       orderedAt: parseNullableDate(input.orderedAt, '下单时间'),
       expectedArrivalDate: parseNullableDate(input.expectedArrivalDate, '预计到货时间'),
       note: nullableString(input.note),
@@ -288,7 +330,7 @@ export async function updatePurchaseOrder(id: string, input: PurchaseOrderInput)
   const nextStatus = input.status ? parseStatus(input.status) : current.status
   if (
     (current.status === PurchaseOrderStatus.RECEIVED || current.status === PurchaseOrderStatus.CANCELLED)
-    && (input.supplierId !== undefined || input.orderedAt !== undefined || input.expectedArrivalDate !== undefined || input.items !== undefined || nextStatus !== current.status)
+    && (input.supplierId !== undefined || input.paidAmountRmb !== undefined || input.orderedAt !== undefined || input.expectedArrivalDate !== undefined || input.items !== undefined || nextStatus !== current.status)
   ) {
     throw new Error('已到货或已取消采购单只能保留历史记录，不能修改核心字段')
   }
@@ -312,10 +354,19 @@ export async function updatePurchaseOrder(id: string, input: PurchaseOrderInput)
     ? await resolveSupplierSnapshot(nullableString(input.supplierId))
     : { supplierId: current.supplierId, supplierNameSnapshot: current.supplierNameSnapshot }
   const itemPlan = input.items ? await buildItemUpdatePlan(current, input.items) : null
+  const nextItemsForAmount = itemPlan
+    ? [...itemPlan.updates.map((item) => item.data), ...itemPlan.creates]
+    : rawItems
   assertStatusMatchesReceivedQty(nextStatus, itemPlan ? itemPlan.statusItems : rawItems.map((item) => ({
     orderedQty: nonNegativeInt(item.orderedQty, '订货数量'),
     receivedQty: nonNegativeInt(item.receivedQty, '已到货数量'),
   })))
+  const paidAmountRmb = input.paidAmountRmb !== undefined
+    ? nonNegativeAmount(input.paidAmountRmb, '已付款金额')
+    : current.paidAmountRmb
+  const orderAmountRmb = nextItemsForAmount.reduce((sum, item) => sum + nonNegativeInt(item.orderedQty, '订货数量') * (optionalNumber(item.unitCostRmb) || 0), 0)
+  const missingUnitCostItemCount = nextItemsForAmount.filter((item) => nonNegativeInt(item.orderedQty, '订货数量') > 0 && optionalNumber(item.unitCostRmb) === null).length
+  assertPaymentCanBeRecorded(paidAmountRmb, missingUnitCostItemCount, orderAmountRmb)
 
   const order = await prisma.$transaction(async (tx) => {
     if (itemPlan) {
@@ -338,6 +389,7 @@ export async function updatePurchaseOrder(id: string, input: PurchaseOrderInput)
       data: {
         ...supplierSnapshot,
         status: nextStatus,
+        paidAmountRmb,
         orderedAt: input.orderedAt !== undefined ? parseNullableDate(input.orderedAt, '下单时间') : current.orderedAt,
         expectedArrivalDate: input.expectedArrivalDate !== undefined ? parseNullableDate(input.expectedArrivalDate, '预计到货时间') : current.expectedArrivalDate,
         note: input.note !== undefined ? nullableString(input.note) : current.note,
