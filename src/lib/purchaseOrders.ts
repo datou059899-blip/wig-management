@@ -400,6 +400,42 @@ export async function updatePurchaseOrder(id: string, input: PurchaseOrderInput)
   return summarizeOrder(order)
 }
 
+export async function linkPurchaseOrderItemProduct(itemId: string, productId: string) {
+  const safeItemId = trimString(itemId)
+  const safeProductId = trimString(productId)
+  if (!safeItemId || !safeProductId) throw new Error('采购明细和商品不能为空')
+
+  const [item, product] = await Promise.all([
+    prisma.purchaseOrderItem.findUnique({
+      where: { id: safeItemId },
+      select: {
+        id: true,
+        purchaseOrderId: true,
+        productId: true,
+      },
+    }),
+    prisma.product.findUnique({
+      where: { id: safeProductId },
+      select: { id: true, sku: true, name: true, isActive: true },
+    }),
+  ])
+
+  if (!item) {
+    const error = new Error('采购明细不存在')
+    error.name = 'NotFound'
+    throw error
+  }
+  if (item.productId) throw new Error('采购明细已关联商品')
+  if (!product || !product.isActive) throw new Error('关联商品不存在或已停用')
+
+  await prisma.purchaseOrderItem.update({
+    where: { id: safeItemId },
+    data: { productId: product.id },
+  })
+
+  return getPurchaseOrder(item.purchaseOrderId)
+}
+
 type PurchaseOrderWithItems = Awaited<ReturnType<typeof getPurchaseOrder>>
 
 type ItemWriteData = {

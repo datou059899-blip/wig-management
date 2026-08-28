@@ -277,6 +277,8 @@ export default function InventoryPurchasingPage() {
     supplierCount: 0,
   })
   const [selectedPurchaseOrder, setSelectedPurchaseOrder] = useState<PurchaseOrder | null>(null)
+  const [linkingPurchaseItem, setLinkingPurchaseItem] = useState<PurchaseOrderItem | null>(null)
+  const [productLinkSearch, setProductLinkSearch] = useState('')
   const [showCreatePurchaseOrder, setShowCreatePurchaseOrder] = useState(false)
   const [purchaseSupplierId, setPurchaseSupplierId] = useState('')
   const [purchaseStatus, setPurchaseStatus] = useState<PurchaseOrderStatus>('DRAFT')
@@ -338,6 +340,13 @@ export default function InventoryPurchasingPage() {
       return (a[businessSortKey] - b[businessSortKey]) * direction
     })
   }, [businessFilter, businessItems, businessSearch, businessSortDirection, businessSortKey])
+
+  const productLinkOptions = useMemo(() => {
+    const keyword = productLinkSearch.trim().toLowerCase()
+    return businessItems
+      .filter((item) => !keyword || item.sku.toLowerCase().includes(keyword) || item.name.toLowerCase().includes(keyword))
+      .slice(0, 20)
+  }, [businessItems, productLinkSearch])
 
   const duplicateGroups = useMemo(() => {
     const groups = new Map<string, UnmatchedRow[]>()
@@ -892,6 +901,54 @@ export default function InventoryPurchasingPage() {
       await loadPurchaseOrders()
     } catch (err) {
       setError(err instanceof Error ? err.message : '更新采购单失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function startLinkPurchaseItemProduct(item: PurchaseOrderItem) {
+    if (!canManageInventory) {
+      setError('仅管理员/老板可关联采购商品。')
+      return
+    }
+    if (!item.id) {
+      setError('请先保存采购单，再关联商品。')
+      return
+    }
+    setError('')
+    setMessage('')
+    setLinkingPurchaseItem(item)
+    setProductLinkSearch('')
+  }
+
+  function cancelLinkPurchaseItemProduct() {
+    setLinkingPurchaseItem(null)
+    setProductLinkSearch('')
+  }
+
+  async function handleLinkPurchaseItemProduct(productId: string) {
+    if (!linkingPurchaseItem?.id) return
+    if (!canManageInventory) {
+      setError('仅管理员/老板可关联采购商品。')
+      return
+    }
+    setLoading(true)
+    setError('')
+    setMessage('')
+    try {
+      const response = await fetch(`/api/inventory-purchasing/purchase-order-items/${linkingPurchaseItem.id}/link-product`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || '关联商品失败')
+      setMessage('采购明细已关联商品，原始采购名称已保留。')
+      cancelLinkPurchaseItemProduct()
+      if (data.order) startEditPurchaseOrder(data.order)
+      await loadPurchaseOrders()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '关联商品失败')
     } finally {
       setLoading(false)
     }
@@ -1981,26 +2038,34 @@ export default function InventoryPurchasingPage() {
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {purchaseItems.map((item, index) => {
-                              const product = businessItems.find((candidate) => candidate.productId === item.productId)
+                              const sourceItem = selectedPurchaseOrder.items[index]
+                              const linkedProduct = sourceItem?.product
                               const orderedQty = Number(item.orderedQty || 0)
                               const receivedQty = Number(item.receivedQty || 0)
                               return (
                                 <tr key={index}>
                                   <td className="px-3 py-2">
-                                    <select value={item.productId} onChange={(event) => {
-                                      const nextProduct = businessItems.find((candidate) => candidate.productId === event.target.value)
-                                      updatePurchaseItem(index, { productId: event.target.value, productNameSnapshot: nextProduct ? nextProduct.name : item.productNameSnapshot })
-                                    }} className="w-44 rounded-lg border border-slate-300 px-2 py-1.5 text-xs">
-                                      <option value="">未关联</option>
-                                      {businessItems.map((candidate) => <option key={candidate.productId} value={candidate.productId}>{candidate.sku}</option>)}
-                                    </select>
+                                    {linkedProduct ? (
+                                      <div>
+                                        <p className="font-semibold text-slate-900">{linkedProduct.sku || '无 SKU'}</p>
+                                        <p className="text-xs text-slate-500">已关联 Product</p>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => sourceItem && startLinkPurchaseItemProduct(sourceItem)}
+                                        disabled={!sourceItem?.id || loading}
+                                        className="whitespace-nowrap rounded-lg bg-pink-50 px-3 py-1.5 text-xs font-semibold text-pink-700 hover:bg-pink-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                      >
+                                        关联商品
+                                      </button>
+                                    )}
                                   </td>
                                   <td className="px-3 py-2">
-                                    {item.productId ? (
-                                      <span className="text-slate-700">{product?.name || '已关联商品'}</span>
-                                    ) : (
-                                      <input value={item.productNameSnapshot} onChange={(event) => updatePurchaseItem(index, { productNameSnapshot: event.target.value })} className="w-56 rounded-lg border border-slate-300 px-2 py-1.5 text-xs" />
-                                    )}
+                                    <div className="min-w-56">
+                                      <p className="text-slate-700">{sourceItem?.productNameSnapshot || item.productNameSnapshot}</p>
+                                      {linkedProduct && <p className="mt-1 text-xs text-slate-500">当前商品：{linkedProduct.name}</p>}
+                                    </div>
                                   </td>
                                   <td className="px-3 py-2"><input type="number" min="0" step="1" value={item.orderedQty} onChange={(event) => updatePurchaseItem(index, { orderedQty: event.target.value })} className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-xs" /></td>
                                   <td className="px-3 py-2"><input type="number" min="0" step="1" value={item.receivedQty} onChange={(event) => updatePurchaseItem(index, { receivedQty: event.target.value })} className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-xs" /></td>
@@ -2039,8 +2104,15 @@ export default function InventoryPurchasingPage() {
                         <tbody className="divide-y divide-slate-100">
                           {selectedPurchaseOrder.items.map((item) => (
                             <tr key={item.id}>
-                              <td className="px-3 py-2 font-medium text-slate-900">{item.skuSnapshot || '未关联'}</td>
-                              <td className="px-3 py-2 text-slate-700">{item.productNameSnapshot}</td>
+                              <td className="px-3 py-2 font-medium text-slate-900">
+                                {item.product ? item.product.sku || '无 SKU' : item.skuSnapshot || '未关联'}
+                              </td>
+                              <td className="px-3 py-2 text-slate-700">
+                                <div>
+                                  <p>{item.productNameSnapshot}</p>
+                                  {item.product && <p className="mt-1 text-xs text-slate-500">当前商品：{item.product.name}</p>}
+                                </div>
+                              </td>
                               <td className="px-3 py-2">{item.orderedQty}</td>
                               <td className="px-3 py-2">{item.receivedQty}</td>
                               <td className="px-3 py-2">{Math.max(item.orderedQty - item.receivedQty, 0)}</td>
@@ -2054,6 +2126,58 @@ export default function InventoryPurchasingPage() {
                     </div>
                   )}
                 </form>
+              </div>
+            )}
+
+            {linkingPurchaseItem && (
+              <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 px-4 py-6 sm:items-center">
+                <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">关联商品</h2>
+                      <p className="mt-1 text-sm text-slate-500">只会更新采购明细的 Product 关联；原采购名称和 SKU 快照会继续保留。</p>
+                    </div>
+                    <button type="button" onClick={cancelLinkPurchaseItemProduct} className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200">关闭</button>
+                  </div>
+
+                  <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm">
+                    <p className="text-xs text-slate-500">原采购名称</p>
+                    <p className="mt-1 font-semibold text-slate-900">{linkingPurchaseItem.productNameSnapshot}</p>
+                    <p className="mt-1 text-xs text-slate-500">原 SKU 快照：{linkingPurchaseItem.skuSnapshot || '未提供'}</p>
+                  </div>
+
+                  <label className="mt-4 block">
+                    <span className="text-sm font-medium text-slate-700">搜索 SKU / 商品名称</span>
+                    <input
+                      value={productLinkSearch}
+                      onChange={(event) => setProductLinkSearch(event.target.value)}
+                      className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      placeholder="输入 SKU 或商品名称"
+                      autoFocus
+                    />
+                  </label>
+
+                  <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-200">
+                    {productLinkOptions.map((product) => (
+                      <button
+                        key={product.productId}
+                        type="button"
+                        onClick={() => handleLinkPurchaseItemProduct(product.productId)}
+                        disabled={loading}
+                        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <span>
+                          <span className="block font-semibold text-slate-900">{product.sku}</span>
+                          <span className="block text-xs text-slate-500">{product.name}</span>
+                        </span>
+                        <span className="whitespace-nowrap rounded-full bg-pink-50 px-3 py-1 text-xs font-semibold text-pink-700">选择</span>
+                      </button>
+                    ))}
+                    {productLinkOptions.length === 0 && (
+                      <div className="px-4 py-8 text-center text-sm text-slate-500">没有找到匹配的 active Product。</div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </section>
