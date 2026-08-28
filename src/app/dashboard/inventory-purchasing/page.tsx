@@ -221,6 +221,11 @@ function purchaseItemLinkStatusLabel(status: PurchaseItemLinkStatus | null) {
   return status ? PURCHASE_ITEM_LINK_STATUS_LABELS[status] : '未标记'
 }
 
+function splitSupplierDisplayName(name: string) {
+  const match = name.match(/^(.+?)(（.+）|\(.+\))$/)
+  return match ? { primary: match[1].trim(), secondary: match[2] } : { primary: name, secondary: '' }
+}
+
 function purchaseBatchLabel(order: PurchaseOrder) {
   const match = order.note?.match(/原始状态\/批次=([^；]+)/)
   return match?.[1] || '未记录'
@@ -306,6 +311,8 @@ export default function InventoryPurchasingPage() {
   const [businessFilter, setBusinessFilter] = useState<BusinessFilter>('all')
   const [businessSortKey, setBusinessSortKey] = useState<BusinessSortKey>('sku')
   const [businessSortDirection, setBusinessSortDirection] = useState<SortDirection>('asc')
+  const [businessPageSize, setBusinessPageSize] = useState(15)
+  const [businessPage, setBusinessPage] = useState(1)
   const [editingBusinessItem, setEditingBusinessItem] = useState<ProductBusinessItem | null>(null)
   const [businessPriceInput, setBusinessPriceInput] = useState('')
   const [businessCostInput, setBusinessCostInput] = useState('')
@@ -353,6 +360,13 @@ export default function InventoryPurchasingPage() {
       return (a[businessSortKey] - b[businessSortKey]) * direction
     })
   }, [businessFilter, businessItems, businessSearch, businessSortDirection, businessSortKey])
+
+  const businessTotalPages = Math.max(1, Math.ceil(filteredBusinessItems.length / businessPageSize))
+  const safeBusinessPage = Math.min(businessPage, businessTotalPages)
+  const paginatedBusinessItems = useMemo(() => {
+    const start = (safeBusinessPage - 1) * businessPageSize
+    return filteredBusinessItems.slice(start, start + businessPageSize)
+  }, [businessPageSize, filteredBusinessItems, safeBusinessPage])
 
   const productLinkOptions = useMemo(() => {
     const keyword = productLinkSearch.trim().toLowerCase()
@@ -446,6 +460,10 @@ export default function InventoryPurchasingPage() {
     refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    setBusinessPage(1)
+  }, [businessFilter, businessPageSize, businessSearch, businessSortDirection, businessSortKey])
 
   useEffect(() => {
     loadSuppliers(showInactiveSuppliers).catch((err) => {
@@ -1130,7 +1148,7 @@ export default function InventoryPurchasingPage() {
                   </div>
                   <p className="text-xs text-slate-500">销售字段为净销量；库存消耗趋势继续使用 stockConsumedQty。</p>
                 </div>
-                <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_220px_180px]">
+                <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_220px_180px_160px]">
                   <label className="block">
                     <span className="sr-only">搜索 SKU 或产品名</span>
                     <input
@@ -1158,80 +1176,106 @@ export default function InventoryPurchasingPage() {
                   <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
                     当前显示 {filteredBusinessItems.length} / {businessSummary.productCount} SKU
                   </div>
+                  <label className="block">
+                    <span className="sr-only">每页条数</span>
+                    <select
+                      value={businessPageSize}
+                      onChange={(event) => setBusinessPageSize(Number(event.target.value))}
+                      className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    >
+                      <option value={15}>每页 15 条</option>
+                      <option value={30}>每页 30 条</option>
+                      <option value={50}>每页 50 条</option>
+                    </select>
+                  </label>
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="min-w-[1180px] divide-y divide-slate-200 text-sm">
-                  <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <div className="max-h-[calc(100vh-260px)] overflow-auto">
+                <table className="min-w-[1080px] divide-y divide-slate-200 text-sm">
+                  <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs font-semibold text-slate-500 shadow-sm">
                     <tr>
-                      <th className="px-3 py-3">
+                      <th className="whitespace-nowrap px-3 py-2">
                         <button type="button" onClick={() => toggleBusinessSort('sku')} className="font-semibold hover:text-slate-900">
-                          SKU{getBusinessSortLabel('sku')}
+                          SKU / 商品{getBusinessSortLabel('sku')}
                         </button>
                       </th>
-                      <th className="px-3 py-3">商品</th>
-                      <th className="px-3 py-3">
+                      <th className="whitespace-nowrap px-3 py-2 text-right">
                         <button type="button" onClick={() => toggleBusinessSort('currentInventory')} className="font-semibold hover:text-slate-900">
                           当前库存{getBusinessSortLabel('currentInventory')}
                         </button>
                       </th>
-                      <th className="px-3 py-3">
+                      <th className="whitespace-nowrap px-3 py-2 text-right">
                         <button type="button" onClick={() => toggleBusinessSort('sales7d')} className="font-semibold hover:text-slate-900">
                           7天销量{getBusinessSortLabel('sales7d')}
                         </button>
                       </th>
-                      <th className="px-3 py-3">
+                      <th className="whitespace-nowrap px-3 py-2 text-right">
                         <button type="button" onClick={() => toggleBusinessSort('sales30d')} className="font-semibold hover:text-slate-900">
                           30天销量{getBusinessSortLabel('sales30d')}
                         </button>
                       </th>
-                      <th className="px-3 py-3">实际售价</th>
-                      <th className="px-3 py-3">拿货价</th>
-                      <th className="px-3 py-3">默认供应商</th>
-                      <th className="px-3 py-3">库存成本</th>
-                      <th className="px-3 py-3">零售货值</th>
-                      <th className="px-3 py-3">状态</th>
-                      {canManageInventory && <th className="px-3 py-3">操作</th>}
+                      <th className="whitespace-nowrap px-3 py-2 text-right">实际售价</th>
+                      <th className="whitespace-nowrap px-3 py-2 text-right">拿货价</th>
+                      <th className="whitespace-nowrap px-3 py-2">默认供应商</th>
+                      <th className="whitespace-nowrap px-3 py-2 text-right">库存成本</th>
+                      <th className="whitespace-nowrap px-3 py-2 text-right">零售货值</th>
+                      <th className="whitespace-nowrap px-3 py-2">状态</th>
+                      {canManageInventory && <th className="whitespace-nowrap px-3 py-2">操作</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredBusinessItems.map((item) => {
+                    {paginatedBusinessItems.map((item) => {
                       const isSmh11 = item.sku.toUpperCase() === 'SMH-11'
                       const isSmh1 = item.sku === 'SMH-1（SM412）'
+                      const statusWarnings = [
+                        !(item.costCny > 0) ? '未维护成本' : null,
+                        item.currentSellingPriceUsd === null ? '未维护售价' : null,
+                        !item.defaultSupplier ? '未绑定供应商' : null,
+                        isSmh1 ? '历史 Alias 待确认' : null,
+                        isSmh11 ? '经营数据待人工确认' : null,
+                      ].filter(Boolean)
+                      const supplierDisplay = item.defaultSupplier ? splitSupplierDisplayName(item.defaultSupplier.name) : null
                       return (
                         <tr key={item.productId} className="hover:bg-slate-50">
-                          <td className="whitespace-nowrap px-3 py-2.5 font-semibold text-slate-900">{item.sku}</td>
-                          <td className="min-w-[180px] px-3 py-2.5 text-slate-700">
-                            <div>{item.name}</div>
-                            {isSmh11 && <div className="mt-1 text-xs font-medium text-amber-700">经营数据待人工确认</div>}
-                            {isSmh1 && <div className="mt-1 text-xs font-medium text-amber-700">历史 Alias 待确认</div>}
+                          <td className="max-w-[300px] px-3 py-2">
+                            <div className="font-semibold text-slate-900">{item.sku}</div>
+                            <div className="mt-0.5 line-clamp-2 text-xs leading-snug text-slate-500">{item.name}</div>
                           </td>
-                          <td className="px-3 py-2.5 font-medium text-slate-900">{item.currentInventory.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2.5 text-slate-700">{item.sales7d.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2.5 text-slate-700">{item.sales30d.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2.5">
+                          <td className="px-3 py-2 text-right font-medium text-slate-900">{item.currentInventory.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{item.sales7d.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{item.sales30d.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2 text-right">
                             <div className="font-medium text-slate-900">{formatUsd(item.currentSellingPriceUsd)}</div>
                             <div className="mt-0.5 text-xs text-slate-500">{item.priceSource}</div>
                           </td>
-                          <td className="px-3 py-2.5 text-slate-700">{item.costCny > 0 ? formatRmb(item.costCny) : '未维护'}</td>
-                          <td className="px-3 py-2.5 text-slate-700">{item.defaultSupplier?.name || '未绑定'}</td>
-                          <td className="px-3 py-2.5 text-slate-700">{formatRmb(item.inventoryCostRmb)}</td>
-                          <td className="px-3 py-2.5 text-slate-700">{formatUsd(item.retailInventoryValueUsd)}</td>
-                          <td className="px-3 py-2.5">
-                            <div className="flex flex-wrap gap-1.5">
-                              {item.costCny > 0 ? <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">成本已维护</span> : <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">缺成本</span>}
-                              {item.currentSellingPriceUsd !== null ? <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">有售价</span> : <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">缺售价</span>}
-                              {item.defaultSupplier ? <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">已绑定</span> : <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">缺供应商</span>}
+                          <td className="px-3 py-2 text-right text-slate-700">{item.costCny > 0 ? formatRmb(item.costCny) : '未维护'}</td>
+                          <td className="min-w-[130px] px-3 py-2 text-slate-700">
+                            {supplierDisplay ? (
+                              <div>
+                                <div className="whitespace-nowrap font-medium text-slate-800">{supplierDisplay.primary}</div>
+                                {supplierDisplay.secondary && <div className="mt-0.5 whitespace-nowrap text-xs text-slate-500">{supplierDisplay.secondary}</div>}
+                              </div>
+                            ) : '未绑定'}
+                          </td>
+                          <td className="px-3 py-2 text-right text-slate-700">{formatRmb(item.inventoryCostRmb)}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">{formatUsd(item.retailInventoryValueUsd)}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex max-w-[150px] flex-wrap gap-1">
+                              {statusWarnings.length === 0 ? (
+                                <span className="whitespace-nowrap rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">正常</span>
+                              ) : statusWarnings.map((warning) => (
+                                <span key={warning} className="whitespace-nowrap rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">{warning}</span>
+                              ))}
                             </div>
                           </td>
                           {canManageInventory && (
-                            <td className="whitespace-nowrap px-3 py-2.5">
+                            <td className="whitespace-nowrap px-3 py-2">
                               <button
                                 type="button"
                                 onClick={() => startEditBusiness(item)}
                                 disabled={loading}
-                                className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 编辑
                               </button>
@@ -1242,13 +1286,37 @@ export default function InventoryPurchasingPage() {
                     })}
                     {filteredBusinessItems.length === 0 && (
                       <tr>
-                        <td colSpan={canManageInventory ? 12 : 11} className="px-4 py-8 text-center text-slate-500">
+                        <td colSpan={canManageInventory ? 11 : 10} className="px-4 py-8 text-center text-slate-500">
                           没有符合条件的商品。
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
+              </div>
+              <div className="flex flex-col gap-3 border-t border-slate-200 px-5 py-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  总条数 {filteredBusinessItems.length}，第 {safeBusinessPage} / {businessTotalPages} 页
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBusinessPage((page) => Math.max(1, page - 1))}
+                    disabled={safeBusinessPage <= 1}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    上一页
+                  </button>
+                  <span className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">{safeBusinessPage}</span>
+                  <button
+                    type="button"
+                    onClick={() => setBusinessPage((page) => Math.min(businessTotalPages, page + 1))}
+                    disabled={safeBusinessPage >= businessTotalPages}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    下一页
+                  </button>
+                </div>
               </div>
             </div>
 
