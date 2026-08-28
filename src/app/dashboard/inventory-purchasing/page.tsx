@@ -208,6 +208,11 @@ function paymentStatusLabel(status: PurchasePaymentStatus) {
   return '未付款'
 }
 
+function purchaseBatchLabel(order: PurchaseOrder) {
+  const match = order.note?.match(/原始状态\/批次=([^；]+)/)
+  return match?.[1] || '未记录'
+}
+
 function toDateInputValue(value: string | null) {
   if (!value) return ''
   const date = new Date(value)
@@ -272,6 +277,7 @@ export default function InventoryPurchasingPage() {
     supplierCount: 0,
   })
   const [selectedPurchaseOrder, setSelectedPurchaseOrder] = useState<PurchaseOrder | null>(null)
+  const [showCreatePurchaseOrder, setShowCreatePurchaseOrder] = useState(false)
   const [purchaseSupplierId, setPurchaseSupplierId] = useState('')
   const [purchaseStatus, setPurchaseStatus] = useState<PurchaseOrderStatus>('DRAFT')
   const [purchasePaidAmountRmb, setPurchasePaidAmountRmb] = useState('0')
@@ -769,6 +775,7 @@ export default function InventoryPurchasingPage() {
 
   function resetPurchaseForm() {
     setSelectedPurchaseOrder(null)
+    setShowCreatePurchaseOrder(false)
     setPurchaseSupplierId('')
     setPurchaseStatus('DRAFT')
     setPurchasePaidAmountRmb('0')
@@ -810,7 +817,13 @@ export default function InventoryPurchasingPage() {
     setPurchaseItems((items) => items.length <= 1 ? items : items.filter((_, itemIndex) => itemIndex !== index))
   }
 
+  function startCreatePurchaseOrder() {
+    resetPurchaseForm()
+    setShowCreatePurchaseOrder(true)
+  }
+
   function startEditPurchaseOrder(order: PurchaseOrder) {
+    setShowCreatePurchaseOrder(false)
     setSelectedPurchaseOrder(order)
     setPurchaseSupplierId(order.supplierId || '')
     setPurchaseStatus(order.status)
@@ -1664,13 +1677,13 @@ export default function InventoryPurchasingPage() {
               到货登记只更新采购进度，不会增加可售库存；真正库存增加仍必须走库存 Excel → PREVIEW → CONFIRM → InventorySnapshot。
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_440px]">
-              <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
-                <div className="flex flex-col gap-2 border-b border-slate-200 px-5 py-4 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <h2 className="text-lg font-semibold text-slate-900">采购单 / 在途列表</h2>
-                    <p className="mt-1 text-sm text-slate-500">采购记录独立于现货库存，不会写入 Product.stock 或库存快照。</p>
-                  </div>
+            <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+              <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">采购单 / 在途列表</h2>
+                  <p className="mt-1 text-sm text-slate-500">采购记录独立于现货库存，不会写入 Product.stock 或库存快照。</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={loadPurchaseOrders}
@@ -1678,86 +1691,104 @@ export default function InventoryPurchasingPage() {
                   >
                     刷新
                   </button>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-[1260px] divide-y divide-slate-200 text-sm">
-                    <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      <tr>
-                        <th className="px-3 py-3">订单号</th>
-                        <th className="px-3 py-3">供应商</th>
-                        <th className="px-3 py-3">状态</th>
-                        <th className="px-3 py-3">订货数量</th>
-                        <th className="px-3 py-3">已到货</th>
-                        <th className="px-3 py-3">待到货</th>
-                        <th className="px-3 py-3">订单金额</th>
-                        <th className="px-3 py-3">已付款</th>
-                        <th className="px-3 py-3">待付款</th>
-                        <th className="px-3 py-3">付款状态</th>
-                        <th className="px-3 py-3">下单时间</th>
-                        <th className="px-3 py-3">预计到货</th>
-                        <th className="px-3 py-3">更新时间</th>
-                        <th className="px-3 py-3">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {purchaseOrders.map((order) => (
-                        <tr key={order.id} className="hover:bg-slate-50">
-                          <td className="whitespace-nowrap px-3 py-2.5 font-semibold text-slate-900">{order.orderNo}</td>
-                          <td className="px-3 py-2.5 text-slate-700">{order.supplierNameSnapshot || order.supplier?.name || '未填写'}</td>
-                          <td className="px-3 py-2.5">
-                            <span className={`rounded-full px-2 py-1 text-xs font-semibold ${
-                              order.status === 'CANCELLED' ? 'bg-slate-100 text-slate-500' :
-                              order.status === 'RECEIVED' ? 'bg-emerald-100 text-emerald-700' :
-                              order.status === 'IN_TRANSIT' || order.status === 'PARTIALLY_RECEIVED' ? 'bg-blue-100 text-blue-700' :
-                              order.status === 'DRAFT' ? 'bg-amber-100 text-amber-700' :
-                              'bg-pink-100 text-pink-700'
-                            }`}>
-                              {order.statusLabel}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2.5 text-slate-700">{order.orderedQty.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2.5 text-slate-700">{order.receivedQty.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2.5 font-medium text-slate-900">{order.openQty.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2.5 text-slate-700">
-                            {formatRmb(order.calculablePurchaseAmountRmb)}
-                            {!order.amountComplete && <div className="mt-0.5 text-xs text-amber-700">部分商品未维护单价</div>}
-                          </td>
-                          <td className="px-3 py-2.5 text-slate-700">{formatRmb(order.paidAmountRmb)}</td>
-                          <td className="px-3 py-2.5 font-medium text-slate-900">{formatRmb(order.remainingPaymentRmb)}</td>
-                          <td className="px-3 py-2.5 text-slate-700">{paymentStatusLabel(order.paymentStatus)}</td>
-                          <td className="px-3 py-2.5 text-slate-600">{formatDateTime(order.orderedAt)}</td>
-                          <td className="px-3 py-2.5 text-slate-600">{formatDateTime(order.expectedArrivalDate)}</td>
-                          <td className="px-3 py-2.5 text-slate-600">{formatDateTime(order.updatedAt)}</td>
-                          <td className="whitespace-nowrap px-3 py-2.5">
-                            <button
-                              type="button"
-                              onClick={() => startEditPurchaseOrder(order)}
-                              className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
-                            >
-                              {canManageInventory ? '查看/编辑' : '查看详情'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {purchaseOrders.length === 0 && (
-                        <tr>
-                          <td colSpan={14} className="px-4 py-10 text-center text-slate-500">
-                            暂无采购单。不会自动导入期货 Excel；管理员/老板可从右侧手工创建。
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+                  {canManageInventory && (
+                    <button
+                      type="button"
+                      onClick={startCreatePurchaseOrder}
+                      className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700"
+                    >
+                      + 新增采购单
+                    </button>
+                  )}
                 </div>
               </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-[1180px] divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-3 py-3">供应商</th>
+                      <th className="px-3 py-3">批次/原始状态</th>
+                      <th className="px-3 py-3">状态</th>
+                      <th className="px-3 py-3">订货</th>
+                      <th className="px-3 py-3">已到</th>
+                      <th className="px-3 py-3">待到</th>
+                      <th className="px-3 py-3">订单金额</th>
+                      <th className="px-3 py-3">已付款</th>
+                      <th className="px-3 py-3">待付款</th>
+                      <th className="px-3 py-3">付款状态</th>
+                      <th className="px-3 py-3">预计到货</th>
+                      <th className="px-3 py-3">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {purchaseOrders.map((order) => (
+                      <tr key={order.id} className="hover:bg-slate-50">
+                        <td className="max-w-[190px] px-3 py-2.5">
+                          <div className="break-words font-semibold leading-snug text-slate-900">{order.supplierNameSnapshot || order.supplier?.name || '未填写'}</div>
+                          <div className="mt-1 truncate text-[11px] text-slate-400" title={order.orderNo}>{order.orderNo.replace(/^P1B2-/, '')}</div>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <span className="inline-flex whitespace-nowrap rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                            {purchaseBatchLabel(order)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            order.status === 'CANCELLED' ? 'bg-slate-100 text-slate-500' :
+                            order.status === 'RECEIVED' ? 'bg-emerald-100 text-emerald-700' :
+                            order.status === 'IN_TRANSIT' || order.status === 'PARTIALLY_RECEIVED' ? 'bg-blue-100 text-blue-700' :
+                            order.status === 'DRAFT' ? 'bg-amber-100 text-amber-700' :
+                            'bg-pink-100 text-pink-700'
+                          }`}>
+                            {order.statusLabel}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5 text-slate-700">{order.orderedQty.toLocaleString('zh-CN')}</td>
+                        <td className="px-3 py-2.5 text-slate-700">{order.receivedQty.toLocaleString('zh-CN')}</td>
+                        <td className="px-3 py-2.5 font-medium text-slate-900">{order.openQty.toLocaleString('zh-CN')}</td>
+                        <td className="px-3 py-2.5 text-slate-700">
+                          {formatRmb(order.calculablePurchaseAmountRmb)}
+                          {!order.amountComplete && <div className="mt-0.5 text-xs text-amber-700">部分商品未维护单价</div>}
+                        </td>
+                        <td className="px-3 py-2.5 text-slate-700">{formatRmb(order.paidAmountRmb)}</td>
+                        <td className="px-3 py-2.5 font-medium text-slate-900">{formatRmb(order.remainingPaymentRmb)}</td>
+                        <td className="whitespace-nowrap px-3 py-2.5 text-slate-700">{paymentStatusLabel(order.paymentStatus)}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{formatDateTime(order.expectedArrivalDate)}</td>
+                        <td className="whitespace-nowrap px-3 py-2.5">
+                          <button
+                            type="button"
+                            onClick={() => startEditPurchaseOrder(order)}
+                            className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+                          >
+                            {canManageInventory ? '查看/编辑' : '查看详情'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {purchaseOrders.length === 0 && (
+                      <tr>
+                        <td colSpan={12} className="px-4 py-10 text-center text-slate-500">
+                          暂无采购单。不会自动导入期货 Excel；管理员/老板可点击右上角新增。
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
 
-              <aside className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                <h2 className="text-lg font-semibold text-slate-900">新增采购单</h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  支持未关联商品：没有明确 SKU 时保留产品/款式原文，后续再人工关联。
-                </p>
-                {canManageInventory ? (
-                  <form onSubmit={handleCreatePurchaseOrder} className="mt-5 space-y-4">
+            {showCreatePurchaseOrder && (
+              <div className="fixed inset-0 z-40 flex items-end justify-end bg-slate-900/40 px-4 py-6 sm:items-center">
+                <form onSubmit={handleCreatePurchaseOrder} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">新增采购单</h2>
+                      <p className="mt-1 text-sm text-slate-500">支持未关联商品：没有明确 SKU 时保留产品/款式原文，后续再人工关联。</p>
+                    </div>
+                    <button type="button" onClick={resetPurchaseForm} className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200">关闭</button>
+                  </div>
+
+                  <div className="mt-5 space-y-4">
                     <label className="block">
                       <span className="text-sm font-medium text-slate-700">供应商</span>
                       <select value={purchaseSupplierId} onChange={(event) => setPurchaseSupplierId(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
@@ -1783,15 +1814,17 @@ export default function InventoryPurchasingPage() {
                         <input type="datetime-local" value={purchaseExpectedArrivalDate} onChange={(event) => setPurchaseExpectedArrivalDate(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
                       </label>
                     </div>
-                    <label className="block">
-                      <span className="text-sm font-medium text-slate-700">下单时间</span>
-                      <input type="datetime-local" value={purchaseOrderedAt} onChange={(event) => setPurchaseOrderedAt(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-                    </label>
-                    <label className="block">
-                      <span className="text-sm font-medium text-slate-700">已付款金额 RMB</span>
-                      <input type="number" min="0" step="0.01" value={purchasePaidAmountRmb} onChange={(event) => setPurchasePaidAmountRmb(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-                      <span className="mt-1 block text-xs text-slate-500">累计已向供应商支付；待付款由订单金额自动计算。</span>
-                    </label>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="block">
+                        <span className="text-sm font-medium text-slate-700">下单时间</span>
+                        <input type="datetime-local" value={purchaseOrderedAt} onChange={(event) => setPurchaseOrderedAt(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                      </label>
+                      <label className="block">
+                        <span className="text-sm font-medium text-slate-700">已付款金额 RMB</span>
+                        <input type="number" min="0" step="0.01" value={purchasePaidAmountRmb} onChange={(event) => setPurchasePaidAmountRmb(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                        <span className="mt-1 block text-xs text-slate-500">累计已向供应商支付；待付款由订单金额自动计算。</span>
+                      </label>
+                    </div>
                     <label className="block">
                       <span className="text-sm font-medium text-slate-700">备注</span>
                       <textarea value={purchaseNote} onChange={(event) => setPurchaseNote(event.target.value)} rows={2} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
@@ -1849,14 +1882,10 @@ export default function InventoryPurchasingPage() {
                     <button type="submit" disabled={loading} className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60">
                       {loading ? '保存中...' : '创建采购单'}
                     </button>
-                  </form>
-                ) : (
-                  <div className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
-                    仅管理员/老板可创建或修改采购单；当前账号可以查看订货/在途数据。
                   </div>
-                )}
-              </aside>
-            </div>
+                </form>
+              </div>
+            )}
 
             {selectedPurchaseOrder && (
               <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 px-4 py-6 sm:items-center">
