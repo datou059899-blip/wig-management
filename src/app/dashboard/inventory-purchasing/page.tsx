@@ -74,6 +74,65 @@ type ProductBusinessSummary = {
 type BusinessFilter = 'all' | 'missingCost' | 'missingPrice' | 'missingSupplier' | 'inStock' | 'hasSales30d'
 type BusinessSortKey = 'sku' | 'currentInventory' | 'sales7d' | 'sales30d'
 type SortDirection = 'asc' | 'desc'
+type PurchaseOrderStatus = 'DRAFT' | 'ORDERED' | 'PRODUCING' | 'IN_TRANSIT' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED'
+
+type PurchaseOrderItem = {
+  id?: string
+  productId: string | null
+  skuSnapshot: string | null
+  productNameSnapshot: string
+  orderedQty: number
+  receivedQty: number
+  unitCostRmb: number | null
+  note: string | null
+  product?: { id: string; sku: string | null; name: string; isActive: boolean } | null
+}
+
+type PurchaseOrder = {
+  id: string
+  orderNo: string
+  supplierId: string | null
+  supplierNameSnapshot: string | null
+  supplier?: { id: string; name: string; isActive: boolean } | null
+  status: PurchaseOrderStatus
+  statusLabel: string
+  orderedAt: string | null
+  expectedArrivalDate: string | null
+  note: string | null
+  orderedQty: number
+  receivedQty: number
+  openQty: number
+  orderAmountRmb: number
+  calculablePurchaseAmountRmb: number
+  missingUnitCostItemCount: number
+  amountComplete: boolean
+  openPurchaseQty: number
+  inTransitQty: number
+  items: PurchaseOrderItem[]
+  createdAt: string
+  updatedAt: string
+}
+
+type PurchaseOrderSummary = {
+  orderCount: number
+  openPurchaseQty: number
+  inTransitQty: number
+  orderAmountRmb: number
+  calculablePurchaseAmountRmb: number
+  missingUnitCostItemCount: number
+  amountComplete: boolean
+  supplierCount: number
+}
+
+type PurchaseOrderFormItem = {
+  id?: string
+  productId: string
+  productNameSnapshot: string
+  orderedQty: string
+  receivedQty: string
+  unitCostRmb: string
+  note: string
+}
 
 type SourceRow = {
   rowNumber: number
@@ -136,6 +195,14 @@ function formatRmb(value: number | null) {
   return `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+function toDateInputValue(value: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16)
+}
+
 function getDefaultCapturedAt() {
   const now = new Date()
   const offsetMs = now.getTimezoneOffset() * 60 * 1000
@@ -178,6 +245,26 @@ export default function InventoryPurchasingPage() {
     costMaintainedCount: 0,
     priceMaintainedCount: 0,
   })
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([])
+  const [purchaseSummary, setPurchaseSummary] = useState<PurchaseOrderSummary>({
+    orderCount: 0,
+    openPurchaseQty: 0,
+    inTransitQty: 0,
+    orderAmountRmb: 0,
+    calculablePurchaseAmountRmb: 0,
+    missingUnitCostItemCount: 0,
+    amountComplete: true,
+    supplierCount: 0,
+  })
+  const [selectedPurchaseOrder, setSelectedPurchaseOrder] = useState<PurchaseOrder | null>(null)
+  const [purchaseSupplierId, setPurchaseSupplierId] = useState('')
+  const [purchaseStatus, setPurchaseStatus] = useState<PurchaseOrderStatus>('DRAFT')
+  const [purchaseOrderedAt, setPurchaseOrderedAt] = useState('')
+  const [purchaseExpectedArrivalDate, setPurchaseExpectedArrivalDate] = useState('')
+  const [purchaseNote, setPurchaseNote] = useState('')
+  const [purchaseItems, setPurchaseItems] = useState<PurchaseOrderFormItem[]>([
+    { productId: '', productNameSnapshot: '', orderedQty: '0', receivedQty: '0', unitCostRmb: '', note: '' },
+  ])
   const [businessSearch, setBusinessSearch] = useState('')
   const [businessFilter, setBusinessFilter] = useState<BusinessFilter>('all')
   const [businessSortKey, setBusinessSortKey] = useState<BusinessSortKey>('sku')
@@ -283,10 +370,27 @@ export default function InventoryPurchasingPage() {
     setBusinessItems(data.items || [])
   }
 
+  async function loadPurchaseOrders() {
+    const response = await fetch('/api/inventory-purchasing/purchase-orders')
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || '采购单加载失败')
+    setPurchaseSummary(data.summary || {
+      orderCount: 0,
+      openPurchaseQty: 0,
+      inTransitQty: 0,
+      orderAmountRmb: 0,
+      calculablePurchaseAmountRmb: 0,
+      missingUnitCostItemCount: 0,
+      amountComplete: true,
+      supplierCount: 0,
+    })
+    setPurchaseOrders(data.orders || [])
+  }
+
   async function refresh() {
     setError('')
     try {
-      await Promise.all([loadSummary(), loadBatches(), loadSuppliers(showInactiveSuppliers), loadProductBusiness()])
+      await Promise.all([loadSummary(), loadBatches(), loadSuppliers(showInactiveSuppliers), loadProductBusiness(), loadPurchaseOrders()])
     } catch (err) {
       setError(err instanceof Error ? err.message : '页面数据加载失败')
     }
@@ -640,6 +744,120 @@ export default function InventoryPurchasingPage() {
       await loadProductBusiness()
     } catch (err) {
       setError(err instanceof Error ? err.message : '商品经营数据保存失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function resetPurchaseForm() {
+    setSelectedPurchaseOrder(null)
+    setPurchaseSupplierId('')
+    setPurchaseStatus('DRAFT')
+    setPurchaseOrderedAt('')
+    setPurchaseExpectedArrivalDate('')
+    setPurchaseNote('')
+    setPurchaseItems([{ productId: '', productNameSnapshot: '', orderedQty: '0', receivedQty: '0', unitCostRmb: '', note: '' }])
+  }
+
+  function purchasePayload() {
+    return {
+      supplierId: purchaseSupplierId || null,
+      status: purchaseStatus,
+      orderedAt: purchaseOrderedAt || null,
+      expectedArrivalDate: purchaseExpectedArrivalDate || null,
+      note: purchaseNote,
+      items: purchaseItems.map((item) => ({
+        id: item.id || undefined,
+        productId: item.productId || null,
+        productNameSnapshot: item.productId ? undefined : item.productNameSnapshot,
+        orderedQty: Number(item.orderedQty || 0),
+        receivedQty: Number(item.receivedQty || 0),
+        unitCostRmb: item.unitCostRmb === '' ? null : Number(item.unitCostRmb),
+        note: item.note,
+      })),
+    }
+  }
+
+  function updatePurchaseItem(index: number, patch: Partial<PurchaseOrderFormItem>) {
+    setPurchaseItems((items) => items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)))
+  }
+
+  function addPurchaseItem() {
+    setPurchaseItems((items) => [...items, { productId: '', productNameSnapshot: '', orderedQty: '0', receivedQty: '0', unitCostRmb: '', note: '' }])
+  }
+
+  function removePurchaseItem(index: number) {
+    setPurchaseItems((items) => items.length <= 1 ? items : items.filter((_, itemIndex) => itemIndex !== index))
+  }
+
+  function startEditPurchaseOrder(order: PurchaseOrder) {
+    setSelectedPurchaseOrder(order)
+    setPurchaseSupplierId(order.supplierId || '')
+    setPurchaseStatus(order.status)
+    setPurchaseOrderedAt(toDateInputValue(order.orderedAt))
+    setPurchaseExpectedArrivalDate(toDateInputValue(order.expectedArrivalDate))
+    setPurchaseNote(order.note || '')
+    setPurchaseItems(order.items.length ? order.items.map((item) => ({
+      id: item.id || '',
+      productId: item.productId || '',
+      productNameSnapshot: item.productId ? '' : item.productNameSnapshot,
+      orderedQty: String(item.orderedQty),
+      receivedQty: String(item.receivedQty),
+      unitCostRmb: item.unitCostRmb === null || item.unitCostRmb === undefined ? '' : String(item.unitCostRmb),
+      note: item.note || '',
+    })) : [{ productId: '', productNameSnapshot: '', orderedQty: '0', receivedQty: '0', unitCostRmb: '', note: '' }])
+  }
+
+  async function handleCreatePurchaseOrder(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!canManageInventory) {
+      setError('仅管理员/老板可创建采购单。')
+      return
+    }
+    setLoading(true)
+    setError('')
+    setMessage('')
+    try {
+      const response = await fetch('/api/inventory-purchasing/purchase-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(purchasePayload()),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || '创建采购单失败')
+      setMessage(`采购单 ${data.order?.orderNo || ''} 已创建。登记到货不会增加可售库存。`)
+      resetPurchaseForm()
+      await loadPurchaseOrders()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建采购单失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleUpdatePurchaseOrder(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedPurchaseOrder) return
+    if (!canManageInventory) {
+      setError('仅管理员/老板可更新采购单。')
+      return
+    }
+    setLoading(true)
+    setError('')
+    setMessage('')
+    try {
+      const response = await fetch(`/api/inventory-purchasing/purchase-orders/${selectedPurchaseOrder.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(purchasePayload()),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || '更新采购单失败')
+      setMessage(`采购单 ${data.order?.orderNo || selectedPurchaseOrder.orderNo} 已更新。到货登记仅更新采购进度，不会增加可售库存。`)
+      resetPurchaseForm()
+      await loadPurchaseOrders()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新采购单失败')
     } finally {
       setLoading(false)
     }
@@ -1385,9 +1603,377 @@ export default function InventoryPurchasingPage() {
         )}
 
         {activeTab === 'ordering' && (
-          <section className="rounded-2xl bg-white p-8 text-center shadow-sm ring-1 ring-slate-200">
-            <p className="text-lg font-semibold text-slate-900">订货/在途管理将在第二阶段开发</p>
-            <p className="mt-2 text-sm text-slate-500">本阶段不创建采购单、不登记到货、不影响现货库存。</p>
+          <section className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <p className="text-xs font-medium text-slate-500">待到货总数</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{purchaseSummary.openPurchaseQty.toLocaleString('zh-CN')}</p>
+                <p className="mt-1 text-xs text-slate-500">已下单/生产/在途/部分到货</p>
+              </div>
+              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <p className="text-xs font-medium text-slate-500">在途数量</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{purchaseSummary.inTransitQty.toLocaleString('zh-CN')}</p>
+                <p className="mt-1 text-xs text-slate-500">仅运输中/部分到货</p>
+              </div>
+              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <p className="text-xs font-medium text-slate-500">采购金额</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{formatRmb(purchaseSummary.calculablePurchaseAmountRmb)}</p>
+                <p className={`mt-1 text-xs ${purchaseSummary.amountComplete ? 'text-slate-500' : 'text-amber-700'}`}>
+                  {purchaseSummary.amountComplete ? '按明细数量 × 单价计算' : `${purchaseSummary.missingUnitCostItemCount}条明细未维护单价，当前仅统计已维护单价商品`}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <p className="text-xs font-medium text-slate-500">供应商数</p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{purchaseSummary.supplierCount.toLocaleString('zh-CN')}</p>
+                <p className="mt-1 text-xs text-slate-500">当前采购单关联供应商</p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+              到货登记只更新采购进度，不会增加可售库存；真正库存增加仍必须走库存 Excel → PREVIEW → CONFIRM → InventorySnapshot。
+              当前 schema 暂无定金/待付款字段，因此本页不展示付款卡片。
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_440px]">
+              <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+                <div className="flex flex-col gap-2 border-b border-slate-200 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">采购单 / 在途列表</h2>
+                    <p className="mt-1 text-sm text-slate-500">采购记录独立于现货库存，不会写入 Product.stock 或库存快照。</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadPurchaseOrders}
+                    className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+                  >
+                    刷新
+                  </button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-[1060px] divide-y divide-slate-200 text-sm">
+                    <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-3 py-3">订单号</th>
+                        <th className="px-3 py-3">供应商</th>
+                        <th className="px-3 py-3">状态</th>
+                        <th className="px-3 py-3">订货数量</th>
+                        <th className="px-3 py-3">已到货</th>
+                        <th className="px-3 py-3">待到货</th>
+                        <th className="px-3 py-3">订单金额</th>
+                        <th className="px-3 py-3">下单时间</th>
+                        <th className="px-3 py-3">预计到货</th>
+                        <th className="px-3 py-3">更新时间</th>
+                        <th className="px-3 py-3">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {purchaseOrders.map((order) => (
+                        <tr key={order.id} className="hover:bg-slate-50">
+                          <td className="whitespace-nowrap px-3 py-2.5 font-semibold text-slate-900">{order.orderNo}</td>
+                          <td className="px-3 py-2.5 text-slate-700">{order.supplierNameSnapshot || order.supplier?.name || '未填写'}</td>
+                          <td className="px-3 py-2.5">
+                            <span className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                              order.status === 'CANCELLED' ? 'bg-slate-100 text-slate-500' :
+                              order.status === 'RECEIVED' ? 'bg-emerald-100 text-emerald-700' :
+                              order.status === 'IN_TRANSIT' || order.status === 'PARTIALLY_RECEIVED' ? 'bg-blue-100 text-blue-700' :
+                              order.status === 'DRAFT' ? 'bg-amber-100 text-amber-700' :
+                              'bg-pink-100 text-pink-700'
+                            }`}>
+                              {order.statusLabel}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-700">{order.orderedQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2.5 text-slate-700">{order.receivedQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2.5 font-medium text-slate-900">{order.openQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2.5 text-slate-700">
+                            {formatRmb(order.calculablePurchaseAmountRmb)}
+                            {!order.amountComplete && <div className="mt-0.5 text-xs text-amber-700">部分商品未维护单价</div>}
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-600">{formatDateTime(order.orderedAt)}</td>
+                          <td className="px-3 py-2.5 text-slate-600">{formatDateTime(order.expectedArrivalDate)}</td>
+                          <td className="px-3 py-2.5 text-slate-600">{formatDateTime(order.updatedAt)}</td>
+                          <td className="whitespace-nowrap px-3 py-2.5">
+                            <button
+                              type="button"
+                              onClick={() => startEditPurchaseOrder(order)}
+                              className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+                            >
+                              {canManageInventory ? '查看/编辑' : '查看详情'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {purchaseOrders.length === 0 && (
+                        <tr>
+                          <td colSpan={11} className="px-4 py-10 text-center text-slate-500">
+                            暂无采购单。不会自动导入期货 Excel；管理员/老板可从右侧手工创建。
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <aside className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <h2 className="text-lg font-semibold text-slate-900">新增采购单</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  支持未关联商品：没有明确 SKU 时保留产品/款式原文，后续再人工关联。
+                </p>
+                {canManageInventory ? (
+                  <form onSubmit={handleCreatePurchaseOrder} className="mt-5 space-y-4">
+                    <label className="block">
+                      <span className="text-sm font-medium text-slate-700">供应商</span>
+                      <select value={purchaseSupplierId} onChange={(event) => setPurchaseSupplierId(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                        <option value="">暂不关联供应商</option>
+                        {activeSuppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+                      </select>
+                    </label>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="block">
+                        <span className="text-sm font-medium text-slate-700">状态</span>
+                        <select value={purchaseStatus} onChange={(event) => setPurchaseStatus(event.target.value as PurchaseOrderStatus)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                          <option value="DRAFT">草稿</option>
+                          <option value="ORDERED">已下单</option>
+                          <option value="PRODUCING">生产中</option>
+                          <option value="IN_TRANSIT">运输中</option>
+                          <option value="PARTIALLY_RECEIVED">部分到货</option>
+                          <option value="RECEIVED">已到货</option>
+                          <option value="CANCELLED">已取消</option>
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="text-sm font-medium text-slate-700">预计到货</span>
+                        <input type="datetime-local" value={purchaseExpectedArrivalDate} onChange={(event) => setPurchaseExpectedArrivalDate(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                      </label>
+                    </div>
+                    <label className="block">
+                      <span className="text-sm font-medium text-slate-700">下单时间</span>
+                      <input type="datetime-local" value={purchaseOrderedAt} onChange={(event) => setPurchaseOrderedAt(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    </label>
+                    <label className="block">
+                      <span className="text-sm font-medium text-slate-700">备注</span>
+                      <textarea value={purchaseNote} onChange={(event) => setPurchaseNote(event.target.value)} rows={2} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    </label>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-slate-900">采购明细</h3>
+                        <button type="button" onClick={addPurchaseItem} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200">添加明细</button>
+                      </div>
+                      {purchaseItems.map((item, index) => (
+                        <div key={index} className="space-y-3 rounded-xl border border-slate-200 p-3">
+                          <label className="block">
+                            <span className="text-xs font-medium text-slate-600">关联 Product（可选）</span>
+                            <select
+                              value={item.productId}
+                              onChange={(event) => {
+                                const product = businessItems.find((candidate) => candidate.productId === event.target.value)
+                                updatePurchaseItem(index, { productId: event.target.value, productNameSnapshot: product ? product.name : item.productNameSnapshot })
+                              }}
+                              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            >
+                              <option value="">未关联商品</option>
+                              {businessItems.map((product) => <option key={product.productId} value={product.productId}>{product.sku}｜{product.name}</option>)}
+                            </select>
+                          </label>
+                          {!item.productId && (
+                            <label className="block">
+                              <span className="text-xs font-medium text-slate-600">产品/款式原文</span>
+                              <input value={item.productNameSnapshot} onChange={(event) => updatePurchaseItem(index, { productNameSnapshot: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="例如：DWY爆款1（升级大头皮）" />
+                            </label>
+                          )}
+                          <div className="grid gap-3 md:grid-cols-3">
+                            <label className="block">
+                              <span className="text-xs font-medium text-slate-600">订货数量</span>
+                              <input type="number" min="0" step="1" value={item.orderedQty} onChange={(event) => updatePurchaseItem(index, { orderedQty: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                            </label>
+                            <label className="block">
+                              <span className="text-xs font-medium text-slate-600">已到数量</span>
+                              <input type="number" min="0" step="1" value={item.receivedQty} onChange={(event) => updatePurchaseItem(index, { receivedQty: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                            </label>
+                            <label className="block">
+                              <span className="text-xs font-medium text-slate-600">单价 RMB</span>
+                              <input type="number" min="0" step="0.01" value={item.unitCostRmb} onChange={(event) => updatePurchaseItem(index, { unitCostRmb: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                            </label>
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-xs text-slate-500">金额：{formatRmb(Number(item.orderedQty || 0) * Number(item.unitCostRmb || 0))}</p>
+                            <button type="button" onClick={() => removePurchaseItem(index)} disabled={purchaseItems.length <= 1} className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40">删除</button>
+                          </div>
+                          <input value={item.note} onChange={(event) => updatePurchaseItem(index, { note: event.target.value })} className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="明细备注，可留空" />
+                        </div>
+                      ))}
+                    </div>
+                    <button type="submit" disabled={loading} className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60">
+                      {loading ? '保存中...' : '创建采购单'}
+                    </button>
+                  </form>
+                ) : (
+                  <div className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+                    仅管理员/老板可创建或修改采购单；当前账号可以查看订货/在途数据。
+                  </div>
+                )}
+              </aside>
+            </div>
+
+            {selectedPurchaseOrder && (
+              <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 px-4 py-6 sm:items-center">
+                <form onSubmit={handleUpdatePurchaseOrder} className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">采购单详情</h2>
+                      <p className="mt-1 text-sm text-slate-500">{selectedPurchaseOrder.orderNo}｜到货登记不会增加可售库存</p>
+                    </div>
+                    <button type="button" onClick={resetPurchaseForm} className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200">关闭</button>
+                  </div>
+                  <div className="mt-5 grid gap-4 md:grid-cols-4">
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500">供应商</p>
+                      <p className="mt-1 font-semibold text-slate-900">{selectedPurchaseOrder.supplierNameSnapshot || selectedPurchaseOrder.supplier?.name || '未填写'}</p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500">订货 / 已到 / 待到</p>
+                      <p className="mt-1 font-semibold text-slate-900">{selectedPurchaseOrder.orderedQty} / {selectedPurchaseOrder.receivedQty} / {selectedPurchaseOrder.openQty}</p>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500">订单金额</p>
+                      <p className="mt-1 font-semibold text-slate-900">{formatRmb(selectedPurchaseOrder.calculablePurchaseAmountRmb)}</p>
+                      {!selectedPurchaseOrder.amountComplete && <p className="mt-1 text-xs text-amber-700">部分商品未维护单价</p>}
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500">状态</p>
+                      <p className="mt-1 font-semibold text-slate-900">{selectedPurchaseOrder.statusLabel}</p>
+                    </div>
+                  </div>
+
+                  {canManageInventory ? (
+                    <div className="mt-5 space-y-4">
+                      <div className="grid gap-3 md:grid-cols-4">
+                        <label className="block">
+                          <span className="text-sm font-medium text-slate-700">供应商</span>
+                          <select value={purchaseSupplierId} onChange={(event) => setPurchaseSupplierId(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                            <option value="">暂不关联供应商</option>
+                            {activeSuppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+                          </select>
+                        </label>
+                        <label className="block">
+                          <span className="text-sm font-medium text-slate-700">状态</span>
+                          <select value={purchaseStatus} onChange={(event) => setPurchaseStatus(event.target.value as PurchaseOrderStatus)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                            <option value="DRAFT">草稿</option>
+                            <option value="ORDERED">已下单</option>
+                            <option value="PRODUCING">生产中</option>
+                            <option value="IN_TRANSIT">运输中</option>
+                            <option value="PARTIALLY_RECEIVED">部分到货</option>
+                            <option value="RECEIVED">已到货</option>
+                            <option value="CANCELLED">已取消</option>
+                          </select>
+                        </label>
+                        <label className="block">
+                          <span className="text-sm font-medium text-slate-700">预计到货</span>
+                          <input type="datetime-local" value={purchaseExpectedArrivalDate} onChange={(event) => setPurchaseExpectedArrivalDate(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                        </label>
+                        <label className="block">
+                          <span className="text-sm font-medium text-slate-700">下单时间</span>
+                          <input type="datetime-local" value={purchaseOrderedAt} onChange={(event) => setPurchaseOrderedAt(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                        </label>
+                      </div>
+                      <label className="block">
+                        <span className="text-sm font-medium text-slate-700">备注</span>
+                        <textarea value={purchaseNote} onChange={(event) => setPurchaseNote(event.target.value)} rows={2} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                      </label>
+
+                      <div className="overflow-x-auto">
+                        <table className="min-w-[900px] divide-y divide-slate-200 text-sm">
+                          <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            <tr>
+                              <th className="px-3 py-2">SKU</th>
+                              <th className="px-3 py-2">产品/款式</th>
+                              <th className="px-3 py-2">订货数量</th>
+                              <th className="px-3 py-2">已到数量</th>
+                              <th className="px-3 py-2">待到</th>
+                              <th className="px-3 py-2">单价</th>
+                              <th className="px-3 py-2">金额</th>
+                              <th className="px-3 py-2">备注</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {purchaseItems.map((item, index) => {
+                              const product = businessItems.find((candidate) => candidate.productId === item.productId)
+                              const orderedQty = Number(item.orderedQty || 0)
+                              const receivedQty = Number(item.receivedQty || 0)
+                              return (
+                                <tr key={index}>
+                                  <td className="px-3 py-2">
+                                    <select value={item.productId} onChange={(event) => {
+                                      const nextProduct = businessItems.find((candidate) => candidate.productId === event.target.value)
+                                      updatePurchaseItem(index, { productId: event.target.value, productNameSnapshot: nextProduct ? nextProduct.name : item.productNameSnapshot })
+                                    }} className="w-44 rounded-lg border border-slate-300 px-2 py-1.5 text-xs">
+                                      <option value="">未关联</option>
+                                      {businessItems.map((candidate) => <option key={candidate.productId} value={candidate.productId}>{candidate.sku}</option>)}
+                                    </select>
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    {item.productId ? (
+                                      <span className="text-slate-700">{product?.name || '已关联商品'}</span>
+                                    ) : (
+                                      <input value={item.productNameSnapshot} onChange={(event) => updatePurchaseItem(index, { productNameSnapshot: event.target.value })} className="w-56 rounded-lg border border-slate-300 px-2 py-1.5 text-xs" />
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2"><input type="number" min="0" step="1" value={item.orderedQty} onChange={(event) => updatePurchaseItem(index, { orderedQty: event.target.value })} className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-xs" /></td>
+                                  <td className="px-3 py-2"><input type="number" min="0" step="1" value={item.receivedQty} onChange={(event) => updatePurchaseItem(index, { receivedQty: event.target.value })} className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-xs" /></td>
+                                  <td className="px-3 py-2 text-slate-700">{Math.max(orderedQty - receivedQty, 0)}</td>
+                                  <td className="px-3 py-2"><input type="number" min="0" step="0.01" value={item.unitCostRmb} onChange={(event) => updatePurchaseItem(index, { unitCostRmb: event.target.value })} className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-xs" /></td>
+                                  <td className="px-3 py-2 text-slate-700">{item.unitCostRmb === '' ? '未维护单价' : formatRmb(orderedQty * Number(item.unitCostRmb || 0))}</td>
+                                  <td className="px-3 py-2"><input value={item.note} onChange={(event) => updatePurchaseItem(index, { note: event.target.value })} className="w-40 rounded-lg border border-slate-300 px-2 py-1.5 text-xs" /></td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <button type="button" onClick={addPurchaseItem} className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200">添加明细</button>
+                        <button type="submit" disabled={loading} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60">
+                          保存采购单
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-5 overflow-x-auto">
+                      <table className="min-w-full divide-y divide-slate-200 text-sm">
+                        <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          <tr>
+                            <th className="px-3 py-2">SKU</th>
+                            <th className="px-3 py-2">产品/款式</th>
+                            <th className="px-3 py-2">订货数量</th>
+                            <th className="px-3 py-2">已到数量</th>
+                            <th className="px-3 py-2">待到</th>
+                            <th className="px-3 py-2">单价</th>
+                            <th className="px-3 py-2">金额</th>
+                            <th className="px-3 py-2">备注</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {selectedPurchaseOrder.items.map((item) => (
+                            <tr key={item.id}>
+                              <td className="px-3 py-2 font-medium text-slate-900">{item.skuSnapshot || '未关联'}</td>
+                              <td className="px-3 py-2 text-slate-700">{item.productNameSnapshot}</td>
+                              <td className="px-3 py-2">{item.orderedQty}</td>
+                              <td className="px-3 py-2">{item.receivedQty}</td>
+                              <td className="px-3 py-2">{Math.max(item.orderedQty - item.receivedQty, 0)}</td>
+                              <td className="px-3 py-2">{formatRmb(item.unitCostRmb)}</td>
+                              <td className="px-3 py-2">{item.unitCostRmb === null ? '未维护单价' : formatRmb(item.orderedQty * item.unitCostRmb)}</td>
+                              <td className="px-3 py-2 text-slate-600">{item.note || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </form>
+              </div>
+            )}
           </section>
         )}
       </div>
