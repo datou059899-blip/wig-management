@@ -76,12 +76,14 @@ type BusinessSortKey = 'sku' | 'currentInventory' | 'sales7d' | 'sales30d'
 type SortDirection = 'asc' | 'desc'
 type PurchaseOrderStatus = 'DRAFT' | 'ORDERED' | 'PRODUCING' | 'IN_TRANSIT' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED'
 type PurchasePaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'AMOUNT_INCOMPLETE'
+type PurchaseItemLinkStatus = 'NEW_PRODUCT' | 'DIFFERENT_CRAFT' | 'SKU_PENDING' | 'DO_NOT_LINK'
 
 type PurchaseOrderItem = {
   id?: string
   productId: string | null
   skuSnapshot: string | null
   productNameSnapshot: string
+  linkStatus: PurchaseItemLinkStatus | null
   orderedQty: number
   receivedQty: number
   unitCostRmb: number | null
@@ -206,6 +208,17 @@ function paymentStatusLabel(status: PurchasePaymentStatus) {
   if (status === 'PAID') return '已付清'
   if (status === 'PARTIALLY_PAID') return '部分付款'
   return '未付款'
+}
+
+const PURCHASE_ITEM_LINK_STATUS_LABELS: Record<PurchaseItemLinkStatus, string> = {
+  NEW_PRODUCT: '新品待建档',
+  DIFFERENT_CRAFT: '同名不同工艺',
+  SKU_PENDING: '待确认SKU',
+  DO_NOT_LINK: '暂不关联',
+}
+
+function purchaseItemLinkStatusLabel(status: PurchaseItemLinkStatus | null) {
+  return status ? PURCHASE_ITEM_LINK_STATUS_LABELS[status] : '未标记'
 }
 
 function purchaseBatchLabel(order: PurchaseOrder) {
@@ -949,6 +962,36 @@ export default function InventoryPurchasingPage() {
       await loadPurchaseOrders()
     } catch (err) {
       setError(err instanceof Error ? err.message : '关联商品失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleUpdatePurchaseItemLinkStatus(item: PurchaseOrderItem, linkStatus: string) {
+    if (!canManageInventory) {
+      setError('仅管理员/老板可更新关联状态。')
+      return
+    }
+    if (!item.id) {
+      setError('采购明细不存在。')
+      return
+    }
+    setLoading(true)
+    setError('')
+    setMessage('')
+    try {
+      const response = await fetch(`/api/inventory-purchasing/purchase-order-items/${item.id}/link-status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ linkStatus: linkStatus || null }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || '更新关联状态失败')
+      setMessage('采购明细关联状态已更新。')
+      if (data.order) startEditPurchaseOrder(data.order)
+      await loadPurchaseOrders()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新关联状态失败')
     } finally {
       setLoading(false)
     }
@@ -2023,11 +2066,12 @@ export default function InventoryPurchasingPage() {
                       </label>
 
                       <div className="overflow-x-auto">
-                        <table className="min-w-[900px] divide-y divide-slate-200 text-sm">
+                        <table className="min-w-[1000px] divide-y divide-slate-200 text-sm">
                           <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                             <tr>
                               <th className="px-3 py-2">SKU</th>
                               <th className="px-3 py-2">产品/款式</th>
+                              <th className="px-3 py-2">关联状态</th>
                               <th className="px-3 py-2">订货数量</th>
                               <th className="px-3 py-2">已到数量</th>
                               <th className="px-3 py-2">待到</th>
@@ -2067,6 +2111,26 @@ export default function InventoryPurchasingPage() {
                                       {linkedProduct && <p className="mt-1 text-xs text-slate-500">当前商品：{linkedProduct.name}</p>}
                                     </div>
                                   </td>
+                                  <td className="px-3 py-2">
+                                    {linkedProduct ? (
+                                      <span className="whitespace-nowrap text-xs text-slate-500">已关联</span>
+                                    ) : sourceItem ? (
+                                      <select
+                                        value={sourceItem.linkStatus || ''}
+                                        onChange={(event) => handleUpdatePurchaseItemLinkStatus(sourceItem, event.target.value)}
+                                        disabled={loading}
+                                        className="w-32 rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                                      >
+                                        <option value="">未标记</option>
+                                        <option value="NEW_PRODUCT">新品待建档</option>
+                                        <option value="DIFFERENT_CRAFT">同名不同工艺</option>
+                                        <option value="SKU_PENDING">待确认SKU</option>
+                                        <option value="DO_NOT_LINK">暂不关联</option>
+                                      </select>
+                                    ) : (
+                                      <span className="text-xs text-slate-500">未标记</span>
+                                    )}
+                                  </td>
                                   <td className="px-3 py-2"><input type="number" min="0" step="1" value={item.orderedQty} onChange={(event) => updatePurchaseItem(index, { orderedQty: event.target.value })} className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-xs" /></td>
                                   <td className="px-3 py-2"><input type="number" min="0" step="1" value={item.receivedQty} onChange={(event) => updatePurchaseItem(index, { receivedQty: event.target.value })} className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-xs" /></td>
                                   <td className="px-3 py-2 text-slate-700">{Math.max(orderedQty - receivedQty, 0)}</td>
@@ -2093,6 +2157,7 @@ export default function InventoryPurchasingPage() {
                           <tr>
                             <th className="px-3 py-2">SKU</th>
                             <th className="px-3 py-2">产品/款式</th>
+                            <th className="px-3 py-2">关联状态</th>
                             <th className="px-3 py-2">订货数量</th>
                             <th className="px-3 py-2">已到数量</th>
                             <th className="px-3 py-2">待到</th>
@@ -2112,6 +2177,9 @@ export default function InventoryPurchasingPage() {
                                   <p>{item.productNameSnapshot}</p>
                                   {item.product && <p className="mt-1 text-xs text-slate-500">当前商品：{item.product.name}</p>}
                                 </div>
+                              </td>
+                              <td className="px-3 py-2 text-slate-600">
+                                {item.product ? '已关联' : purchaseItemLinkStatusLabel(item.linkStatus)}
                               </td>
                               <td className="px-3 py-2">{item.orderedQty}</td>
                               <td className="px-3 py-2">{item.receivedQty}</td>

@@ -24,6 +24,8 @@ const STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
   CANCELLED: '已取消',
 }
 
+const LINK_STATUS_VALUES = ['NEW_PRODUCT', 'DIFFERENT_CRAFT', 'SKU_PENDING', 'DO_NOT_LINK'] as const
+
 const ALLOWED_STATUS_TRANSITIONS: Record<PurchaseOrderStatus, PurchaseOrderStatus[]> = {
   DRAFT: [PurchaseOrderStatus.ORDERED, PurchaseOrderStatus.CANCELLED],
   ORDERED: [PurchaseOrderStatus.PRODUCING, PurchaseOrderStatus.IN_TRANSIT, PurchaseOrderStatus.CANCELLED],
@@ -430,7 +432,38 @@ export async function linkPurchaseOrderItemProduct(itemId: string, productId: st
 
   await prisma.purchaseOrderItem.update({
     where: { id: safeItemId },
-    data: { productId: product.id },
+    data: { productId: product.id, linkStatus: null },
+  })
+
+  return getPurchaseOrder(item.purchaseOrderId)
+}
+
+export async function updatePurchaseOrderItemLinkStatus(itemId: string, linkStatus: string | null) {
+  const safeItemId = trimString(itemId)
+  if (!safeItemId) throw new Error('采购明细不能为空')
+  const safeLinkStatus = nullableString(linkStatus)
+  if (safeLinkStatus && !LINK_STATUS_VALUES.includes(safeLinkStatus as typeof LINK_STATUS_VALUES[number])) {
+    throw new Error('关联状态无效')
+  }
+
+  const item = await prisma.purchaseOrderItem.findUnique({
+    where: { id: safeItemId },
+    select: {
+      id: true,
+      purchaseOrderId: true,
+      productId: true,
+    },
+  })
+  if (!item) {
+    const error = new Error('采购明细不存在')
+    error.name = 'NotFound'
+    throw error
+  }
+  if (item.productId) throw new Error('已关联商品的明细不需要设置关联状态')
+
+  await prisma.purchaseOrderItem.update({
+    where: { id: safeItemId },
+    data: { linkStatus: safeLinkStatus },
   })
 
   return getPurchaseOrder(item.purchaseOrderId)
