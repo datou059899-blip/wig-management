@@ -3,6 +3,14 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
+const DEVELOPMENT_LINK_STATUSES = ['NEW_PRODUCT', 'DIFFERENT_CRAFT', 'SKU_PENDING']
+
+const LINK_STATUS_LABELS: Record<string, string> = {
+  NEW_PRODUCT: '新品待建档',
+  DIFFERENT_CRAFT: '同名不同工艺',
+  SKU_PENDING: '待确认SKU',
+}
+
 // 获取选品更新池列表
 export async function GET(request: NextRequest) {
   try {
@@ -14,6 +22,7 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const status = searchParams.get('status') || 'all'
     const priority = searchParams.get('priority') || 'all'
+    const supplier = searchParams.get('supplier') || 'all'
     const search = searchParams.get('search') || ''
 
     const where: any = {}
@@ -44,15 +53,118 @@ export async function GET(request: NextRequest) {
       ],
     })
 
+    const purchaseWhere: any = {
+      productId: null,
+      linkStatus: { in: DEVELOPMENT_LINK_STATUSES },
+    }
+
+    if (status && status !== 'all' && DEVELOPMENT_LINK_STATUSES.includes(status)) {
+      purchaseWhere.linkStatus = status
+    }
+
+    if (search) {
+      purchaseWhere.OR = [
+        { productNameSnapshot: { contains: search } },
+        { note: { contains: search } },
+        { purchaseOrder: { is: { orderNo: { contains: search } } } },
+        { purchaseOrder: { is: { supplierNameSnapshot: { contains: search } } } },
+        { purchaseOrder: { is: { supplier: { is: { name: { contains: search } } } } } },
+      ]
+    }
+
+    if (supplier && supplier !== 'all') {
+      purchaseWhere.purchaseOrder = {
+        is: {
+          OR: [
+            { supplierNameSnapshot: supplier },
+            { supplier: { is: { name: supplier } } },
+          ],
+        },
+      }
+    }
+
+    const [purchaseDevelopmentItems, allPurchaseDevelopmentItems] = await Promise.all([
+      prisma.purchaseOrderItem.findMany({
+        where: purchaseWhere,
+        include: {
+          purchaseOrder: {
+            select: {
+              id: true,
+              orderNo: true,
+              status: true,
+              expectedArrivalDate: true,
+              supplierNameSnapshot: true,
+              supplier: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.purchaseOrderItem.findMany({
+        where: {
+          productId: null,
+          linkStatus: { in: DEVELOPMENT_LINK_STATUSES },
+        },
+        include: {
+          purchaseOrder: {
+            select: {
+              supplierNameSnapshot: true,
+              supplier: { select: { name: true } },
+            },
+          },
+        },
+      }),
+    ])
+
     // 统计各状态数量
     const statusCounts = await prisma.productOpportunity.groupBy({
       by: ['status'],
       _count: { id: true },
     })
 
+    const purchaseStatusCounts = DEVELOPMENT_LINK_STATUSES.reduce<Record<string, number>>((acc, item) => {
+      acc[item] = 0
+      return acc
+    }, {})
+    const supplierSet = new Set<string>()
+    allPurchaseDevelopmentItems.forEach((item) => {
+      if (item.linkStatus && item.linkStatus in purchaseStatusCounts) {
+        purchaseStatusCounts[item.linkStatus] += 1
+      }
+      const supplierName = item.purchaseOrder.supplier?.name || item.purchaseOrder.supplierNameSnapshot
+      if (supplierName) supplierSet.add(supplierName)
+    })
+
+    const mappedPurchaseDevelopmentItems = purchaseDevelopmentItems.map((item) => {
+      const supplierName = item.purchaseOrder.supplier?.name || item.purchaseOrder.supplierNameSnapshot || '未填写'
+      return {
+        id: item.id,
+        productNameSnapshot: item.productNameSnapshot,
+        linkStatus: item.linkStatus,
+        linkStatusLabel: item.linkStatus ? LINK_STATUS_LABELS[item.linkStatus] || item.linkStatus : '未标记',
+        supplierName,
+        orderedQty: item.orderedQty,
+        receivedQty: item.receivedQty,
+        openQty: Math.max(item.orderedQty - item.receivedQty, 0),
+        expectedArrivalDate: item.purchaseOrder.expectedArrivalDate?.toISOString() || null,
+        orderNo: item.purchaseOrder.orderNo,
+        purchaseOrderId: item.purchaseOrder.id,
+        purchaseOrderStatus: item.purchaseOrder.status,
+        productStatus: '未关联',
+      }
+    })
+
     return NextResponse.json({
       opportunities,
       statusCounts: Object.fromEntries(statusCounts.map(s => [s.status, s._count.id])),
+      purchaseDevelopmentItems: mappedPurchaseDevelopmentItems,
+      purchaseDevelopmentStats: {
+        NEW_PRODUCT: purchaseStatusCounts.NEW_PRODUCT || 0,
+        DIFFERENT_CRAFT: purchaseStatusCounts.DIFFERENT_CRAFT || 0,
+        SKU_PENDING: purchaseStatusCounts.SKU_PENDING || 0,
+        total: allPurchaseDevelopmentItems.length,
+      },
+      supplierOptions: Array.from(supplierSet).sort((a, b) => a.localeCompare(b)),
     })
   } catch (error) {
     console.error('获取选品更新池失败:', error)

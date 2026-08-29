@@ -25,8 +25,31 @@ type Opportunity = {
   updatedAt: string
 }
 
+type PurchaseDevelopmentLinkStatus = 'NEW_PRODUCT' | 'DIFFERENT_CRAFT' | 'SKU_PENDING'
+
+type PurchaseDevelopmentItem = {
+  id: string
+  productNameSnapshot: string
+  linkStatus: PurchaseDevelopmentLinkStatus
+  linkStatusLabel: string
+  supplierName: string
+  orderedQty: number
+  receivedQty: number
+  openQty: number
+  expectedArrivalDate: string | null
+  orderNo: string
+  purchaseOrderStatus: string
+  productStatus: string
+}
+
 const statusOptions = [
   { value: 'all', label: '全部' },
+  { value: 'NEW_PRODUCT', label: '新品待建档' },
+  { value: 'DIFFERENT_CRAFT', label: '同名不同工艺' },
+  { value: 'SKU_PENDING', label: '待确认SKU' },
+]
+
+const legacyStatusOptions = [
   { value: '建议马上补', label: '建议马上补' },
   { value: '可观察', label: '可观察' },
   { value: '已转入产品库', label: '已转入产品库' },
@@ -90,11 +113,21 @@ export default function ProductOpportunitiesPage() {
   const canEdit = canEditProducts(userRole)
 
   const [opportunities, setOpportunities] = useState<Opportunity[]>([])
+  const [purchaseDevelopmentItems, setPurchaseDevelopmentItems] = useState<PurchaseDevelopmentItem[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
   const [priorityFilter, setPriorityFilter] = useState('all')
+  const [supplierFilter, setSupplierFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({})
+  const [purchaseDevelopmentStats, setPurchaseDevelopmentStats] = useState({
+    NEW_PRODUCT: 0,
+    DIFFERENT_CRAFT: 0,
+    SKU_PENDING: 0,
+    total: 0,
+  })
+  const [supplierOptions, setSupplierOptions] = useState<string[]>([])
+  const [legacyOpen, setLegacyOpen] = useState(false)
 
   // 创建弹窗状态
   const [createOpen, setCreateOpen] = useState(false)
@@ -120,13 +153,22 @@ export default function ProductOpportunitiesPage() {
       const params = new URLSearchParams()
       if (statusFilter !== 'all') params.set('status', statusFilter)
       if (priorityFilter !== 'all') params.set('priority', priorityFilter)
+      if (supplierFilter !== 'all') params.set('supplier', supplierFilter)
       if (search) params.set('search', search)
 
       const res = await fetch(`/api/product-opportunities?${params}`)
       const data = await res.json()
       if (res.ok) {
         setOpportunities(data.opportunities || [])
+        setPurchaseDevelopmentItems(data.purchaseDevelopmentItems || [])
         setStatusCounts(data.statusCounts || {})
+        setPurchaseDevelopmentStats(data.purchaseDevelopmentStats || {
+          NEW_PRODUCT: 0,
+          DIFFERENT_CRAFT: 0,
+          SKU_PENDING: 0,
+          total: 0,
+        })
+        setSupplierOptions(data.supplierOptions || [])
       }
     } catch (error) {
       console.error('获取选品机会失败:', error)
@@ -137,7 +179,7 @@ export default function ProductOpportunitiesPage() {
 
   useEffect(() => {
     fetchOpportunities()
-  }, [statusFilter, priorityFilter])
+  }, [statusFilter, priorityFilter, supplierFilter])
 
   const resetForm = () => {
     setForm({
@@ -238,53 +280,66 @@ export default function ProductOpportunitiesPage() {
   }
 
   const totalCount = Object.values(statusCounts).reduce((a, b) => a + b, 0)
-  const urgentCount = statusCounts['建议马上补'] || 0
-  const observeCount = statusCounts['可观察'] || 0
-  const doneCount = statusCounts['已转入产品库'] || 0
+  const newProductCount = purchaseDevelopmentStats.NEW_PRODUCT || 0
+  const differentCraftCount = purchaseDevelopmentStats.DIFFERENT_CRAFT || 0
+  const skuPendingCount = purchaseDevelopmentStats.SKU_PENDING || 0
+  const developmentTotalCount = purchaseDevelopmentStats.total || 0
+
+  const formatDate = (value: string | null) => {
+    if (!value) return '—'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '—'
+    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+  }
+
+  const getDevelopmentStatusClass = (status: PurchaseDevelopmentLinkStatus) => {
+    if (status === 'NEW_PRODUCT') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    if (status === 'DIFFERENT_CRAFT') return 'bg-amber-50 text-amber-700 border-amber-200'
+    return 'bg-sky-50 text-sky-700 border-sky-200'
+  }
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="选品更新池"
-        description="记录建议新增/更新的产品机会，回答「接下来该新增哪些产品」"
+        title="新品开发池"
+        description="汇总采购明细中尚未关联 Product 的新品、工艺差异和待确认 SKU，作为新品待建档中心。"
         actions={
           canEdit && (
             <button onClick={openCreate} className="btn-primary">
-              + 新增机会
+              + 新增旧选品机会
             </button>
           )
         }
       />
 
-      {/* 顶部统计 - 橙红系主题 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <button
           onClick={() => setStatusFilter('all')}
           className={`card p-4 text-left transition-all ${statusFilter === 'all' ? 'ring-2 ring-orange-300 border-orange-200' : ''}`}
         >
-          <div className="text-xs text-gray-500">全部机会</div>
-          <div className="text-2xl font-bold text-gray-900 mt-1">{totalCount}</div>
+          <div className="text-xs text-gray-500">待处理总数</div>
+          <div className="text-2xl font-bold text-gray-900 mt-1">{developmentTotalCount}</div>
         </button>
         <button
-          onClick={() => setStatusFilter('建议马上补')}
-          className={`card p-4 text-left border-l-4 border-l-orange-500 transition-all ${statusFilter === '建议马上补' ? 'ring-2 ring-orange-300' : ''}`}
+          onClick={() => setStatusFilter('NEW_PRODUCT')}
+          className={`card p-4 text-left border-l-4 border-l-emerald-500 transition-all ${statusFilter === 'NEW_PRODUCT' ? 'ring-2 ring-emerald-300' : ''}`}
         >
-          <div className="text-xs text-gray-500">🔥 建议马上补</div>
-          <div className="text-2xl font-bold text-orange-600 mt-1">{urgentCount}</div>
+          <div className="text-xs text-gray-500">新品待建档</div>
+          <div className="text-2xl font-bold text-emerald-600 mt-1">{newProductCount}</div>
         </button>
         <button
-          onClick={() => setStatusFilter('可观察')}
-          className={`card p-4 text-left border-l-4 border-l-blue-400 transition-all ${statusFilter === '可观察' ? 'ring-2 ring-blue-300' : ''}`}
+          onClick={() => setStatusFilter('DIFFERENT_CRAFT')}
+          className={`card p-4 text-left border-l-4 border-l-amber-500 transition-all ${statusFilter === 'DIFFERENT_CRAFT' ? 'ring-2 ring-amber-300' : ''}`}
         >
-          <div className="text-xs text-gray-500">👀 可观察</div>
-          <div className="text-2xl font-bold text-blue-600 mt-1">{observeCount}</div>
+          <div className="text-xs text-gray-500">同名不同工艺</div>
+          <div className="text-2xl font-bold text-amber-600 mt-1">{differentCraftCount}</div>
         </button>
         <button
-          onClick={() => setStatusFilter('已转入产品库')}
-          className={`card p-4 text-left border-l-4 border-l-green-500 transition-all ${statusFilter === '已转入产品库' ? 'ring-2 ring-green-300' : ''}`}
+          onClick={() => setStatusFilter('SKU_PENDING')}
+          className={`card p-4 text-left border-l-4 border-l-sky-500 transition-all ${statusFilter === 'SKU_PENDING' ? 'ring-2 ring-sky-300' : ''}`}
         >
-          <div className="text-xs text-gray-500">✅ 已转入产品库</div>
-          <div className="text-2xl font-bold text-green-600 mt-1">{doneCount}</div>
+          <div className="text-xs text-gray-500">待确认SKU</div>
+          <div className="text-2xl font-bold text-sky-600 mt-1">{skuPendingCount}</div>
         </button>
       </div>
 
@@ -300,9 +355,15 @@ export default function ProductOpportunitiesPage() {
             className="input"
           />
         </div>
-        <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} className="input w-auto">
-          {priorityOptions.map((opt) => (
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="input w-auto">
+          {statusOptions.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        <select value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)} className="input w-auto">
+          <option value="all">全部 Supplier</option>
+          {supplierOptions.map((supplier) => (
+            <option key={supplier} value={supplier}>{supplier}</option>
           ))}
         </select>
         <button onClick={fetchOpportunities} className="btn-primary">
@@ -311,88 +372,61 @@ export default function ProductOpportunitiesPage() {
       </div>
 
       {/* 空状态 */}
-      {!loading && totalCount === 0 && (
+      {!loading && developmentTotalCount === 0 && purchaseDevelopmentItems.length === 0 && (
         <div className="card p-8">
-          {EmptyStatePresets.noOpportunities(
-            canEdit ? (
-              <button onClick={openCreate} className="btn-primary">
-                添加选品机会
-              </button>
-            ) : undefined
-          )}
+          <div className="text-center text-gray-500">
+            当前没有来自采购明细的新品待建档记录。
+          </div>
         </div>
       )}
 
       {/* 筛选结果为空 */}
-      {!loading && totalCount > 0 && opportunities.length === 0 && (
+      {!loading && developmentTotalCount > 0 && purchaseDevelopmentItems.length === 0 && (
         <div className="card p-8">
           {EmptyStatePresets.noSearchResults(
-            <button onClick={() => { setStatusFilter('all'); setPriorityFilter('all'); setSearch(''); }} className="btn-secondary">
+            <button onClick={() => { setStatusFilter('all'); setSupplierFilter('all'); setSearch(''); }} className="btn-secondary">
               清除筛选
             </button>
           )}
         </div>
       )}
 
-      {/* 列表 */}
-      {!loading && opportunities.length > 0 && (
+      {!loading && purchaseDevelopmentItems.length > 0 && (
         <div className="table-container">
           <table className="table">
             <thead>
               <tr>
-                <th>款式</th>
-                <th>类别</th>
-                <th>热度</th>
-                <th>状态</th>
-                <th>建议动作</th>
-                <th>优先级</th>
-                <th>负责人</th>
-                <th>来源说明</th>
-                <th>更新时间</th>
-                {canEdit && <th>操作</th>}
+                <th>款式名称</th>
+                <th>当前状态</th>
+                <th>Supplier</th>
+                <th>采购数量</th>
+                <th>已到货</th>
+                <th>未到数量</th>
+                <th>预计到货</th>
+                <th>来源采购单</th>
+                <th>Product状态</th>
               </tr>
             </thead>
             <tbody>
-              {opportunities.map((item) => (
+              {purchaseDevelopmentItems.map((item) => (
                 <tr key={item.id}>
                   <td>
-                    <div className="font-medium text-gray-900">{item.name}</div>
+                    <div className="font-medium text-gray-900">{item.productNameSnapshot}</div>
                   </td>
                   <td>
-                    <div className="text-gray-700">{item.category || '-'}</div>
-                    <div className="text-xs text-gray-400">{item.styleType || '-'}</div>
+                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getDevelopmentStatusClass(item.linkStatus)}`}>
+                      {item.linkStatusLabel}
+                    </span>
                   </td>
+                  <td className="text-gray-700">{item.supplierName}</td>
+                  <td className="text-gray-700">{item.orderedQty.toLocaleString('zh-CN')}</td>
+                  <td className="text-gray-700">{item.receivedQty.toLocaleString('zh-CN')}</td>
+                  <td className="font-medium text-gray-900">{item.openQty.toLocaleString('zh-CN')}</td>
+                  <td className="text-gray-600">{formatDate(item.expectedArrivalDate)}</td>
+                  <td className="text-gray-600">{item.orderNo}</td>
                   <td>
-                    <HeatBadge level={item.heatLevel} />
+                    <span className="badge badge-gray">{item.productStatus}</span>
                   </td>
-                  <td>
-                    <StatusBadge status={item.status} />
-                  </td>
-                  <td>
-                    <ActionBadge action={item.suggestedAction} />
-                  </td>
-                  <td>
-                    <PriorityBadge priority={item.priority} />
-                  </td>
-                  <td className="text-gray-600">{item.assignee || '-'}</td>
-                  <td className="max-w-[150px] truncate" title={item.sourceNote || ''}>
-                    {item.sourceNote || '-'}
-                  </td>
-                  <td className="text-gray-400 text-xs">
-                    {new Date(item.updatedAt).toLocaleString('zh-CN').slice(0, 16)}
-                  </td>
-                  {canEdit && (
-                    <td>
-                      <div className="flex gap-2">
-                        <button onClick={() => openEdit(item)} className="text-blue-600 hover:text-blue-800 text-xs">
-                          编辑
-                        </button>
-                        <button onClick={() => handleDelete(item.id)} className="text-red-600 hover:text-red-800 text-xs">
-                          删除
-                        </button>
-                      </div>
-                    </td>
-                  )}
                 </tr>
               ))}
             </tbody>
@@ -400,18 +434,81 @@ export default function ProductOpportunitiesPage() {
         </div>
       )}
 
-      {/* 选品来源提示 */}
       <div className="card p-4 bg-gradient-to-r from-orange-50 to-amber-50 border-orange-100">
         <div className="flex items-start gap-3">
           <div className="text-xl">💡</div>
           <div>
-            <div className="text-sm font-medium text-orange-800">选品来源说明</div>
+            <div className="text-sm font-medium text-orange-800">新品开发池规则</div>
             <div className="text-xs text-orange-700 mt-1">
-              选品机会主要来源于：TikTok 热度分析、竞争对手监测、市场调研、用户反馈等。
-              建议优先处理「建议马上补」状态的机会。
+              这里只汇总未关联 Product 且已人工标记为「新品待建档 / 同名不同工艺 / 待确认SKU」的采购明细。
+              不按名称自动匹配，不自动创建 Product，也不合并同名款。
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="card p-4">
+        <button
+          type="button"
+          onClick={() => setLegacyOpen((value) => !value)}
+          className="flex w-full items-center justify-between text-left"
+        >
+          <span className="font-medium text-gray-900">旧选品机会记录</span>
+          <span className="text-sm text-gray-500">{legacyOpen ? '收起' : `展开（${totalCount}）`}</span>
+        </button>
+
+        {legacyOpen && (
+          <div className="mt-4">
+            {opportunities.length === 0 ? (
+              <div className="rounded-lg bg-gray-50 p-4 text-sm text-gray-500">暂无旧选品机会记录。</div>
+            ) : (
+              <div className="table-container">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>款式</th>
+                      <th>类别</th>
+                      <th>热度</th>
+                      <th>状态</th>
+                      <th>建议动作</th>
+                      <th>优先级</th>
+                      <th>负责人</th>
+                      <th>来源说明</th>
+                      <th>更新时间</th>
+                      {canEdit && <th>操作</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {opportunities.map((item) => (
+                      <tr key={item.id}>
+                        <td><div className="font-medium text-gray-900">{item.name}</div></td>
+                        <td>
+                          <div className="text-gray-700">{item.category || '-'}</div>
+                          <div className="text-xs text-gray-400">{item.styleType || '-'}</div>
+                        </td>
+                        <td><HeatBadge level={item.heatLevel} /></td>
+                        <td><StatusBadge status={item.status} /></td>
+                        <td><ActionBadge action={item.suggestedAction} /></td>
+                        <td><PriorityBadge priority={item.priority} /></td>
+                        <td className="text-gray-600">{item.assignee || '-'}</td>
+                        <td className="max-w-[150px] truncate" title={item.sourceNote || ''}>{item.sourceNote || '-'}</td>
+                        <td className="text-gray-400 text-xs">{new Date(item.updatedAt).toLocaleString('zh-CN').slice(0, 16)}</td>
+                        {canEdit && (
+                          <td>
+                            <div className="flex gap-2">
+                              <button onClick={() => openEdit(item)} className="text-blue-600 hover:text-blue-800 text-xs">编辑</button>
+                              <button onClick={() => handleDelete(item.id)} className="text-red-600 hover:text-red-800 text-xs">删除</button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 创建/编辑弹窗 */}
@@ -472,7 +569,7 @@ export default function ProductOpportunitiesPage() {
                     onChange={(e) => setForm({ ...form, status: e.target.value })}
                     className="input"
                   >
-                    {statusOptions.slice(1).map((opt) => (
+                    {legacyStatusOptions.map((opt) => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </select>
