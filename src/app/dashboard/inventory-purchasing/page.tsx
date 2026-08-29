@@ -345,6 +345,7 @@ export default function InventoryPurchasingPage() {
   const [file, setFile] = useState<File | null>(null)
   const [stockCapturedAt, setStockCapturedAt] = useState(getDefaultCapturedAt)
   const [note, setNote] = useState('')
+  const [showConfirmImportModal, setShowConfirmImportModal] = useState(false)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -411,6 +412,9 @@ export default function InventoryPurchasingPage() {
   }, [unmatchedRows])
 
   const unresolvedDuplicateCount = duplicateGroups.length
+  const previewTotalStockQty = useMemo(() => {
+    return matchedRows.reduce((sum, row) => sum + row.totalQty, 0)
+  }, [matchedRows])
 
   async function loadSummary() {
     const response = await fetch('/api/inventory-purchasing/summary')
@@ -648,7 +652,8 @@ export default function InventoryPurchasingPage() {
       setError('存在未匹配 SKU。请勾选“确认忽略未匹配 SKU”后再导入。')
       return
     }
-    if (!window.confirm('确认导入该批库存快照？导入后不会修改 Product.stock，只会写入平台库存快照。')) {
+    if (regularUnmatchedRows.length > 0) {
+      setError('存在未匹配 SKU，不能确认导入。')
       return
     }
 
@@ -659,11 +664,12 @@ export default function InventoryPurchasingPage() {
       const response = await fetch(`/api/inventory-purchasing/import-batches/${previewBatch.id}/confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ignoreUnmatched }),
+        body: JSON.stringify({ ignoreUnmatched: false }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || '确认导入失败')
       setMessage(`导入成功，写入 ${data.importedSnapshotCount || 0} 条库存快照。`)
+      setShowConfirmImportModal(false)
       setPreviewBatch(null)
       setMatchedRows([])
       setUnmatchedRows([])
@@ -1510,8 +1516,8 @@ export default function InventoryPurchasingPage() {
                     {previewBatch.status === 'PREVIEW' && (
                       <button
                         type="button"
-                        onClick={handleConfirm}
-                        disabled={!canManageInventory || loading || unresolvedDuplicateCount > 0 || (regularUnmatchedRows.length > 0 && !ignoreUnmatched)}
+                        onClick={() => setShowConfirmImportModal(true)}
+                        disabled={!canManageInventory || loading}
                         className="rounded-lg bg-pink-600 px-4 py-2 text-sm font-semibold text-white hover:bg-pink-700 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {canManageInventory ? '确认导入快照' : '仅管理员/老板可确认'}
@@ -1670,6 +1676,85 @@ export default function InventoryPurchasingPage() {
                 {batches.length === 0 && <p className="text-sm text-slate-500">暂无导入批次。</p>}
               </div>
             </aside>
+
+            {showConfirmImportModal && previewBatch && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
+                <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">确认导入库存快照？</h2>
+                      <p className="mt-1 text-sm text-slate-500">请核对本次 PREVIEW 关键数据后再导入。</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmImportModal(false)}
+                      disabled={loading}
+                      className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      关闭
+                    </button>
+                  </div>
+
+                  <div className="mt-5 grid gap-3 rounded-xl bg-slate-50 p-4 text-sm">
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-500">可确认 SKU 数量</span>
+                      <span className="font-semibold text-slate-900">{matchedRows.length.toLocaleString('zh-CN')}</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-500">库存截点时间</span>
+                      <span className="font-semibold text-slate-900">{formatDateTime(previewBatch.stockCapturedAt)}</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-500">总库存数量</span>
+                      <span className="font-semibold text-slate-900">{previewTotalStockQty.toLocaleString('zh-CN')}</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-500">未匹配数量</span>
+                      <span className={regularUnmatchedRows.length > 0 ? 'font-semibold text-amber-700' : 'font-semibold text-slate-900'}>
+                        {regularUnmatchedRows.length.toLocaleString('zh-CN')}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-500">未解决重复数量</span>
+                      <span className={unresolvedDuplicateCount > 0 ? 'font-semibold text-orange-700' : 'font-semibold text-slate-900'}>
+                        {unresolvedDuplicateCount.toLocaleString('zh-CN')}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 rounded-xl border border-pink-100 bg-pink-50 p-4 text-sm text-pink-800">
+                    <p>导入不会修改 Product.stock。</p>
+                    <p className="mt-1">导入会写入正式库存快照。</p>
+                    <p className="mt-1">导入后可通过批次回滚。</p>
+                  </div>
+
+                  {(regularUnmatchedRows.length > 0 || unresolvedDuplicateCount > 0) && (
+                    <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                      仅当未匹配数量 = 0 且未解决重复数量 = 0 时，才可以确认导入。
+                    </p>
+                  )}
+
+                  <div className="mt-6 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmImportModal(false)}
+                      disabled={loading}
+                      className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleConfirm}
+                      disabled={loading || regularUnmatchedRows.length > 0 || unresolvedDuplicateCount > 0}
+                      className="rounded-lg bg-pink-600 px-4 py-2 text-sm font-semibold text-white hover:bg-pink-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {loading ? '导入中...' : '确认导入'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
         )}
 
