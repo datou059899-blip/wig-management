@@ -189,6 +189,17 @@ function formatDateTime(value: string | null) {
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
+function formatDateOnly(value: string | null) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).replaceAll('/', '-')
+}
+
 function formatQty(value: number | null) {
   return value === null || value === undefined ? '—' : value.toLocaleString('zh-CN')
 }
@@ -237,12 +248,48 @@ function purchaseBatchLabel(order: PurchaseOrder) {
   return match?.[1] || '未记录'
 }
 
+function getPurchaseArrivalStatus(order: PurchaseOrder) {
+  if (order.status === 'RECEIVED') {
+    return { label: '已到货', className: 'bg-emerald-100 text-emerald-700 border-emerald-200' }
+  }
+  if (order.status === 'CANCELLED') {
+    return { label: '已取消', className: 'bg-slate-100 text-slate-500 border-slate-200' }
+  }
+  if (!['ORDERED', 'PRODUCING', 'IN_TRANSIT', 'PARTIALLY_RECEIVED'].includes(order.status)) {
+    return { label: '未设置', className: 'bg-slate-100 text-slate-500 border-slate-200' }
+  }
+  if (!order.expectedArrivalDate) {
+    return { label: '未设置', className: 'bg-slate-100 text-slate-500 border-slate-200' }
+  }
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const expected = new Date(order.expectedArrivalDate)
+  if (Number.isNaN(expected.getTime())) {
+    return { label: '未设置', className: 'bg-slate-100 text-slate-500 border-slate-200' }
+  }
+  expected.setHours(0, 0, 0, 0)
+  const diffDays = Math.floor((expected.getTime() - today.getTime()) / (24 * 60 * 60 * 1000))
+
+  if (diffDays < 0) {
+    return { label: `逾期 ${Math.abs(diffDays)} 天`, className: 'bg-red-100 text-red-700 border-red-200' }
+  }
+  if (diffDays <= 7) {
+    return { label: '7天内到货', className: 'bg-amber-100 text-amber-700 border-amber-200' }
+  }
+  return { label: formatDateOnly(order.expectedArrivalDate), className: 'bg-slate-100 text-slate-600 border-slate-200' }
+}
+
 function toDateInputValue(value: string | null) {
   if (!value) return ''
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
   const offsetMs = date.getTimezoneOffset() * 60 * 1000
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16)
+}
+
+function toDateOnlyInputValue(value: string | null) {
+  return toDateInputValue(value).slice(0, 10)
 }
 
 function getDefaultCapturedAt() {
@@ -893,7 +940,7 @@ export default function InventoryPurchasingPage() {
     setPurchaseStatus(order.status)
     setPurchasePaidAmountRmb(String(order.paidAmountRmb || 0))
     setPurchaseOrderedAt(toDateInputValue(order.orderedAt))
-    setPurchaseExpectedArrivalDate(toDateInputValue(order.expectedArrivalDate))
+    setPurchaseExpectedArrivalDate(toDateOnlyInputValue(order.expectedArrivalDate))
     setPurchaseNote(order.note || '')
     setPurchaseItems(order.items.length ? order.items.map((item) => ({
       id: item.id || '',
@@ -2014,50 +2061,59 @@ export default function InventoryPurchasingPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {purchaseOrders.map((order) => (
-                      <tr key={order.id} className="hover:bg-slate-50">
-                        <td className="max-w-[190px] px-3 py-2.5">
-                          <div className="break-words font-semibold leading-snug text-slate-900">{order.supplierNameSnapshot || order.supplier?.name || '未填写'}</div>
-                          <div className="mt-1 truncate text-[11px] text-slate-400" title={order.orderNo}>{order.orderNo.replace(/^P1B2-/, '')}</div>
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <span className="inline-flex whitespace-nowrap rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                            {purchaseBatchLabel(order)}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${
-                            order.status === 'CANCELLED' ? 'bg-slate-100 text-slate-500' :
-                            order.status === 'RECEIVED' ? 'bg-emerald-100 text-emerald-700' :
-                            order.status === 'IN_TRANSIT' || order.status === 'PARTIALLY_RECEIVED' ? 'bg-blue-100 text-blue-700' :
-                            order.status === 'DRAFT' ? 'bg-amber-100 text-amber-700' :
-                            'bg-pink-100 text-pink-700'
-                          }`}>
-                            {order.statusLabel}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 text-slate-700">{order.orderedQty.toLocaleString('zh-CN')}</td>
-                        <td className="px-3 py-2.5 text-slate-700">{order.receivedQty.toLocaleString('zh-CN')}</td>
-                        <td className="px-3 py-2.5 font-medium text-slate-900">{order.openQty.toLocaleString('zh-CN')}</td>
-                        <td className="px-3 py-2.5 text-slate-700">
-                          {formatRmb(order.calculablePurchaseAmountRmb)}
-                          {!order.amountComplete && <div className="mt-0.5 text-xs text-amber-700">部分商品未维护单价</div>}
-                        </td>
-                        <td className="px-3 py-2.5 text-slate-700">{formatRmb(order.paidAmountRmb)}</td>
-                        <td className="px-3 py-2.5 font-medium text-slate-900">{formatRmb(order.remainingPaymentRmb)}</td>
-                        <td className="whitespace-nowrap px-3 py-2.5 text-slate-700">{paymentStatusLabel(order.paymentStatus)}</td>
-                        <td className="px-3 py-2.5 text-slate-600">{formatDateTime(order.expectedArrivalDate)}</td>
-                        <td className="whitespace-nowrap px-3 py-2.5">
-                          <button
-                            type="button"
-                            onClick={() => startEditPurchaseOrder(order)}
-                            className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
-                          >
-                            {canManageInventory ? '查看/编辑' : '查看详情'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {purchaseOrders.map((order) => {
+                      const arrivalStatus = getPurchaseArrivalStatus(order)
+
+                      return (
+                        <tr key={order.id} className="hover:bg-slate-50">
+                          <td className="max-w-[190px] px-3 py-2.5">
+                            <div className="break-words font-semibold leading-snug text-slate-900">{order.supplierNameSnapshot || order.supplier?.name || '未填写'}</div>
+                            <div className="mt-1 truncate text-[11px] text-slate-400" title={order.orderNo}>{order.orderNo.replace(/^P1B2-/, '')}</div>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className="inline-flex whitespace-nowrap rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                              {purchaseBatchLabel(order)}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${
+                              order.status === 'CANCELLED' ? 'bg-slate-100 text-slate-500' :
+                              order.status === 'RECEIVED' ? 'bg-emerald-100 text-emerald-700' :
+                              order.status === 'IN_TRANSIT' || order.status === 'PARTIALLY_RECEIVED' ? 'bg-blue-100 text-blue-700' :
+                              order.status === 'DRAFT' ? 'bg-amber-100 text-amber-700' :
+                              'bg-pink-100 text-pink-700'
+                            }`}>
+                              {order.statusLabel}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-700">{order.orderedQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2.5 text-slate-700">{order.receivedQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2.5 font-medium text-slate-900">{order.openQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2.5 text-slate-700">
+                            {formatRmb(order.calculablePurchaseAmountRmb)}
+                            {!order.amountComplete && <div className="mt-0.5 text-xs text-amber-700">部分商品未维护单价</div>}
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-700">{formatRmb(order.paidAmountRmb)}</td>
+                          <td className="px-3 py-2.5 font-medium text-slate-900">{formatRmb(order.remainingPaymentRmb)}</td>
+                          <td className="whitespace-nowrap px-3 py-2.5 text-slate-700">{paymentStatusLabel(order.paymentStatus)}</td>
+                          <td className="px-3 py-2.5 text-slate-600">
+                            <div className="whitespace-nowrap">{formatDateOnly(order.expectedArrivalDate)}</div>
+                            <span className={`mt-1 inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold ${arrivalStatus.className}`}>
+                              {arrivalStatus.label}
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2.5">
+                            <button
+                              type="button"
+                              onClick={() => startEditPurchaseOrder(order)}
+                              className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+                            >
+                              {canManageInventory ? '查看/编辑' : '查看详情'}
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
                     {purchaseOrders.length === 0 && (
                       <tr>
                         <td colSpan={12} className="px-4 py-10 text-center text-slate-500">
@@ -2104,7 +2160,7 @@ export default function InventoryPurchasingPage() {
                       </label>
                       <label className="block">
                         <span className="text-sm font-medium text-slate-700">预计到货</span>
-                        <input type="datetime-local" value={purchaseExpectedArrivalDate} onChange={(event) => setPurchaseExpectedArrivalDate(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                        <input type="date" value={purchaseExpectedArrivalDate} onChange={(event) => setPurchaseExpectedArrivalDate(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
                       </label>
                     </div>
                     <div className="grid gap-3 md:grid-cols-2">
@@ -2242,7 +2298,7 @@ export default function InventoryPurchasingPage() {
                         </label>
                         <label className="block">
                           <span className="text-sm font-medium text-slate-700">预计到货</span>
-                          <input type="datetime-local" value={purchaseExpectedArrivalDate} onChange={(event) => setPurchaseExpectedArrivalDate(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                          <input type="date" value={purchaseExpectedArrivalDate} onChange={(event) => setPurchaseExpectedArrivalDate(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
                         </label>
                         <label className="block">
                           <span className="text-sm font-medium text-slate-700">下单时间</span>
