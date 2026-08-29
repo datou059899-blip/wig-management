@@ -78,6 +78,7 @@ model Product {
   outreachLinkedAt         DateTime?
   pickedUpAt               DateTime?
   defaultSupplierId        String?
+  businessStatus           String      @default("ACTIVE")
   aliases                  ProductSkuAlias[]
   defaultSupplier          Supplier?   @relation(fields: [defaultSupplierId], references: [id], onDelete: SetNull)
   postedAt                 DateTime?
@@ -90,6 +91,7 @@ model Product {
   isActive                 Boolean     @default(true)
   tiktokSync               TiktokSync?
 
+  @@index([businessStatus])
   @@index([defaultSupplierId])
 }
 

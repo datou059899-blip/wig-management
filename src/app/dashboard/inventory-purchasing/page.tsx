@@ -40,6 +40,7 @@ type Supplier = {
 }
 
 type PriceSource = 'MANUAL' | 'TIKTOK_DISCOUNT' | 'TIKTOK' | 'BASE' | 'NONE'
+type ProductBusinessStatus = 'ACTIVE' | 'OUT_OF_STOCK_DELISTED' | 'DISCONTINUED'
 
 type ProductBusinessItem = {
   productId: string
@@ -58,6 +59,7 @@ type ProductBusinessItem = {
   currentSellingPriceUsd: number | null
   priceSource: PriceSource
   costCny: number
+  businessStatus: ProductBusinessStatus
   defaultSupplier: { id: string; name: string; isActive: boolean } | null
   inventoryCostRmb: number | null
   retailInventoryValueUsd: number | null
@@ -72,6 +74,7 @@ type ProductBusinessSummary = {
   retailInventoryValueUsd: number
   costMaintainedCount: number
   priceMaintainedCount: number
+  activeBusinessProductCount: number
 }
 
 type BusinessFilter = 'all' | 'missingCost' | 'missingPrice' | 'missingSupplier' | 'inStock' | 'hasSales30d'
@@ -283,6 +286,7 @@ export default function InventoryPurchasingPage() {
     retailInventoryValueUsd: 0,
     costMaintainedCount: 0,
     priceMaintainedCount: 0,
+    activeBusinessProductCount: 0,
   })
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([])
   const [purchaseSummary, setPurchaseSummary] = useState<PurchaseOrderSummary>({
@@ -320,6 +324,7 @@ export default function InventoryPurchasingPage() {
   const [businessPriceInput, setBusinessPriceInput] = useState('')
   const [businessCostInput, setBusinessCostInput] = useState('')
   const [businessSupplierId, setBusinessSupplierId] = useState('')
+  const [businessStatusInput, setBusinessStatusInput] = useState<ProductBusinessStatus>('ACTIVE')
   const [showInactiveSuppliers, setShowInactiveSuppliers] = useState(false)
   const [supplierName, setSupplierName] = useState('')
   const [supplierNotes, setSupplierNotes] = useState('')
@@ -349,9 +354,9 @@ export default function InventoryPurchasingPage() {
     const filtered = businessItems.filter((item) => {
       const matchesKeyword = !keyword || item.sku.toLowerCase().includes(keyword) || item.name.toLowerCase().includes(keyword)
       if (!matchesKeyword) return false
-      if (businessFilter === 'missingCost') return !(item.costCny > 0)
-      if (businessFilter === 'missingPrice') return item.currentSellingPriceUsd === null
-      if (businessFilter === 'missingSupplier') return !item.defaultSupplier
+      if (businessFilter === 'missingCost') return item.businessStatus === 'ACTIVE' && !(item.costCny > 0)
+      if (businessFilter === 'missingPrice') return item.businessStatus === 'ACTIVE' && item.currentSellingPriceUsd === null
+      if (businessFilter === 'missingSupplier') return item.businessStatus === 'ACTIVE' && !item.defaultSupplier
       if (businessFilter === 'inStock') return item.currentInventory > 0
       if (businessFilter === 'hasSales30d') return item.sales30d > 0
       return true
@@ -758,6 +763,7 @@ export default function InventoryPurchasingPage() {
     setBusinessPriceInput(item.discountPriceUsd ? String(item.discountPriceUsd) : '')
     setBusinessCostInput(item.costCny > 0 ? String(item.costCny) : '')
     setBusinessSupplierId(item.defaultSupplier?.id || '')
+    setBusinessStatusInput(item.businessStatus)
   }
 
   function cancelEditBusiness() {
@@ -765,6 +771,7 @@ export default function InventoryPurchasingPage() {
     setBusinessPriceInput('')
     setBusinessCostInput('')
     setBusinessSupplierId('')
+    setBusinessStatusInput('ACTIVE')
   }
 
   async function handleUpdateProductBusiness(event: FormEvent<HTMLFormElement>) {
@@ -779,6 +786,7 @@ export default function InventoryPurchasingPage() {
       discountPriceUsd?: number
       costCny?: number
       defaultSupplierId?: string | null
+      businessStatus?: ProductBusinessStatus
     } = {}
 
     const priceText = businessPriceInput.trim()
@@ -789,6 +797,7 @@ export default function InventoryPurchasingPage() {
     if (priceText && priceText !== originalPriceText) body.discountPriceUsd = Number(priceText)
     if (costText && costText !== originalCostText) body.costCny = Number(costText)
     if (businessSupplierId !== originalSupplierId) body.defaultSupplierId = businessSupplierId || null
+    if (businessStatusInput !== editingBusinessItem.businessStatus) body.businessStatus = businessStatusInput
 
     if (!Object.keys(body).length) {
       setMessage('没有需要保存的经营字段变更')
@@ -1131,12 +1140,12 @@ export default function InventoryPurchasingPage() {
               <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
                 <p className="text-xs font-medium text-slate-500">库存成本 RMB</p>
                 <p className="mt-2 text-2xl font-bold text-slate-900">{formatRmb(businessSummary.inventoryCostRmb)}</p>
-                <p className="mt-1 text-xs text-slate-500">成本已维护：{businessSummary.costMaintainedCount} / {businessSummary.productCount} SKU</p>
+                <p className="mt-1 text-xs text-slate-500">在售成本已维护：{businessSummary.costMaintainedCount} / {businessSummary.activeBusinessProductCount} SKU</p>
               </div>
               <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
                 <p className="text-xs font-medium text-slate-500">库存零售货值 USD</p>
                 <p className="mt-2 text-2xl font-bold text-slate-900">{formatUsd(businessSummary.retailInventoryValueUsd)}</p>
-                <p className="mt-1 text-xs text-slate-500">售价已维护：{businessSummary.priceMaintainedCount} / {businessSummary.productCount} SKU</p>
+                <p className="mt-1 text-xs text-slate-500">在售售价已维护：{businessSummary.priceMaintainedCount} / {businessSummary.activeBusinessProductCount} SKU</p>
               </div>
             </div>
 
@@ -1234,10 +1243,13 @@ export default function InventoryPurchasingPage() {
                     {paginatedBusinessItems.map((item) => {
                       const isSmh11 = item.sku.toUpperCase() === 'SMH-11'
                       const isSmh1 = item.sku === 'SMH-1（SM412）'
+                      const isActiveBusiness = item.businessStatus === 'ACTIVE'
                       const statusWarnings = [
-                        !(item.costCny > 0) ? '未维护成本' : null,
-                        item.currentSellingPriceUsd === null ? '未维护售价' : null,
-                        !item.defaultSupplier ? '未绑定供应商' : null,
+                        item.businessStatus === 'OUT_OF_STOCK_DELISTED' ? '缺货下架' : null,
+                        item.businessStatus === 'DISCONTINUED' ? '停售' : null,
+                        isActiveBusiness && !(item.costCny > 0) ? '未维护成本' : null,
+                        isActiveBusiness && item.currentSellingPriceUsd === null ? '未维护售价' : null,
+                        isActiveBusiness && !item.defaultSupplier ? '未绑定供应商' : null,
                         isSmh1 ? '历史 Alias 待确认' : null,
                         isSmh11 ? '经营数据待人工确认' : null,
                       ].filter(Boolean)
@@ -1382,6 +1394,19 @@ export default function InventoryPurchasingPage() {
                         ))}
                       </select>
                       <p className="mt-1 text-xs text-slate-500">只显示启用中的 Supplier，并写入 Product.defaultSupplierId。</p>
+                    </label>
+                    <label className="block md:col-span-2">
+                      <span className="text-sm font-medium text-slate-700">商品经营状态</span>
+                      <select
+                        value={businessStatusInput}
+                        onChange={(event) => setBusinessStatusInput(event.target.value as ProductBusinessStatus)}
+                        className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      >
+                        <option value="ACTIVE">正常在售</option>
+                        <option value="OUT_OF_STOCK_DELISTED">缺货下架</option>
+                        <option value="DISCONTINUED">停售</option>
+                      </select>
+                      <p className="mt-1 text-xs text-slate-500">不会修改 Product.isActive；缺货下架和停售商品不计入待维护提醒。</p>
                     </label>
                   </div>
 

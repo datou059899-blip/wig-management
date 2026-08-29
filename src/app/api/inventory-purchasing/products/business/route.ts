@@ -19,12 +19,16 @@ export async function GET() {
       acc.sales30d += item.sales30d
       if (item.inventoryCostRmb !== null) acc.inventoryCostRmb += item.inventoryCostRmb
       if (item.retailInventoryValueUsd !== null) acc.retailInventoryValueUsd += item.retailInventoryValueUsd
-      if (item.costCny > 0) acc.costMaintainedCount += 1
-      if (item.currentSellingPriceUsd !== null) acc.priceMaintainedCount += 1
+      if (item.businessStatus === 'ACTIVE') {
+        acc.activeBusinessProductCount += 1
+        if (item.costCny > 0) acc.costMaintainedCount += 1
+        if (item.currentSellingPriceUsd !== null) acc.priceMaintainedCount += 1
+      }
       return acc
     },
     {
       productCount: items.length,
+      activeBusinessProductCount: 0,
       currentInventory: 0,
       sales7d: 0,
       sales30d: 0,

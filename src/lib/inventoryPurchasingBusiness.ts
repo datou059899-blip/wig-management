@@ -17,7 +17,14 @@ export type ProductBusinessInput = {
   discountPriceUsd?: unknown
   costCny?: unknown
   defaultSupplierId?: unknown
+  businessStatus?: unknown
 }
+
+const PRODUCT_BUSINESS_STATUSES = new Set([
+  'ACTIVE',
+  'OUT_OF_STOCK_DELISTED',
+  'DISCONTINUED',
+])
 
 function trimString(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -83,6 +90,7 @@ export function buildProductBusinessUpdateData(input: ProductBusinessInput) {
     discountPriceUsd?: number | null
     costCny?: number
     defaultSupplierId?: string | null
+    businessStatus?: string
   } = {}
 
   if (Object.prototype.hasOwnProperty.call(input, 'discountPriceUsd')) {
@@ -96,6 +104,14 @@ export function buildProductBusinessUpdateData(input: ProductBusinessInput) {
   if (Object.prototype.hasOwnProperty.call(input, 'defaultSupplierId')) {
     const supplierId = trimString(input.defaultSupplierId)
     data.defaultSupplierId = supplierId || null
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'businessStatus')) {
+    const businessStatus = trimString(input.businessStatus)
+    if (!PRODUCT_BUSINESS_STATUSES.has(businessStatus)) {
+      throw new Error('商品经营状态无效')
+    }
+    data.businessStatus = businessStatus
   }
 
   return data
@@ -272,6 +288,7 @@ export async function getProductBusinessItems() {
       tiktokPriceUsd: true,
       priceUsd: true,
       costCny: true,
+      businessStatus: true,
       defaultSupplier: {
         select: {
           id: true,
@@ -317,6 +334,7 @@ export async function getProductBusinessItems() {
       currentSellingPriceUsd,
       priceSource,
       costCny,
+      businessStatus: product.businessStatus,
       defaultSupplier: product.defaultSupplier,
       inventoryCostRmb: costCny > 0 ? currentInventory * costCny : null,
       retailInventoryValueUsd: currentSellingPriceUsd !== null ? currentInventory * currentSellingPriceUsd : null,
@@ -365,6 +383,7 @@ export async function updateProductBusinessFields(productId: string, input: Prod
       tiktokPriceUsd: true,
       priceUsd: true,
       costCny: true,
+      businessStatus: true,
       defaultSupplier: {
         select: {
           id: true,
