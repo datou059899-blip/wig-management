@@ -42,7 +42,7 @@ export const PAGE_PERMISSIONS = {
   },
   productOpportunities: {
     id: 'productOpportunities',
-    name: '选品更新池',
+    name: '新品开发池',
     path: '/dashboard/products/opportunities',
     icon: 'Lightbulb',
     category: '产品',
