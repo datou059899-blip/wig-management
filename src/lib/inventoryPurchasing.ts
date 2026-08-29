@@ -113,23 +113,62 @@ function parseInventoryQty(value: ImportCellValue) {
   return { value: valueNumber, error: null }
 }
 
+function parseInventoryQtyCells(values: ImportCellValue[], options: { slashAsZero?: boolean } = {}) {
+  if (values.length <= 1) return parseInventoryQty(values[0] ?? '')
+
+  let total = 0
+  let hasQuantityCell = false
+  for (const value of values) {
+    const normalized = normalizeImportCell(value).replace(/,/g, '')
+    if (!normalized) continue
+    if (normalized === '/' && options.slashAsZero) continue
+    hasQuantityCell = true
+    const parsed = parseInventoryQty(value)
+    if (parsed.error || parsed.value === null) return parsed
+    total += parsed.value
+  }
+
+  if (!hasQuantityCell) return { value: null, error: '总库存为空' }
+  if (!Number.isSafeInteger(total)) return { value: null, error: '总库存数字格式异常' }
+  if (total > MAX_IMPORT_STOCK_QTY) {
+    return { value: null, error: `总库存超过安全上限 ${MAX_IMPORT_STOCK_QTY}，请人工检查` }
+  }
+
+  return { value: total, error: null }
+}
+
 function detectHeaderIndexes(rawRows: ImportCellValue[][]) {
   for (let rowIndex = 0; rowIndex < rawRows.length; rowIndex += 1) {
     const row = rawRows[rowIndex] || []
     const headers = row.map((cell) => normalizeImportCell(cell))
-    const skuIndex = headers.findIndex((header) =>
-      ['商家 SKU', '商家SKU', 'SKU', 'seller sku', 'seller_sku'].some((target) =>
-        header.toLowerCase() === target.toLowerCase(),
-      ),
-    )
+    const skuIndex = ['商家 SKU', '商家SKU', 'seller sku', 'seller_sku', 'SKU'].reduce((matchedIndex, target) => {
+      if (matchedIndex >= 0) return matchedIndex
+      return headers.findIndex((header) => header.toLowerCase() === target.toLowerCase())
+    }, -1)
     const totalIndex = headers.findIndex((header) =>
       ['总库存', 'total stock', 'totalqty', 'total qty', '库存'].some((target) =>
         header.replace(/\s+/g, '').toLowerCase() === target.replace(/\s+/g, '').toLowerCase(),
       ),
     )
+    const warehouseTotalIndexes = headers.flatMap((header, headerIndex) => {
+      const normalized = header.replace(/\s+/g, '').toLowerCase()
+      if (!normalized) return []
+      if (normalized.includes('建议')) return []
+      if (normalized.endsWith('总数量') || normalized.endsWith('totalquantity')) return [headerIndex]
+      return []
+    })
+
+    const nextRowsText = rawRows.slice(rowIndex + 1, rowIndex + 3)
+      .flat()
+      .map((cell) => normalizeImportCell(cell))
+      .join(' ')
+    const dataStartRowIndex = nextRowsText.includes('不可编辑') ? rowIndex + 3 : rowIndex + 1
 
     if (skuIndex >= 0 && totalIndex >= 0) {
-      return { headerRowIndex: rowIndex, dataStartRowIndex: rowIndex + 1, skuIndex, totalIndex }
+      return { headerRowIndex: rowIndex, dataStartRowIndex, skuIndex, totalIndexes: [totalIndex], slashAsZero: false }
+    }
+    if (skuIndex >= 0 && warehouseTotalIndexes.length > 0) {
+      return { headerRowIndex: rowIndex, dataStartRowIndex, skuIndex, totalIndexes: warehouseTotalIndexes, slashAsZero: true }
     }
   }
 
@@ -166,10 +205,12 @@ function sliceInventorySectionRows(
 
 function pickCell(record: Record<string, ImportCellValue>, names: string[]) {
   const entries = Object.entries(record)
-  const matched = entries.find(([key]) =>
-    names.some((name) => key.replace(/\s+/g, '').toLowerCase() === name.replace(/\s+/g, '').toLowerCase()),
-  )
-  return matched?.[1] ?? ''
+  for (const name of names) {
+    const normalizedName = name.replace(/\s+/g, '').toLowerCase()
+    const matched = entries.find(([key]) => key.replace(/\s+/g, '').toLowerCase() === normalizedName)
+    if (matched) return matched[1]
+  }
+  return ''
 }
 
 function buildStrictSkuMap(products: StrictSkuProduct[]) {
@@ -225,7 +266,7 @@ export async function parseInventoryPreviewFile(file: File, stockCapturedAt: Dat
   })
   const detected = detectHeaderIndexes(initial.rawRows)
   if (!detected) {
-    throw new Error('未找到包含“商家 SKU”和“总库存”的表头行')
+    throw new Error('未找到包含“商家 SKU”和“总库存/总数量”的表头行')
   }
 
   const inventorySectionRows = sliceInventorySectionRows(initial.rawRows, detected)
@@ -247,15 +288,20 @@ export async function parseInventoryPreviewFile(file: File, stockCapturedAt: Dat
   const previousStockBySku = await getLatestEffectiveStockBySku(canonicalSkus, stockCapturedAt)
   const matchedRows: InventoryPreviewMatchedRow[] = []
   const unmatchedRows: InventoryPreviewUnmatchedRow[] = []
+  let parsedRowCount = 0
 
   rowRecords.forEach(({ rowNumber, record }) => {
-    const inputSku = normalizeSkuText(String(pickCell(record, ['商家 SKU', '商家SKU', 'SKU', 'seller sku', 'seller_sku']) || ''))
+    const inputSku = normalizeSkuText(String(pickCell(record, ['商家 SKU', '商家SKU', 'seller sku', 'seller_sku', 'SKU']) || ''))
     const inputProductName = normalizeImportCell(pickCell(record, ['SKU / 款式', 'SKU/款式', '款式', '产品', '产品名', '产品名称', '商品', '商品名', '商品名称', 'product', 'product name']))
-    const totalQtyResult = parseInventoryQty(pickCell(record, ['总库存', 'total stock', 'totalqty', 'total qty', '库存']))
+    const totalQtyResult = parseInventoryQtyCells(
+      detected.totalIndexes.map((totalIndex) => record[built.headers[totalIndex]] ?? ''),
+      { slashAsZero: detected.slashAsZero },
+    )
 
     if (!inputSku) {
       return
     }
+    parsedRowCount += 1
     if (totalQtyResult.error || totalQtyResult.value === null) {
       unmatchedRows.push({ rowNumber, inputSku, totalQty: totalQtyResult.value, reason: totalQtyResult.error || '总库存异常', kind: 'unmatched' })
       return
@@ -317,7 +363,7 @@ export async function parseInventoryPreviewFile(file: File, stockCapturedAt: Dat
   return {
     matchedRows: dedupedMatchedRows,
     unmatchedRows,
-    rowCount: rowRecords.length,
+    rowCount: parsedRowCount,
     sheetName: initial.sheetName,
   }
 }
