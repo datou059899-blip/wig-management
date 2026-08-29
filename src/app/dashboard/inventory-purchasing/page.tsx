@@ -251,6 +251,12 @@ function getDefaultCapturedAt() {
   return new Date(now.getTime() - offsetMs).toISOString().slice(0, 16)
 }
 
+function localDateTimeInputToIso(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toISOString()
+}
+
 function getSupplierErrorMessage(status: number, fallback: string) {
   if (status === 400) return fallback || '输入错误，请检查供应商名称和备注。'
   if (status === 403) return '无管理权限，仅管理员/老板可管理供应商。'
@@ -607,7 +613,7 @@ export default function InventoryPurchasingPage() {
     try {
       const formData = new FormData()
       formData.set('file', file)
-      formData.set('stockCapturedAt', stockCapturedAt)
+      formData.set('stockCapturedAt', localDateTimeInputToIso(stockCapturedAt))
       formData.set('note', note)
       const response = await fetch('/api/inventory-purchasing/import-batches', {
         method: 'POST',
@@ -1629,8 +1635,8 @@ export default function InventoryPurchasingPage() {
                 {batches.map((batch) => (
                   <div key={batch.id} className="rounded-xl border border-slate-200 p-4">
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-medium text-slate-900">{batch.fileName}</p>
+                      <div className="min-w-0 flex-1">
+                        <p title={batch.fileName} className="line-clamp-2 break-all font-medium leading-snug text-slate-900">{batch.fileName}</p>
                         <p className="mt-1 text-xs text-slate-500">{formatDateTime(batch.stockCapturedAt)}</p>
                       </div>
                       <span className={`rounded-full px-2 py-1 text-xs font-semibold ${
