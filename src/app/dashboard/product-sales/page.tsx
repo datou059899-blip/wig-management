@@ -87,6 +87,7 @@ interface ProductData {
   salesRank: string
   salesRankPriority: number
   salesRankReason: string
+  businessStatus: string
   stockStatus: string
   updatedAt: string
 }
@@ -1133,6 +1134,7 @@ export default function ProductSalesPage() {
   const [baselineSaveSummary, setBaselineSaveSummary] = useState<BulkSaveSummary | null>(null)
   const [savingBaseline, setSavingBaseline] = useState(false)
   const [stockAdjustmentOpen, setStockAdjustmentOpen] = useState(false)
+  const [advancedToolsOpen, setAdvancedToolsOpen] = useState(false)
   const [stockAdjustments, setStockAdjustments] = useState<ProductStockAdjustment[]>([])
   const [adjustmentFormMode, setAdjustmentFormMode] = useState<'single' | 'bulk'>('single')
   const [adjustmentFormSku, setAdjustmentFormSku] = useState('')
@@ -2681,7 +2683,9 @@ export default function ProductSalesPage() {
       const priority = (value: string) => {
         if (value === '缺货') return 0
         if (value === '低库存') return 1
-        return 2
+        if (value === '缺货下架') return 2
+        if (value === '停售') return 3
+        return 4
       }
       const result = priority(a.stockStatus) - priority(b.stockStatus)
       if (result !== 0) {
@@ -2785,6 +2789,9 @@ export default function ProductSalesPage() {
     }
     if (stockStatus === '低库存') {
       return 'bg-amber-100 text-amber-700 border border-amber-200'
+    }
+    if (stockStatus === '缺货下架' || stockStatus === '停售') {
+      return 'bg-slate-100 text-slate-600 border border-slate-200'
     }
     return 'bg-emerald-100 text-emerald-700 border border-emerald-200'
   }
@@ -2981,71 +2988,80 @@ export default function ProductSalesPage() {
                 <h1 className="text-3xl font-bold text-slate-900">产品销售库存</h1>
                 <p className="text-slate-600 mt-2">查看产品销售趋势和库存现状</p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={handleImportInventory}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-200 text-slate-500 text-sm font-medium disabled:opacity-80"
-                  disabled
-                  title="库存导入已迁移至库存与订货中心"
-                >
-                  库存导入已迁移
-                </button>
-                <button
-                  onClick={openStockBaselineModal}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
-                  disabled={loading || savingBaseline}
-                >
-                  设置初始库存
-                </button>
-                <button
-                  onClick={() => void openStockAdjustmentModal()}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
-                  disabled={loading || savingAdjustment}
-                >
-                  补货/调整库存
-                </button>
-                <button
-                  onClick={openRankSettingsModal}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
-                  disabled={loading || savingRankSettings}
-                >
-                  等级设置
-                </button>
-                <button
-                  onClick={() => void handleOpenReconcilePreview()}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm font-medium hover:bg-sky-100 disabled:opacity-60"
-                  disabled={loading || reconcilePreviewLoading}
-                >
-                  {reconcilePreviewLoading ? '正在生成校准预览...' : '按平台库存校准'}
-                </button>
-                <button
-                  onClick={handleImportSkus}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium hover:bg-emerald-100 disabled:opacity-60"
-                  disabled={checkingSkuImport || importingSkus || importingInventory || importingOrders || loading}
-                >
-                  {checkingSkuImport ? '预检查 SKU 中...' : importingSkus ? '导入 SKU 中...' : '导入/补齐产品 SKU'}
-                </button>
-                <button
-                  onClick={() => handleImportOrders('import')}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
-                  disabled={importingOrders || importingInventory || loading}
-                >
-                  {importingOrders ? '正在导入订单表...' : '导入订单表'}
-                </button>
-                <button
-                  onClick={() => handleImportOrders('dryRun')}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium hover:bg-amber-100 disabled:opacity-60"
-                  disabled={importingOrders || importingInventory || loading}
-                >
-                  {importingOrders ? '测试中...' : '测试解析订单表'}
-                </button>
-                <button
-                  onClick={() => handleImportOrders('checkOnly')}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm font-medium hover:bg-sky-100 disabled:opacity-60"
-                  disabled={importingOrders || importingInventory || loading}
-                >
-                  {importingOrders ? '检测中...' : '检测订单 SKU 匹配'}
-                </button>
+              <div className="flex flex-col items-start gap-2 lg:items-end">
+                <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+                  <button
+                    onClick={() => handleImportOrders('import')}
+                    className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                    disabled={importingOrders || importingInventory || loading}
+                  >
+                    {importingOrders ? '正在导入订单表...' : '导入订单表'}
+                  </button>
+                  <button
+                    onClick={openRankSettingsModal}
+                    className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                    disabled={loading || savingRankSettings}
+                  >
+                    等级设置
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdvancedToolsOpen((value) => !value)}
+                    className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
+                    aria-expanded={advancedToolsOpen}
+                  >
+                    高级工具
+                  </button>
+                </div>
+                <div className="text-xs text-slate-500">
+                  正式库存导入已迁移至 库存与订货 → 库存导入
+                </div>
+                {advancedToolsOpen && (
+                  <div className="flex max-w-3xl flex-wrap justify-start gap-2 rounded-xl border border-slate-200 bg-white/80 p-3 shadow-sm lg:justify-end">
+                    <button
+                      onClick={openStockBaselineModal}
+                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                      disabled={loading || savingBaseline}
+                    >
+                      设置初始库存
+                    </button>
+                    <button
+                      onClick={() => void openStockAdjustmentModal()}
+                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                      disabled={loading || savingAdjustment}
+                    >
+                      补货/调整库存
+                    </button>
+                    <button
+                      onClick={() => void handleOpenReconcilePreview()}
+                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm font-medium hover:bg-sky-100 disabled:opacity-60"
+                      disabled={loading || reconcilePreviewLoading}
+                    >
+                      {reconcilePreviewLoading ? '正在生成校准预览...' : '按平台库存校准'}
+                    </button>
+                    <button
+                      onClick={handleImportSkus}
+                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium hover:bg-emerald-100 disabled:opacity-60"
+                      disabled={checkingSkuImport || importingSkus || importingInventory || importingOrders || loading}
+                    >
+                      {checkingSkuImport ? '预检查 SKU 中...' : importingSkus ? '导入 SKU 中...' : '导入/补齐产品 SKU'}
+                    </button>
+                    <button
+                      onClick={() => handleImportOrders('dryRun')}
+                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium hover:bg-amber-100 disabled:opacity-60"
+                      disabled={importingOrders || importingInventory || loading}
+                    >
+                      {importingOrders ? '测试中...' : '测试解析订单表'}
+                    </button>
+                    <button
+                      onClick={() => handleImportOrders('checkOnly')}
+                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm font-medium hover:bg-sky-100 disabled:opacity-60"
+                      disabled={importingOrders || importingInventory || loading}
+                    >
+                      {importingOrders ? '检测中...' : '检测订单 SKU 匹配'}
+                    </button>
+                  </div>
+                )}
               </div>
               {activeUiStates.length > 0 && (
                 <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -3055,7 +3071,7 @@ export default function ProductSalesPage() {
                 </div>
               )}
               <div className="mt-3 text-xs text-slate-500">
-                导入订单表、库存表、SKU 补齐均支持 CSV / XLSX / XLS。
+                导入订单表支持 CSV / XLSX / XLS。
               </div>
               {reconcilePreviewError && (
                 <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">

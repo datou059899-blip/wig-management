@@ -115,6 +115,7 @@ export type ProductSalesInventoryProduct = {
   salesRank: string
   salesRankPriority: number
   salesRankReason: string
+  businessStatus: string
   stockStatus: string
   updatedAt: string
 }
@@ -338,6 +339,7 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
         color: true,
         length: true,
         stock: true,
+        businessStatus: true,
         updatedAt: true,
       },
       orderBy: { updatedAt: 'desc' },
@@ -908,8 +910,13 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       + orderShareRatio * 20
     ).toFixed(2))
 
+    const businessStatus = product.businessStatus || 'ACTIVE'
     let stockStatus = '正常'
-    if (currentAvailableStock === 0) {
+    if (businessStatus === 'OUT_OF_STOCK_DELISTED') {
+      stockStatus = '缺货下架'
+    } else if (businessStatus === 'DISCONTINUED') {
+      stockStatus = '停售'
+    } else if (currentAvailableStock === 0) {
       stockStatus = '缺货'
     } else if (currentAvailableStock <= 10) {
       stockStatus = '低库存'
@@ -962,6 +969,7 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       salesRank,
       salesRankPriority: getSalesRankPriority(salesRank),
       salesRankReason,
+      businessStatus,
       stockStatus,
       updatedAt: product.updatedAt.toISOString(),
     }
@@ -992,8 +1000,9 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
   const forecastableProducts = tableData.filter((product) => product.hasBaseline)
   const estimatedTotalStock = forecastableProducts.reduce((sum, product) => sum + product.estimatedStock, 0)
   const inventoryDiff = forecastableProducts.reduce((sum, product) => sum + (product.inventoryDiff || 0), 0)
-  const lowStockCount = tableData.filter((product) => product.currentAvailableStock > 0 && product.currentAvailableStock <= 10).length
-  const outOfStockCount = tableData.filter((product) => product.currentAvailableStock === 0).length
+  const inventoryWarningProducts = tableData.filter((product) => product.businessStatus === 'ACTIVE')
+  const lowStockCount = inventoryWarningProducts.filter((product) => product.currentAvailableStock > 0 && product.currentAvailableStock <= 10).length
+  const outOfStockCount = inventoryWarningProducts.filter((product) => product.currentAvailableStock === 0).length
   const noPlatformSnapshotCount = tableData.filter((product) => !product.hasPlatformSnapshot).length
   const staleSnapshotCount = tableData.filter((product) => product.syncStale).length
   const inventoryDiffAbnormalCount = tableData.filter((product) => product.inventoryDiffAbnormal).length
