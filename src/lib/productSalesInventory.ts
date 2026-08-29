@@ -111,6 +111,8 @@ export type ProductSalesInventoryProduct = {
   orderShareRatio: number
   velocityScore: number
   avgDailySales: number
+  currentSellableDays: number | null
+  inventoryRisk: string
   activeSalesDays: number
   salesRank: string
   salesRankPriority: number
@@ -836,6 +838,10 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
     const sevenDaySales = sevenDayDailySales.reduce((sum, [, dailySales]) => sum + dailySales, 0)
     const sevenDayAvgSales = Number((sevenDaySales / 7).toFixed(2))
     const sevenDayActiveSalesDays = sevenDayDailySales.filter(([, dailySales]) => dailySales > 0).length
+    const dailySales = Number(Math.max(sevenDaySales / 7, sales.month / 30).toFixed(2))
+    const currentSellableDays = dailySales > 0
+      ? Number((currentAvailableStock / dailySales).toFixed(1))
+      : null
     const recent3DaySales = sevenDayDailySales.reduce((sum, [dateKey, dailySales]) => (
       dateKey >= recentThreeDayStartKey ? sum + dailySales : sum
     ), 0)
@@ -921,6 +927,22 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
     } else if (currentAvailableStock <= 10) {
       stockStatus = '低库存'
     }
+    let inventoryRisk = stockStatus
+    if (businessStatus === 'ACTIVE') {
+      if (currentAvailableStock === 0) {
+        inventoryRisk = '断货'
+      } else if (dailySales <= 0) {
+        inventoryRisk = '无近期销量'
+      } else if (currentSellableDays !== null && currentSellableDays <= 7) {
+        inventoryRisk = '高风险'
+      } else if (currentSellableDays !== null && currentSellableDays <= 14) {
+        inventoryRisk = '需关注'
+      } else if (currentSellableDays !== null && currentSellableDays <= 30) {
+        inventoryRisk = '正常'
+      } else {
+        inventoryRisk = '库存充足'
+      }
+    }
 
     return {
       id: product.id,
@@ -964,7 +986,9 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
       salesToStockRatio,
       orderShareRatio,
       velocityScore,
-      avgDailySales: sevenDayAvgSales,
+      avgDailySales: dailySales,
+      currentSellableDays,
+      inventoryRisk,
       activeSalesDays: sevenDayActiveSalesDays,
       salesRank,
       salesRankPriority: getSalesRankPriority(salesRank),

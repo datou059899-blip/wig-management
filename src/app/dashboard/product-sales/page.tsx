@@ -83,6 +83,8 @@ interface ProductData {
   orderShareRatio: number
   velocityScore: number
   avgDailySales: number
+  currentSellableDays: number | null
+  inventoryRisk: string
   activeSalesDays: number
   salesRank: string
   salesRankPriority: number
@@ -2804,18 +2806,21 @@ export default function ProductSalesPage() {
   }
 
   const getDaysOfSupplyValue = (product: ProductData) => {
-    if (product.avgDailySales <= 0) return Number.POSITIVE_INFINITY
+    if (product.currentSellableDays !== null && product.currentSellableDays !== undefined) return product.currentSellableDays
     return Number((product.currentAvailableStock / product.avgDailySales).toFixed(1))
   }
 
   const getDaysOfSupplyDisplay = (product: ProductData) => {
+    if (product.businessStatus === 'OUT_OF_STOCK_DELISTED') return '缺货下架'
+    if (product.businessStatus === 'DISCONTINUED') return '停售'
     if (product.avgDailySales <= 0) {
-      return product.currentAvailableStock > 0 ? '无近期销量' : '缺货'
+      return product.currentAvailableStock > 0 ? '—' : '缺货'
     }
     return `${getDaysOfSupplyValue(product)} 天`
   }
 
   const getDaysOfSupplyTextClass = (product: ProductData) => {
+    if (product.businessStatus !== 'ACTIVE') return 'text-slate-500'
     if (product.avgDailySales <= 0) {
       return product.currentAvailableStock > 0 ? 'text-slate-500' : 'text-red-700'
     }
@@ -2823,6 +2828,15 @@ export default function ProductSalesPage() {
     if (days <= 7) return 'text-red-700'
     if (days <= 14) return 'text-orange-700'
     return 'text-slate-900'
+  }
+
+  const getInventoryRiskBadgeClass = (risk: string) => {
+    if (risk === '断货' || risk === '高风险') return 'bg-red-100 text-red-700 border border-red-200'
+    if (risk === '需关注') return 'bg-amber-100 text-amber-700 border border-amber-200'
+    if (risk === '无近期销量') return 'bg-sky-100 text-sky-700 border border-sky-200'
+    if (risk === '缺货下架' || risk === '停售') return 'bg-slate-100 text-slate-600 border border-slate-200'
+    if (risk === '库存充足') return 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+    return 'bg-emerald-100 text-emerald-700 border border-emerald-200'
   }
 
   const getCurrentAvailableStockTextClass = (product: ProductData) => {
@@ -2977,6 +2991,17 @@ export default function ProductSalesPage() {
   const filteredAdjustments = stockAdjustments.filter((item) => (
     adjustmentFormMode === 'bulk' || !adjustmentFormSku || item.sku === adjustmentFormSku
   ))
+  const dashboardDailySales = summary
+    ? Number(Math.max(summary.weekSales / 7, summary.monthSales / 30).toFixed(2))
+    : 0
+  const trendPeriodChange = (() => {
+    if (trends.length < 2) return null
+    const midpoint = Math.floor(trends.length / 2)
+    if (midpoint <= 0) return null
+    const previous = trends.slice(0, midpoint).reduce((sum, point) => sum + (point.orders || 0), 0)
+    const current = trends.slice(midpoint).reduce((sum, point) => sum + (point.orders || 0), 0)
+    return current - previous
+  })()
 
   return (
     <PageGuard>
@@ -3783,86 +3808,70 @@ export default function ProductSalesPage() {
                   </div>
                 )}
 
-                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                  当前筛选汇总：毛销量 {trendSummary.grossOrders} ｜ 退货量 {trendSummary.returnQty} ｜ 净销量 {trendSummary.netOrders} ｜ 取消 {trendSummary.canceledQty} ｜ 退款金额 ${trendSummary.refundAmount.toFixed(2)}
-                </div>
-
-                <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
-                    <div className="mb-3">
-                      <div className="text-sm font-medium text-slate-900">每日销量曲线</div>
-                      <div className="text-xs text-slate-500">{trendTitle}</div>
-                      <div className="mt-1 text-xs text-slate-500">销量展示的是订单销售统计；库存实际扣减请以下方系统预计库存曲线使用的库存消耗量为准。</div>
-                    </div>
-                    <div className="h-64">
-                      {trendLoading ? (
-                        <div className="flex h-full items-center justify-center text-sm text-slate-500">
-                          趋势加载中...
-                        </div>
-                      ) : (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={trends} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                            <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-                            <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                            <Tooltip />
-                            <Legend />
-                            <Line
-                              type="monotone"
-                              dataKey="orders"
-                              name="每日销量"
-                              stroke="#2563eb"
-                              strokeWidth={2}
-                              dot={{ r: 3 }}
-                              activeDot={{ r: 5 }}
-                            />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      )}
+                <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-xs text-slate-500">近7天销量</div>
+                    <div className="mt-2 text-2xl font-bold text-slate-900">{summary?.weekSales ?? 0}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-xs text-slate-500">近30天销量</div>
+                    <div className="mt-2 text-2xl font-bold text-slate-900">{summary?.monthSales ?? 0}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-xs text-slate-500">日均销量</div>
+                    <div className="mt-2 text-2xl font-bold text-slate-900">{dashboardDailySales.toFixed(2)}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <div className="text-xs text-slate-500">较上一周期变化</div>
+                    <div className={`mt-2 text-2xl font-bold ${getWeeklyChangeTextClass(trendPeriodChange)}`}>
+                      {trendPeriodChange === null ? '—' : `${formatSignedNumber(trendPeriodChange)} 件`}
                     </div>
                   </div>
+                </div>
 
-                  <div className="rounded-lg border border-slate-100 bg-slate-50 p-4">
-                    <div className="mb-3">
-                      <div className="text-sm font-medium text-slate-900">每日预计剩余库存曲线</div>
-                      <div className="text-xs text-slate-500">系统预计库存只使用手动初始库存和补货调整，并按库存消耗量扣减；未设置初始库存的 SKU 不计入系统预计库存主口径。</div>
+                <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50 p-4">
+                  <div className="mb-3">
+                    <div className="text-sm font-medium text-slate-900">每日净销量曲线</div>
+                    <div className="text-xs text-slate-500">{trendTitle}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      当前筛选汇总：毛销量 {trendSummary.grossOrders} ｜ 退货量 {trendSummary.returnQty} ｜ 净销量 {trendSummary.netOrders} ｜ 取消 {trendSummary.canceledQty} ｜ 退款金额 ${trendSummary.refundAmount.toFixed(2)}
                     </div>
-                    <div className="h-64">
-                      {trendLoading ? (
-                        <div className="flex h-full items-center justify-center text-sm text-slate-500">
-                          趋势加载中...
-                        </div>
-                      ) : (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={trends} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                            <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-                            <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                            <Tooltip />
-                            <Legend />
-                            <Line
-                              type="monotone"
-                              dataKey="stock"
-                              name="每日预计剩余库存"
-                              stroke="#db2777"
-                              strokeWidth={2}
-                              dot={{ r: 3 }}
-                              activeDot={{ r: 5 }}
-                            />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      )}
-                    </div>
+                  </div>
+                  <div className="h-64">
+                    {trendLoading ? (
+                      <div className="flex h-full items-center justify-center text-sm text-slate-500">
+                        趋势加载中...
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={trends} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                          <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                          <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                          <Tooltip />
+                          <Legend />
+                          <Line
+                            type="monotone"
+                            dataKey="orders"
+                            name="每日净销量"
+                            stroke="#2563eb"
+                            strokeWidth={2}
+                            dot={{ r: 3 }}
+                            activeDot={{ r: 5 }}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
                   </div>
                 </div>
               </div>
 
-              <div className="mb-8 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-8 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
-                    <h2 className="text-lg font-semibold text-slate-900">周销售消耗趋势</h2>
+                    <h2 className="text-base font-semibold text-slate-900">完整周销售消耗对比</h2>
                     <p className="mt-1 text-sm text-slate-600">
-                      默认看最近 8 个完整自然周；销售消耗不含样品，样品仅参与库存余额重建。
+                      作为销售趋势的补充口径，默认收起最近 8 个完整自然周明细。
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -3894,37 +3903,37 @@ export default function ProductSalesPage() {
                   </div>
                 )}
 
-                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <div className="text-sm text-slate-500">上一个完整周真实销售消耗</div>
-                    <div className="mt-2 text-2xl font-bold text-slate-900">
+                    <div className="mt-1 text-xl font-bold text-slate-900">
                       {weeklyConsumptionLoading && !weeklyConsumption ? '加载中' : `${weeklyConsumption?.previousCompleteWeek?.ordinarySalesConsumedQty ?? 0} 件`}
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
                       {weeklyConsumption?.previousCompleteWeek ? `${weeklyConsumption.previousCompleteWeek.weekStart} ~ ${weeklyConsumption.previousCompleteWeek.weekEnd}` : '最近完整自然周'}
                     </div>
                   </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <div className="text-sm text-slate-500">较前一个完整周</div>
-                    <div className={`mt-2 text-2xl font-bold ${getWeeklyChangeTextClass((weeklyConsumption?.previousCompleteWeek?.ordinarySalesConsumedQty ?? 0) - (weeklyConsumption?.weekBeforePrevious?.ordinarySalesConsumedQty ?? 0))}`}>
+                    <div className={`mt-1 text-xl font-bold ${getWeeklyChangeTextClass((weeklyConsumption?.previousCompleteWeek?.ordinarySalesConsumedQty ?? 0) - (weeklyConsumption?.weekBeforePrevious?.ordinarySalesConsumedQty ?? 0))}`}>
                       {formatSignedNumber((weeklyConsumption?.previousCompleteWeek?.ordinarySalesConsumedQty ?? 0) - (weeklyConsumption?.weekBeforePrevious?.ordinarySalesConsumedQty ?? 0))} 件
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
                       {weeklyConsumption?.weekBeforePrevious ? `对比 ${weeklyConsumption.weekBeforePrevious.weekStart} ~ ${weeklyConsumption.weekBeforePrevious.weekEnd}` : '数据不足'}
                     </div>
                   </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <div className="text-sm text-slate-500">完整周加权销售消耗率</div>
-                    <div className="mt-2 text-2xl font-bold text-slate-900">
+                    <div className="mt-1 text-xl font-bold text-slate-900">
                       {formatWeeklyPercent(weeklyConsumption?.previousCompleteWeek?.weightedSalesConsumptionRate ?? null)}
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
                       分母 {weeklyConsumption?.previousCompleteWeek?.denominatorOpeningStock ?? 0} 件
                     </div>
                   </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <div className="text-sm text-slate-500">有效 SKU 数</div>
-                    <div className="mt-2 text-2xl font-bold text-slate-900">
+                    <div className="mt-1 text-xl font-bold text-slate-900">
                       {weeklyConsumption?.previousCompleteWeek?.validSkuCount ?? 0} 个
                     </div>
                     <div className="mt-1 text-xs text-slate-500">周初库存可重建且大于 0</div>
@@ -5657,9 +5666,9 @@ export default function ProductSalesPage() {
                       className="flex w-full flex-col gap-3 px-6 py-4 text-left transition hover:bg-slate-50 lg:flex-row lg:items-center lg:justify-between"
                     >
                       <div>
-                        <div className="font-semibold text-slate-900">库存对账</div>
+                        <div className="font-semibold text-slate-900">数据健康检查</div>
                         <div className="mt-1 text-xs text-slate-500">
-                          用于解释系统预计库存与当前可用库存的差异，默认折叠，不影响日常动销查看。
+                          {summary.inventoryDiffAbnormalCount} 个 SKU 存在推算库存与最新实际库存差异，展开后查看对账详情。
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-3 text-sm">
@@ -5731,26 +5740,23 @@ export default function ProductSalesPage() {
                       {tableRangeLoading && <span className="text-slate-500">筛选期销量刷新中...</span>}
                     </div>
                     <div className="overflow-x-auto">
-                      <table className="min-w-[1460px] w-full text-sm">
+                      <table className="min-w-[1180px] w-full text-sm">
                         <thead>
                           <tr className="bg-slate-50 border-b border-slate-200">
-                            <th className="sticky top-0 left-0 z-30 min-w-[120px] bg-slate-50 px-6 py-3 text-left">
+                            <th className="sticky top-0 left-0 z-30 min-w-[220px] bg-slate-50 px-6 py-3 text-left">
                               <button
                                 onClick={() => handleSort('sku')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
                               >
-                                SKU <SortIcon columnKey="sku" />
+                                SKU / 产品 <SortIcon columnKey="sku" />
                               </button>
-                            </th>
-                            <th className="sticky top-0 z-20 min-w-[180px] bg-slate-50 px-6 py-3 text-left font-semibold text-slate-900">
-                              产品名
                             </th>
                             <th className="sticky top-0 z-20 min-w-[120px] bg-slate-50 px-6 py-3 text-center">
                               <button
                                 onClick={() => handleSort('currentAvailableStock')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
-                                当前可用库存 <SortIcon columnKey="currentAvailableStock" />
+                                当前库存 <SortIcon columnKey="currentAvailableStock" />
                               </button>
                             </th>
                             <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
@@ -5769,12 +5775,12 @@ export default function ProductSalesPage() {
                                 30天销量 <SortIcon columnKey="monthSales" />
                               </button>
                             </th>
-                            <th className="sticky top-0 z-20 min-w-[140px] bg-slate-50 px-6 py-3 text-center">
+                            <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
                               <button
-                                onClick={() => handleSort('salesRankPriority')}
+                                onClick={() => handleSort('avgDailySales')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
-                                动销等级 <SortIcon columnKey="salesRankPriority" />
+                                日均销量 <SortIcon columnKey="avgDailySales" />
                               </button>
                             </th>
                             <th className="sticky top-0 z-20 min-w-[120px] bg-slate-50 px-6 py-3 text-center">
@@ -5785,15 +5791,23 @@ export default function ProductSalesPage() {
                                 可售天数 <SortIcon columnKey="daysOfSupply" />
                               </button>
                             </th>
-                            <th className="sticky top-0 z-20 min-w-[100px] bg-slate-50 px-6 py-3 text-center">
+                            <th className="sticky top-0 z-20 min-w-[120px] bg-slate-50 px-6 py-3 text-center">
                               <button
-                                onClick={() => handleSort('stockStatus')}
+                                onClick={() => handleSort('salesRankPriority')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
-                                库存状态 <SortIcon columnKey="stockStatus" />
+                                动销等级 <SortIcon columnKey="salesRankPriority" />
                               </button>
                             </th>
-                            <th className="sticky top-0 z-20 min-w-[240px] bg-slate-50 px-6 py-3 text-left">
+                            <th className="sticky top-0 z-20 min-w-[120px] bg-slate-50 px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleSort('inventoryRisk')}
+                                className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
+                              >
+                                库存风险 <SortIcon columnKey="inventoryRisk" />
+                              </button>
+                            </th>
+                            <th className="sticky top-0 z-20 min-w-[220px] bg-slate-50 px-6 py-3 text-left">
                               <button
                                 onClick={() => handleSort('dataReminders')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600"
@@ -5809,7 +5823,7 @@ export default function ProductSalesPage() {
                         <tbody>
                           {visibleProducts.length === 0 ? (
                             <tr>
-                              <td colSpan={10} className="px-6 py-8 text-center text-slate-500">
+                              <td colSpan={9} className="px-6 py-8 text-center text-slate-500">
                                 暂无产品数据
                               </td>
                             </tr>
@@ -5820,11 +5834,9 @@ export default function ProductSalesPage() {
                               return (
                                 <Fragment key={product.id}>
                                   <tr className="border-b border-slate-200 hover:bg-slate-50 transition-colors">
-                                    <td className="sticky left-0 z-10 min-w-[120px] bg-white px-6 py-4 text-sm font-medium text-slate-900">
-                                      {product.sku}
-                                    </td>
-                                    <td className="min-w-[180px] px-6 py-4 text-sm text-slate-900">
-                                      <div className="font-medium">{product.name || '-'}</div>
+                                    <td className="sticky left-0 z-10 min-w-[220px] bg-white px-6 py-4 text-sm text-slate-900">
+                                      <div className="font-semibold">{product.sku}</div>
+                                      <div className="mt-1 text-xs text-slate-500">{product.name || '-'}</div>
                                       {(product.color !== '-' || product.length !== '-') && (
                                         <div className="mt-1 text-xs text-slate-500">
                                           {[product.color, product.length].filter((value) => value && value !== '-').join(' / ')}
@@ -5836,20 +5848,21 @@ export default function ProductSalesPage() {
                                     </td>
                                     <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.weekSales}</td>
                                     <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.monthSales}</td>
-                                    <td className="min-w-[140px] px-6 py-4 text-sm text-center">
+                                    <td className="min-w-[100px] px-6 py-4 text-sm text-center text-slate-700">{product.avgDailySales.toFixed(2)}</td>
+                                    <td className={`min-w-[120px] px-6 py-4 text-sm text-center font-semibold ${getDaysOfSupplyTextClass(product)}`}>
+                                      {getDaysOfSupplyDisplay(product)}
+                                    </td>
+                                    <td className="min-w-[120px] px-6 py-4 text-sm text-center">
                                       <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getRankBadgeClass(product.salesRank)}`}>
                                         {getRankLabel(product.salesRank)}
                                       </span>
                                     </td>
-                                    <td className={`min-w-[120px] px-6 py-4 text-sm text-center font-semibold ${getDaysOfSupplyTextClass(product)}`}>
-                                      {getDaysOfSupplyDisplay(product)}
-                                    </td>
-                                    <td className="min-w-[100px] px-6 py-4 text-sm text-center">
-                                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStockStatusBadgeClass(product.stockStatus)}`}>
-                                        {getStockStatusLabel(product.stockStatus)}
+                                    <td className="min-w-[120px] px-6 py-4 text-sm text-center">
+                                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getInventoryRiskBadgeClass(product.inventoryRisk)}`}>
+                                        {product.inventoryRisk}
                                       </span>
                                     </td>
-                                    <td className="min-w-[240px] px-6 py-4 text-sm text-slate-600">
+                                    <td className="min-w-[220px] px-6 py-4 text-sm text-slate-600">
                                       {product.dataReminders.length > 0 ? (
                                         <div className="flex flex-wrap gap-2">
                                           {product.dataReminders.map((reminder) => (
@@ -5873,7 +5886,7 @@ export default function ProductSalesPage() {
                                   </tr>
                                   {expanded && (
                                     <tr className="border-b border-slate-200 bg-slate-50/70">
-                                      <td colSpan={10} className="px-6 py-5">
+                                      <td colSpan={9} className="px-6 py-5">
                                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
                                           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                             <div>
