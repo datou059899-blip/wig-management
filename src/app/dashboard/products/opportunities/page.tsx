@@ -21,6 +21,7 @@ type Opportunity = {
   notes: string | null
   status: string
   productId: string | null
+  purchaseOrderItemId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -40,6 +41,9 @@ type PurchaseDevelopmentItem = {
   orderNo: string
   purchaseOrderStatus: string
   productStatus: string
+  opportunityId: string | null
+  opportunityExists: boolean
+  opportunity: Opportunity | null
 }
 
 const statusOptions = [
@@ -128,6 +132,7 @@ export default function ProductOpportunitiesPage() {
   })
   const [supplierOptions, setSupplierOptions] = useState<string[]>([])
   const [legacyOpen, setLegacyOpen] = useState(false)
+  const [purchaseSource, setPurchaseSource] = useState<PurchaseDevelopmentItem | null>(null)
 
   // 创建弹窗状态
   const [createOpen, setCreateOpen] = useState(false)
@@ -145,6 +150,7 @@ export default function ProductOpportunitiesPage() {
     assignee: '',
     notes: '',
     status: '可观察',
+    purchaseOrderItemId: null as string | null,
   })
 
   const fetchOpportunities = async () => {
@@ -195,8 +201,10 @@ export default function ProductOpportunitiesPage() {
       assignee: '',
       notes: '',
       status: '可观察',
+      purchaseOrderItemId: null,
     })
     setEditTarget(null)
+    setPurchaseSource(null)
   }
 
   const openCreate = () => {
@@ -204,7 +212,34 @@ export default function ProductOpportunitiesPage() {
     setCreateOpen(true)
   }
 
-  const openEdit = (item: Opportunity) => {
+  const openDevelopmentForm = (item: PurchaseDevelopmentItem) => {
+    setPurchaseSource(item)
+    if (item.opportunity) {
+      openEdit(item.opportunity, item)
+      return
+    }
+
+    setEditTarget(null)
+    setForm({
+      name: item.productNameSnapshot || '',
+      category: '',
+      styleType: '',
+      heatLevel: '中',
+      sourceNote: '',
+      existingSimilar: '',
+      diffPoints: '',
+      suggestedAction: '观察',
+      priority: '中',
+      assignee: '',
+      notes: '',
+      status: '可观察',
+      purchaseOrderItemId: item.id,
+    })
+    setCreateOpen(true)
+  }
+
+  const openEdit = (item: Opportunity, source?: PurchaseDevelopmentItem) => {
+    setPurchaseSource(source || null)
     setForm({
       name: item.name || '',
       category: item.category || '',
@@ -218,6 +253,7 @@ export default function ProductOpportunitiesPage() {
       assignee: item.assignee || '',
       notes: item.notes || '',
       status: item.status || '可观察',
+      purchaseOrderItemId: item.purchaseOrderItemId || null,
     })
     setEditTarget(item)
     setCreateOpen(true)
@@ -306,7 +342,7 @@ export default function ProductOpportunitiesPage() {
         actions={
           canEdit && (
             <button onClick={openCreate} className="btn-primary">
-              + 新增旧选品机会
+              + 新增独立新品
             </button>
           )
         }
@@ -405,6 +441,8 @@ export default function ProductOpportunitiesPage() {
                 <th>预计到货</th>
                 <th>来源采购单</th>
                 <th>Product状态</th>
+                <th>开发档案</th>
+                {canEdit && <th>操作</th>}
               </tr>
             </thead>
             <tbody>
@@ -427,6 +465,21 @@ export default function ProductOpportunitiesPage() {
                   <td>
                     <span className="badge badge-gray">{item.productStatus}</span>
                   </td>
+                  <td>
+                    <span className={`badge ${item.opportunityExists ? 'badge-success' : 'badge-warning'}`}>
+                      {item.opportunityExists ? '已建档' : '未建档'}
+                    </span>
+                    {item.opportunity?.name && (
+                      <div className="mt-1 text-xs text-gray-500">{item.opportunity.name}</div>
+                    )}
+                  </td>
+                  {canEdit && (
+                    <td>
+                      <button onClick={() => openDevelopmentForm(item)} className="text-blue-600 hover:text-blue-800 text-xs">
+                        {item.opportunityExists ? '编辑资料' : '完善资料'}
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -518,10 +571,47 @@ export default function ProductOpportunitiesPage() {
           <div className="modal-content">
             <div className="modal-header">
               <div className="text-base font-semibold text-gray-900">
-                {editTarget ? '编辑选品机会' : '新增选品机会'}
+                {editTarget ? '编辑开发档案' : purchaseSource ? '完善开发档案' : '新增独立新品'}
               </div>
             </div>
             <div className="modal-body space-y-4">
+              {purchaseSource && (
+                <div className="rounded-lg border border-orange-100 bg-orange-50 p-4">
+                  <div className="mb-3 text-sm font-medium text-orange-900">采购来源</div>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <div className="text-orange-600">原始款名</div>
+                      <div className="font-medium text-orange-950">{purchaseSource.productNameSnapshot}</div>
+                    </div>
+                    <div>
+                      <div className="text-orange-600">当前状态</div>
+                      <div className="font-medium text-orange-950">{purchaseSource.linkStatusLabel}</div>
+                    </div>
+                    <div>
+                      <div className="text-orange-600">Supplier</div>
+                      <div className="font-medium text-orange-950">{purchaseSource.supplierName}</div>
+                    </div>
+                    <div>
+                      <div className="text-orange-600">来源采购单</div>
+                      <div className="font-medium text-orange-950">{purchaseSource.orderNo}</div>
+                    </div>
+                    <div>
+                      <div className="text-orange-600">采购数量</div>
+                      <div className="font-medium text-orange-950">{purchaseSource.orderedQty.toLocaleString('zh-CN')}</div>
+                    </div>
+                    <div>
+                      <div className="text-orange-600">已到 / 未到</div>
+                      <div className="font-medium text-orange-950">
+                        {purchaseSource.receivedQty.toLocaleString('zh-CN')} / {purchaseSource.openQty.toLocaleString('zh-CN')}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-orange-600">预计到货</div>
+                      <div className="font-medium text-orange-950">{formatDate(purchaseSource.expectedArrivalDate)}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="text-xs text-gray-600 mb-1.5 block">建议款式名 *</label>
                 <input

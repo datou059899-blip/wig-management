@@ -87,6 +87,7 @@ export async function GET(request: NextRequest) {
       prisma.purchaseOrderItem.findMany({
         where: purchaseWhere,
         include: {
+          productOpportunity: true,
           purchaseOrder: {
             select: {
               id: true,
@@ -151,6 +152,27 @@ export async function GET(request: NextRequest) {
         purchaseOrderId: item.purchaseOrder.id,
         purchaseOrderStatus: item.purchaseOrder.status,
         productStatus: '未关联',
+        opportunityId: item.productOpportunity?.id || null,
+        opportunityExists: Boolean(item.productOpportunity),
+        opportunity: item.productOpportunity ? {
+          id: item.productOpportunity.id,
+          name: item.productOpportunity.name,
+          category: item.productOpportunity.category,
+          styleType: item.productOpportunity.styleType,
+          heatLevel: item.productOpportunity.heatLevel,
+          sourceNote: item.productOpportunity.sourceNote,
+          existingSimilar: item.productOpportunity.existingSimilar,
+          diffPoints: item.productOpportunity.diffPoints,
+          suggestedAction: item.productOpportunity.suggestedAction,
+          priority: item.productOpportunity.priority,
+          assignee: item.productOpportunity.assignee,
+          notes: item.productOpportunity.notes,
+          status: item.productOpportunity.status,
+          productId: item.productOpportunity.productId,
+          purchaseOrderItemId: item.productOpportunity.purchaseOrderItemId,
+          createdAt: item.productOpportunity.createdAt.toISOString(),
+          updatedAt: item.productOpportunity.updatedAt.toISOString(),
+        } : null,
       }
     })
 
@@ -186,6 +208,37 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await request.json()
+    const purchaseOrderItemId = typeof data.purchaseOrderItemId === 'string' && data.purchaseOrderItemId.trim()
+      ? data.purchaseOrderItemId.trim()
+      : null
+
+    if (purchaseOrderItemId) {
+      const purchaseOrderItem = await prisma.purchaseOrderItem.findUnique({
+        where: { id: purchaseOrderItemId },
+        select: {
+          id: true,
+          productId: true,
+          linkStatus: true,
+          productOpportunity: { select: { id: true } },
+        },
+      })
+
+      if (!purchaseOrderItem) {
+        return NextResponse.json({ error: '采购明细不存在，无法创建开发档案' }, { status: 400 })
+      }
+
+      if (purchaseOrderItem.productId) {
+        return NextResponse.json({ error: '该采购明细已关联 Product，不能创建新品开发档案' }, { status: 400 })
+      }
+
+      if (!purchaseOrderItem.linkStatus || !DEVELOPMENT_LINK_STATUSES.includes(purchaseOrderItem.linkStatus)) {
+        return NextResponse.json({ error: '该采购明细不属于新品开发池，不能创建开发档案' }, { status: 400 })
+      }
+
+      if (purchaseOrderItem.productOpportunity) {
+        return NextResponse.json({ error: '该采购明细已经存在开发档案，请直接编辑' }, { status: 409 })
+      }
+    }
 
     const opportunity = await prisma.productOpportunity.create({
       data: {
@@ -202,12 +255,16 @@ export async function POST(request: NextRequest) {
         notes: data.notes || null,
         status: data.status || '可观察',
         productId: data.productId || null,
+        purchaseOrderItemId,
       },
     })
 
     return NextResponse.json(opportunity)
-  } catch (error) {
+  } catch (error: any) {
     console.error('创建选品机会失败:', error)
+    if (error?.code === 'P2002') {
+      return NextResponse.json({ error: '该采购明细已经存在开发档案，请直接编辑' }, { status: 409 })
+    }
     return NextResponse.json({ error: '创建选品机会失败' }, { status: 500 })
   }
 }

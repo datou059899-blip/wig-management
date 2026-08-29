@@ -285,6 +285,7 @@ model PurchaseOrderItem {
   updatedAt           DateTime      @updatedAt
   purchaseOrder       PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   product             Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productOpportunity  ProductOpportunity?
 
   @@index([purchaseOrderId])
   @@index([productId])
@@ -672,8 +673,10 @@ model ProductOpportunity {
   notes           String?
   status          String   @default("可观察")
   productId       String?
+  purchaseOrderItemId String? @unique
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  purchaseOrderItem PurchaseOrderItem? @relation(fields: [purchaseOrderItemId], references: [id], onDelete: SetNull)
 
   @@index([status])
   @@index([priority])
