@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { createProduct, ProductSkuConflictError } from '@/lib/products'
 
 // 获取产品列表（带毛利和预警信息）
 export async function GET(request: NextRequest) {
@@ -137,44 +138,13 @@ export async function POST(request: NextRequest) {
 
     const data = await request.json()
 
-    // 如果 sku 为空字符串，设为 null 避免唯一约束冲突
-    const sku = data.sku?.trim() || null
-
-    const product = await prisma.product.create({
-      data: {
-        name: data.name,
-        sku: sku,
-        skuId: data.skuId,
-        image: data.image,
-        images: data.images,
-        description: data.description,
-        material: data.material,
-        length: data.length,
-        color: data.color,
-        style: data.style,
-        costCny: data.costCny ?? 0,
-        firstLegLogisticsCostUsd: data.firstLegLogisticsCostUsd ?? 0,
-        lastLegLogisticsCostUsd: data.lastLegLogisticsCostUsd ?? 0,
-        laceSize: data.laceSize,
-        priceUsd: data.priceUsd ?? 0,
-        discountPriceUsd: data.discountPriceUsd,
-        influencerCommissionUsd: data.influencerCommissionUsd ?? 0,
-        adCostUsd: data.adCostUsd ?? 0,
-        tiktokPriceUsd: data.tiktokPriceUsd,
-        tiktokDiscountPriceUsd: data.tiktokDiscountPriceUsd,
-        stock: data.stock || 0,
-        scene: data.scene,
-        materialUrl: data.materialUrl,
-        tags: data.tags,
-        notes: data.notes,
-      },
-    })
+    const product = await createProduct(data)
 
     return NextResponse.json(product)
   } catch (error: any) {
     console.error('创建产品失败:', error)
     // 返回更详细的错误信息
-    if (error.code === 'P2002') {
+    if (error instanceof ProductSkuConflictError || error.code === 'P2002') {
       return NextResponse.json({ error: 'SKU 已存在，请使用不同的 SKU' }, { status: 400 })
     }
     return NextResponse.json({ error: '创建产品失败: ' + (error.message || '未知错误') }, { status: 500 })

@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
       ]
     }
 
-    const opportunities = await prisma.productOpportunity.findMany({
+    const rawOpportunities = await prisma.productOpportunity.findMany({
       where,
       orderBy: [
         { status: 'asc' },
@@ -52,6 +52,18 @@ export async function GET(request: NextRequest) {
         { createdAt: 'desc' },
       ],
     })
+    const linkedProductIds = rawOpportunities.map(item => item.productId).filter(Boolean) as string[]
+    const linkedProducts = linkedProductIds.length
+      ? await prisma.product.findMany({
+        where: { id: { in: linkedProductIds } },
+        select: { id: true, sku: true, name: true },
+      })
+      : []
+    const linkedProductMap = new Map(linkedProducts.map(product => [product.id, product]))
+    const opportunities = rawOpportunities.map(item => ({
+      ...item,
+      product: item.productId ? linkedProductMap.get(item.productId) || null : null,
+    }))
 
     const purchaseWhere: any = {
       productId: null,
@@ -94,6 +106,7 @@ export async function GET(request: NextRequest) {
               orderNo: true,
               status: true,
               expectedArrivalDate: true,
+              supplierId: true,
               supplierNameSnapshot: true,
               supplier: { select: { id: true, name: true } },
             },
@@ -144,9 +157,11 @@ export async function GET(request: NextRequest) {
         linkStatus: item.linkStatus,
         linkStatusLabel: item.linkStatus ? LINK_STATUS_LABELS[item.linkStatus] || item.linkStatus : '未标记',
         supplierName,
+        supplierId: item.purchaseOrder.supplier?.id || item.purchaseOrder.supplierId || null,
         orderedQty: item.orderedQty,
         receivedQty: item.receivedQty,
         openQty: Math.max(item.orderedQty - item.receivedQty, 0),
+        unitCostRmb: item.unitCostRmb,
         expectedArrivalDate: item.purchaseOrder.expectedArrivalDate?.toISOString() || null,
         orderNo: item.purchaseOrder.orderNo,
         purchaseOrderId: item.purchaseOrder.id,

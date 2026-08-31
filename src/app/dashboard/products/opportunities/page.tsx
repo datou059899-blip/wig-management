@@ -22,6 +22,7 @@ type Opportunity = {
   notes: string | null
   status: string
   productId: string | null
+  product: { id: string; sku: string | null; name: string } | null
   purchaseOrderItemId: string | null
   createdAt: string
   updatedAt: string
@@ -35,9 +36,11 @@ type PurchaseDevelopmentItem = {
   linkStatus: PurchaseDevelopmentLinkStatus
   linkStatusLabel: string
   supplierName: string
+  supplierId: string | null
   orderedQty: number
   receivedQty: number
   openQty: number
+  unitCostRmb: number | null
   expectedArrivalDate: string | null
   orderNo: string
   purchaseOrderStatus: string
@@ -45,6 +48,12 @@ type PurchaseDevelopmentItem = {
   opportunityId: string | null
   opportunityExists: boolean
   opportunity: Opportunity | null
+}
+
+type ProductOption = {
+  id: string
+  sku: string | null
+  name: string
 }
 
 const statusOptions = [
@@ -144,6 +153,15 @@ export default function ProductOpportunitiesPage() {
   const [supplierOptions, setSupplierOptions] = useState<string[]>([])
   const [legacyOpen, setLegacyOpen] = useState(false)
   const [purchaseSource, setPurchaseSource] = useState<PurchaseDevelopmentItem | null>(null)
+  const [convertOpen, setConvertOpen] = useState(false)
+  const [convertTarget, setConvertTarget] = useState<{ opportunity: Opportunity; source: PurchaseDevelopmentItem | null } | null>(null)
+  const [convertMode, setConvertMode] = useState<'create-new' | 'link-existing'>('create-new')
+  const [productSkuInput, setProductSkuInput] = useState('')
+  const [productNameInput, setProductNameInput] = useState('')
+  const [productSearch, setProductSearch] = useState('')
+  const [productOptions, setProductOptions] = useState<ProductOption[]>([])
+  const [selectedProductId, setSelectedProductId] = useState('')
+  const [converting, setConverting] = useState(false)
 
   // 创建弹窗状态
   const [createOpen, setCreateOpen] = useState(false)
@@ -326,6 +344,79 @@ export default function ProductOpportunitiesPage() {
     }
   }
 
+  const openConvert = (opportunity: Opportunity, source: PurchaseDevelopmentItem | null = null) => {
+    setConvertTarget({ opportunity, source })
+    setConvertMode('create-new')
+    setProductSkuInput('')
+    setProductNameInput(opportunity.name || source?.productNameSnapshot || '')
+    setProductSearch('')
+    setProductOptions([])
+    setSelectedProductId('')
+    setConvertOpen(true)
+  }
+
+  const searchProducts = async () => {
+    if (!productSearch.trim()) {
+      toast.error('请输入 SKU 或商品名称')
+      return
+    }
+    try {
+      const params = new URLSearchParams({
+        search: productSearch.trim(),
+        pageSize: '20',
+      })
+      const res = await fetch(`/api/products?${params}`)
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error || '搜索商品失败')
+        return
+      }
+      setProductOptions(data.products || [])
+    } catch (error) {
+      console.error('搜索商品失败:', error)
+      toast.error('搜索商品失败')
+    }
+  }
+
+  const handleConvert = async () => {
+    if (!convertTarget) return
+    if (convertMode === 'create-new' && (!productSkuInput.trim() || !productNameInput.trim())) {
+      toast.error('请填写正式 SKU 和正式商品名')
+      return
+    }
+    if (convertMode === 'link-existing' && !selectedProductId) {
+      toast.error('请选择已有商品')
+      return
+    }
+
+    setConverting(true)
+    try {
+      const res = await fetch(`/api/product-opportunities/${convertTarget.opportunity.id}/convert-to-product`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: convertMode,
+          sku: productSkuInput,
+          name: productNameInput,
+          productId: selectedProductId,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error || '转为正式商品失败')
+        return
+      }
+      toast.success('已转为正式商品')
+      setConvertOpen(false)
+      fetchOpportunities()
+    } catch (error) {
+      console.error('转为正式商品失败:', error)
+      toast.error('转为正式商品失败')
+    } finally {
+      setConverting(false)
+    }
+  }
+
   const totalCount = Object.values(statusCounts).reduce((a, b) => a + b, 0)
   const newProductCount = purchaseDevelopmentStats.NEW_PRODUCT || 0
   const differentCraftCount = purchaseDevelopmentStats.DIFFERENT_CRAFT || 0
@@ -486,9 +577,16 @@ export default function ProductOpportunitiesPage() {
                   </td>
                   {canEdit && (
                     <td>
-                      <button onClick={() => openDevelopmentForm(item)} className="text-blue-600 hover:text-blue-800 text-xs">
-                        {item.opportunityExists ? '编辑资料' : '完善资料'}
-                      </button>
+                      <div className="flex flex-col gap-1">
+                        <button onClick={() => openDevelopmentForm(item)} className="text-blue-600 hover:text-blue-800 text-xs">
+                          {item.opportunityExists ? '编辑资料' : '完善资料'}
+                        </button>
+                        {item.opportunity && !item.opportunity.productId && (
+                          <button onClick={() => openConvert(item.opportunity!, item)} className="text-emerald-600 hover:text-emerald-800 text-xs">
+                            转为正式商品
+                          </button>
+                        )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -551,7 +649,14 @@ export default function ProductOpportunitiesPage() {
                           <div className="text-xs text-gray-400">{item.styleType || '-'}</div>
                         </td>
                         <td><HeatBadge level={item.heatLevel} /></td>
-                        <td><StatusBadge status={item.status} /></td>
+                        <td>
+                          <StatusBadge status={item.status} />
+                          {item.product && (
+                            <div className="mt-1 text-xs text-emerald-700">
+                              {item.product.sku || '无 SKU'} / {item.product.name}
+                            </div>
+                          )}
+                        </td>
                         <td><ActionBadge action={item.suggestedAction} /></td>
                         <td><PriorityBadge priority={item.priority} /></td>
                         <td className="text-gray-600">{item.assignee || '-'}</td>
@@ -561,6 +666,11 @@ export default function ProductOpportunitiesPage() {
                           <td>
                             <div className="flex gap-2">
                               <button onClick={() => openEdit(item)} className="text-blue-600 hover:text-blue-800 text-xs">编辑</button>
+                              {item.productId ? (
+                                <a href={`/dashboard/products?search=${encodeURIComponent(item.product?.sku || item.product?.name || '')}`} className="text-emerald-600 hover:text-emerald-800 text-xs">查看商品</a>
+                              ) : (
+                                <button onClick={() => openConvert(item)} className="text-emerald-600 hover:text-emerald-800 text-xs">转为正式商品</button>
+                              )}
                               <button onClick={() => handleDelete(item.id)} className="text-red-600 hover:text-red-800 text-xs">删除</button>
                             </div>
                           </td>
@@ -757,6 +867,108 @@ export default function ProductOpportunitiesPage() {
               <button onClick={() => setCreateOpen(false)} className="btn-secondary">取消</button>
               <button onClick={handleSubmit} className="btn-primary">
                 {editTarget ? '保存修改' : purchaseSource ? '保存开发档案' : '创建'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {convertOpen && convertTarget && (
+        <div className="modal">
+          <div className="modal-backdrop" onClick={() => setConvertOpen(false)} />
+          <div className="modal-content">
+            <div className="modal-header">
+              <div className="text-base font-semibold text-gray-900">转为正式商品</div>
+            </div>
+            <div className="modal-body space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs text-slate-700">
+                <div className="mb-2 font-medium text-slate-900">开发档案</div>
+                <div>款式：{convertTarget.opportunity.name}</div>
+                <div>工艺 / 款式类型：{convertTarget.opportunity.styleType || '—'}</div>
+                {convertTarget.source && (
+                  <>
+                    <div>采购 Supplier：{convertTarget.source.supplierName}</div>
+                    <div>初始成本：{convertTarget.source.unitCostRmb ?? 0} RMB</div>
+                    <div>Product.stock：0（不会写入采购数量或库存）</div>
+                  </>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setConvertMode('create-new')}
+                  className={`rounded-lg border px-3 py-2 text-sm ${convertMode === 'create-new' ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-gray-200 text-gray-600'}`}
+                >
+                  创建新商品
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConvertMode('link-existing')}
+                  className={`rounded-lg border px-3 py-2 text-sm ${convertMode === 'link-existing' ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-gray-200 text-gray-600'}`}
+                >
+                  关联已有商品
+                </button>
+              </div>
+
+              {convertMode === 'create-new' ? (
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs text-gray-600 mb-1.5 block">正式 SKU *</label>
+                    <input
+                      value={productSkuInput}
+                      onChange={(e) => setProductSkuInput(e.target.value)}
+                      className="input"
+                      placeholder="必须人工确认，例如：SMH-XX"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600 mb-1.5 block">正式商品名 *</label>
+                    <input
+                      value={productNameInput}
+                      onChange={(e) => setProductNameInput(e.target.value)}
+                      className="input"
+                      placeholder="必须人工确认"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <input
+                      value={productSearch}
+                      onChange={(e) => setProductSearch(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && searchProducts()}
+                      className="input"
+                      placeholder="搜索 SKU / 商品名称"
+                    />
+                    <button type="button" onClick={searchProducts} className="btn-secondary whitespace-nowrap">搜索</button>
+                  </div>
+                  <div className="max-h-56 overflow-y-auto rounded-lg border border-gray-200">
+                    {productOptions.length === 0 ? (
+                      <div className="p-3 text-sm text-gray-500">请输入关键词搜索后，人工选择已有商品。</div>
+                    ) : productOptions.map((product) => (
+                      <label key={product.id} className="flex cursor-pointer items-center gap-3 border-b border-gray-100 p-3 text-sm last:border-b-0 hover:bg-gray-50">
+                        <input
+                          type="radio"
+                          name="selectedProduct"
+                          checked={selectedProductId === product.id}
+                          onChange={() => setSelectedProductId(product.id)}
+                        />
+                        <span>
+                          <span className="font-medium text-gray-900">{product.sku || '无 SKU'}</span>
+                          <span className="ml-2 text-gray-600">{product.name}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setConvertOpen(false)} className="btn-secondary">取消</button>
+              <button onClick={handleConvert} disabled={converting} className="btn-primary disabled:opacity-50">
+                {converting ? '处理中...' : '确认转为正式商品'}
               </button>
             </div>
           </div>
