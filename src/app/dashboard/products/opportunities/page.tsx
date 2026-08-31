@@ -59,6 +59,15 @@ const legacyStatusOptions = [
   { value: '已转入产品库', label: '已转入产品库' },
 ]
 
+const purchaseSourceStatusOptions = [
+  { value: '待整理', label: '待整理' },
+  { value: '资料整理中', label: '资料整理中' },
+  { value: '待确认', label: '待确认' },
+  { value: '待建商品', label: '待建商品' },
+  { value: '已完成', label: '已完成' },
+]
+const purchaseSourceStatusValues = purchaseSourceStatusOptions.map((option) => option.value)
+
 const priorityOptions = [
   { value: 'all', label: '全部' },
   { value: '高', label: '高' },
@@ -232,7 +241,7 @@ export default function ProductOpportunitiesPage() {
       priority: '中',
       assignee: '',
       notes: '',
-      status: '可观察',
+      status: '待整理',
       purchaseOrderItemId: item.id,
     })
     setCreateOpen(true)
@@ -252,7 +261,7 @@ export default function ProductOpportunitiesPage() {
       priority: item.priority || '中',
       assignee: item.assignee || '',
       notes: item.notes || '',
-      status: item.status || '可观察',
+      status: source && !purchaseSourceStatusValues.includes(item.status) ? '待整理' : item.status || (source ? '待整理' : '可观察'),
       purchaseOrderItemId: item.purchaseOrderItemId || null,
     })
     setEditTarget(item)
@@ -632,7 +641,7 @@ export default function ProductOpportunitiesPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-600 mb-1.5 block">款式类型</label>
+                  <label className="text-xs text-gray-600 mb-1.5 block">工艺 / 款式类型</label>
                   <input
                     value={form.styleType}
                     onChange={(e) => setForm({ ...form, styleType: e.target.value })}
@@ -640,18 +649,20 @@ export default function ProductOpportunitiesPage() {
                     placeholder="例如：bob / 卷发"
                   />
                 </div>
-                <div>
-                  <label className="text-xs text-gray-600 mb-1.5 block">热度等级</label>
-                  <select
-                    value={form.heatLevel}
-                    onChange={(e) => setForm({ ...form, heatLevel: e.target.value })}
-                    className="input"
-                  >
-                    {heatLevelOptions.map((level) => (
-                      <option key={level} value={level}>{level}</option>
-                    ))}
-                  </select>
-                </div>
+                {!purchaseSource && (
+                  <div>
+                    <label className="text-xs text-gray-600 mb-1.5 block">热度等级</label>
+                    <select
+                      value={form.heatLevel}
+                      onChange={(e) => setForm({ ...form, heatLevel: e.target.value })}
+                      className="input"
+                    >
+                      {heatLevelOptions.map((level) => (
+                        <option key={level} value={level}>{level}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="text-xs text-gray-600 mb-1.5 block">状态</label>
                   <select
@@ -659,23 +670,25 @@ export default function ProductOpportunitiesPage() {
                     onChange={(e) => setForm({ ...form, status: e.target.value })}
                     className="input"
                   >
-                    {legacyStatusOptions.map((opt) => (
+                    {(purchaseSource ? purchaseSourceStatusOptions : legacyStatusOptions).map((opt) => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="text-xs text-gray-600 mb-1.5 block">建议动作</label>
-                  <select
-                    value={form.suggestedAction}
-                    onChange={(e) => setForm({ ...form, suggestedAction: e.target.value })}
-                    className="input"
-                  >
-                    {suggestedActionOptions.map((action) => (
-                      <option key={action} value={action}>{action}</option>
-                    ))}
-                  </select>
-                </div>
+                {!purchaseSource && (
+                  <div>
+                    <label className="text-xs text-gray-600 mb-1.5 block">建议动作</label>
+                    <select
+                      value={form.suggestedAction}
+                      onChange={(e) => setForm({ ...form, suggestedAction: e.target.value })}
+                      className="input"
+                    >
+                      {suggestedActionOptions.map((action) => (
+                        <option key={action} value={action}>{action}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="text-xs text-gray-600 mb-1.5 block">优先级</label>
                   <select
@@ -740,7 +753,9 @@ export default function ProductOpportunitiesPage() {
             </div>
             <div className="modal-footer">
               <button onClick={() => setCreateOpen(false)} className="btn-secondary">取消</button>
-              <button onClick={handleSubmit} className="btn-primary">{editTarget ? '保存' : '创建'}</button>
+              <button onClick={handleSubmit} className="btn-primary">
+                {editTarget ? '保存修改' : purchaseSource ? '保存开发档案' : '创建'}
+              </button>
             </div>
           </div>
         </div>
