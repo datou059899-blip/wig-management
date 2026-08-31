@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react'
 import { canEditProducts } from '@/lib/permissions'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { EmptyStatePresets } from '@/components/EmptyState'
+import { useToast } from '@/components/ToastProvider'
 
 type Opportunity = {
   id: string
@@ -109,6 +110,7 @@ function HeatBadge({ level }: { level: string }) {
 
 export default function ProductOpportunitiesPage() {
   const { data: session } = useSession()
+  const toast = useToast()
   const userRole = (session?.user as any)?.role
   const canEdit = canEditProducts(userRole)
 
@@ -225,7 +227,7 @@ export default function ProductOpportunitiesPage() {
 
   const handleSubmit = async () => {
     if (!form.name.trim()) {
-      alert('请填写建议款式名')
+      toast.error('请填写建议款式名')
       return
     }
 
@@ -237,11 +239,11 @@ export default function ProductOpportunitiesPage() {
           body: JSON.stringify({ id: editTarget.id, ...form }),
         })
         if (res.ok) {
-          alert('更新成功')
+          toast.success('修改已保存')
           setCreateOpen(false)
           fetchOpportunities()
         } else {
-          alert('更新失败')
+          toast.error('更新失败')
         }
       } else {
         const res = await fetch('/api/product-opportunities', {
@@ -250,16 +252,16 @@ export default function ProductOpportunitiesPage() {
           body: JSON.stringify(form),
         })
         if (res.ok) {
-          alert('创建成功')
+          toast.success('开发档案已保存')
           setCreateOpen(false)
           fetchOpportunities()
         } else {
-          alert('创建失败')
+          toast.error('创建失败')
         }
       }
     } catch (error) {
       console.error('提交失败:', error)
-      alert('提交失败')
+      toast.error('提交失败')
     }
   }
 
@@ -268,14 +270,14 @@ export default function ProductOpportunitiesPage() {
     try {
       const res = await fetch(`/api/product-opportunities?id=${id}`, { method: 'DELETE' })
       if (res.ok) {
-        alert('删除成功')
+        toast.success('删除成功')
         fetchOpportunities()
       } else {
-        alert('删除失败')
+        toast.error('删除失败')
       }
     } catch (error) {
       console.error('删除失败:', error)
-      alert('删除失败')
+      toast.error('删除失败')
     }
   }
 

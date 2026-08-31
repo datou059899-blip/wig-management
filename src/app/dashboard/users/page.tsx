@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { canAccessUsers } from '@/lib/permissions'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { useToast } from '@/components/ToastProvider'
 import {
   PAGE_PERMISSION_GROUPS,
   PAGE_PERMISSIONS,
@@ -84,6 +85,7 @@ function PasswordInput({
 export default function UsersPage() {
   const router = useRouter()
   const { data: session } = useSession()
+  const toast = useToast()
   const currentUserRole = (session?.user as any)?.role
   const isAdmin = canAccessUsers(currentUserRole)
 
@@ -91,6 +93,12 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    if (!message) return
+    message.type === 'success' ? toast.success(message.text) : toast.error(message.text)
+    setMessage(null)
+  }, [message, toast])
 
   // 编辑用户
   const [editingUser, setEditingUser] = useState<User | null>(null)
@@ -335,8 +343,7 @@ export default function UsersPage() {
       })
       const data = await res.json()
       if (res.ok) {
-        alert(`密码重置成功！\n\n新密码: ${data.newPassword}\n\n请立即保存此密码并告知用户。`)
-        setMessage({ type: 'success', text: '密码重置成功' })
+        toast.success(`密码重置成功，新密码：${data.newPassword}。请立即保存并告知用户。`)
       } else {
         setMessage({ type: 'error', text: data.error || '重置密码失败' })
       }
@@ -416,12 +423,6 @@ export default function UsersPage() {
   return (
     <div className="p-6">
       <PageHeader title="用户管理" description="管理系统用户和权限" />
-
-      {message && (
-        <div className={`mb-4 p-3 rounded ${message.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-          {message.text}
-        </div>
-      )}
 
       {/* 添加用户按钮 */}
       <div className="mb-4">

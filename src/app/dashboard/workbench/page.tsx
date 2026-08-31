@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { EmptyStatePresets } from '@/components/EmptyState'
 import { isLead } from '@/lib/permissions'
+import { useToast } from '@/components/ToastProvider'
 
 type WorkTask = {
   id: string
@@ -104,6 +105,7 @@ const SOURCE_MODULE_OPTIONS = [
 export default function WorkbenchPage() {
   const router = useRouter()
   const { data: session } = useSession()
+  const toast = useToast()
   const role = (session?.user as any)?.role as string | undefined
   const currentUserId = (session?.user as any)?.id || ''
   const currentUserName = (session?.user as any)?.name || (session?.user as any)?.email || ''
@@ -272,15 +274,15 @@ export default function WorkbenchPage() {
     
     // 验证必填字段
     if (completingTask.requireCompletionNote && !completeForm.completedNote.trim()) {
-      alert('请填写完成备注')
+      toast.error('请填写完成备注')
       return
     }
     if (completingTask.requireCompletionLink && !completeForm.completedLink.trim()) {
-      alert('请填写完成链接')
+      toast.error('请填写完成链接')
       return
     }
     if (completingTask.requireCompletionResult && !completeForm.completedResult.trim()) {
-      alert('请填写结果说明')
+      toast.error('请填写结果说明')
       return
     }
     
@@ -301,16 +303,16 @@ export default function WorkbenchPage() {
       if (res.ok) {
         // 获取执行人名称
         const assigneeName = completingTask.assigneeName || '执行人'
-        alert(`✅ 任务已完成\n\n任务：${completingTask.title}\n已分配给：${assigneeName}`)
+        toast.success(`任务已完成：${completingTask.title}，已分配给：${assigneeName}`)
         await fetchTasks()
         setCompletingTask(null)
         setCompleteForm({ completedNote: '', completedLink: '', completedResult: '' })
       } else {
-        alert('完成失败：' + (data.error || '未知错误'))
+        toast.error('完成失败：' + (data.error || '未知错误'))
       }
     } catch (e) {
       console.error('[submitCompleteTask] 异常:', e)
-      alert('完成失败：' + (e as Error).message)
+      toast.error('完成失败：' + (e as Error).message)
     }
   }
 
@@ -340,14 +342,14 @@ export default function WorkbenchPage() {
         await fetchTasks()
         // 显示成功提示
         if (nextStatus === '已完成') {
-          alert('✅ 任务已完成')
+          toast.success('任务已完成')
         }
       } else {
-        alert('更新失败：' + (data.error || '未知错误'))
+        toast.error('更新失败：' + (data.error || '未知错误'))
       }
     } catch (e) {
       console.error('[updateTaskStatusDirect] 异常:', e)
-      alert('更新失败：' + (e as Error).message)
+      toast.error('更新失败：' + (e as Error).message)
     }
   }
 
@@ -442,12 +444,12 @@ export default function WorkbenchPage() {
       // 验证必填字段
       if (!form.title.trim()) {
         console.log('[submitCreate] 验证失败：标题为空')
-        alert('请填写任务标题')
+        toast.error('请填写任务标题')
         return
       }
       if (!form.assigneeUserId) {
         console.log('[submitCreate] 验证失败：执行人为空')
-        alert('请选择执行人')
+        toast.error('请选择执行人')
         return
       }
 
@@ -519,11 +521,11 @@ export default function WorkbenchPage() {
         console.log('[submitCreate] 刷新完成')
       } else {
         console.log('[submitCreate] 创建失败:', data.error)
-        alert(data.error || '创建失败')
+        toast.error(data.error || '创建失败')
       }
     } catch (e) {
       console.error('[submitCreate] 异常:', e)
-      alert('创建失败：' + (e as Error).message)
+      toast.error('创建失败：' + (e as Error).message)
     }
   }
 

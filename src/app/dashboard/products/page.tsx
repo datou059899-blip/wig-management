@@ -7,6 +7,7 @@ import Image from 'next/image'
 import { canAccessProducts, canEditProducts } from '@/lib/permissions'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
+import { useToast } from '@/components/ToastProvider'
 
 interface Product {
   id: string
@@ -109,6 +110,7 @@ const STYLE_OPTIONS = [
 export default function ProductsPage() {
   const router = useRouter()
   const { data: session } = useSession()
+  const toast = useToast()
   const userRole = (session?.user as any)?.role
   const canAccess = canAccessProducts(userRole)
   const canEdit = canEditProducts(userRole)
@@ -137,7 +139,9 @@ export default function ProductsPage() {
   const [uploading, setUploading] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [recentlyUpdated, setRecentlyUpdated] = useState<string | null>(null)
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const setToast = (next: { message: string; type: 'success' | 'error' }) => {
+    next.type === 'success' ? toast.success(next.message) : toast.error(next.message)
+  }
   const [bulkUpdateText, setBulkUpdateText] = useState('')
   const [bulkUpdateAllowOverwrite, setBulkUpdateAllowOverwrite] = useState(false)
   const [bulkUpdateLoading, setBulkUpdateLoading] = useState(false)
@@ -147,14 +151,6 @@ export default function ProductsPage() {
   
   // 图片预览状态
   const [previewProduct, setPreviewProduct] = useState<Product | null>(null)
-
-  // 自动隐藏 Toast
-  useEffect(() => {
-    if (toast) {
-      const timer = setTimeout(() => setToast(null), 3000)
-      return () => clearTimeout(timer)
-    }
-  }, [toast])
 
   // 自动清除高亮
   useEffect(() => {
@@ -332,11 +328,11 @@ export default function ProductsPage() {
         fetchProducts()
       } else {
         const error = await res.json()
-        alert(error.error || '删除失败')
+        setToast({ message: error.error || '删除失败', type: 'error' })
       }
     } catch (error) {
       console.error('删除失败:', error)
-      alert('删除失败')
+      setToast({ message: '删除失败', type: 'error' })
     }
   }
 
@@ -345,11 +341,11 @@ export default function ProductsPage() {
     const file = e.target.files?.[0]
     if (!file) return
     if (!file.type.startsWith('image/')) {
-      alert('请选择图片文件')
+      setToast({ message: '请选择图片文件', type: 'error' })
       return
     }
     if (file.size > 5 * 1024 * 1024) {
-      alert('图片大小不能超过 5MB')
+      setToast({ message: '图片大小不能超过 5MB', type: 'error' })
       return
     }
     const localUrl = URL.createObjectURL(file)
@@ -374,7 +370,7 @@ export default function ProductsPage() {
       }
     } catch (error: any) {
       console.error('上传失败:', error)
-      alert('上传失败: ' + error.message)
+      setToast({ message: '上传失败: ' + error.message, type: 'error' })
       if (isNew) {
         setPreviewUrl(newProduct.image || null)
       } else {
@@ -391,7 +387,7 @@ export default function ProductsPage() {
   // 保存新增
   const handleSaveNew = async () => {
     if (!newProduct.name?.trim()) {
-      alert('请输入产品名称')
+      setToast({ message: '请输入产品名称', type: 'error' })
       return
     }
     try {
@@ -423,11 +419,11 @@ export default function ProductsPage() {
         setToast({ message: '产品创建成功', type: 'success' })
       } else {
         const error = await res.json()
-        alert(error.error || '创建失败')
+        setToast({ message: error.error || '创建失败', type: 'error' })
       }
     } catch (error) {
       console.error('创建失败:', error)
-      alert('创建失败')
+      setToast({ message: '创建失败', type: 'error' })
     }
   }
 
@@ -611,26 +607,6 @@ export default function ProductsPage() {
           </select>
         </div>
       </div>
-
-      {/* Toast 提示 */}
-      {toast && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg transition-all ${
-          toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
-        }`}>
-          <div className="flex items-center gap-2">
-            {toast.type === 'success' ? (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            ) : (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            )}
-            <span>{toast.message}</span>
-          </div>
-        </div>
-      )}
 
       {/* 产品网格 */}
       {loading ? (

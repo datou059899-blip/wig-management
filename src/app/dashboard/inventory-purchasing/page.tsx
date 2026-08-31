@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { mapOldRole } from '@/lib/pagePermissions'
+import { useToast } from '@/components/ToastProvider'
 
 type SummaryItem = {
   productId: string
@@ -322,6 +323,7 @@ function getProductBusinessErrorMessage(status: number, fallback: string) {
 
 export default function InventoryPurchasingPage() {
   const { data: session } = useSession()
+  const toast = useToast()
   const role = mapOldRole((session?.user as { role?: string } | undefined)?.role)
   const canManageInventory = role === 'admin' || role === 'boss'
   const [activeTab, setActiveTab] = useState<'overview' | 'business' | 'import' | 'suppliers' | 'ordering'>('overview')
@@ -396,6 +398,18 @@ export default function InventoryPurchasingPage() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!message) return
+    toast.success(message)
+    setMessage('')
+  }, [message, toast])
+
+  useEffect(() => {
+    if (!error) return
+    toast.error(error)
+    setError('')
+  }, [error, toast])
 
   const sortedSummaryItems = useMemo(() => {
     return [...summaryItems].sort((a, b) => (a.sku || '').localeCompare(b.sku || ''))
@@ -1117,8 +1131,6 @@ export default function InventoryPurchasingPage() {
           </div>
         </header>
 
-        {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
-        {message && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>}
         {!canManageInventory && (
           <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
             仅管理员/老板可管理库存导入；当前账号可以查看库存总览、批次历史和批次详情。
