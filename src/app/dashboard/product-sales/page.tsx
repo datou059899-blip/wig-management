@@ -3035,7 +3035,7 @@ export default function ProductSalesPage() {
                     className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
                     aria-expanded={advancedToolsOpen}
                   >
-                    高级工具
+                    管理员维护
                   </button>
                 </div>
                 <div className="text-xs text-slate-500">
@@ -3048,42 +3048,14 @@ export default function ProductSalesPage() {
                       className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
                       disabled={loading || savingBaseline}
                     >
-                      设置初始库存
+                      初始库存（历史修复）
                     </button>
                     <button
                       onClick={() => void openStockAdjustmentModal()}
                       className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
                       disabled={loading || savingAdjustment}
                     >
-                      补货/调整库存
-                    </button>
-                    <button
-                      onClick={() => void handleOpenReconcilePreview()}
-                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm font-medium hover:bg-sky-100 disabled:opacity-60"
-                      disabled={loading || reconcilePreviewLoading}
-                    >
-                      {reconcilePreviewLoading ? '正在生成校准预览...' : '按平台库存校准'}
-                    </button>
-                    <button
-                      onClick={handleImportSkus}
-                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium hover:bg-emerald-100 disabled:opacity-60"
-                      disabled={checkingSkuImport || importingSkus || importingInventory || importingOrders || loading}
-                    >
-                      {checkingSkuImport ? '预检查 SKU 中...' : importingSkus ? '导入 SKU 中...' : '导入/补齐产品 SKU'}
-                    </button>
-                    <button
-                      onClick={() => handleImportOrders('dryRun')}
-                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium hover:bg-amber-100 disabled:opacity-60"
-                      disabled={importingOrders || importingInventory || loading}
-                    >
-                      {importingOrders ? '测试中...' : '测试解析订单表'}
-                    </button>
-                    <button
-                      onClick={() => handleImportOrders('checkOnly')}
-                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm font-medium hover:bg-sky-100 disabled:opacity-60"
-                      disabled={importingOrders || importingInventory || loading}
-                    >
-                      {importingOrders ? '检测中...' : '检测订单 SKU 匹配'}
+                      库存调整记录
                     </button>
                   </div>
                 )}
@@ -3098,34 +3070,15 @@ export default function ProductSalesPage() {
               <div className="mt-3 text-xs text-slate-500">
                 导入订单表支持 CSV / XLSX / XLS。
               </div>
-              {reconcilePreviewError && (
-                <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                  {reconcilePreviewError}
-                </div>
-              )}
             </div>
           </div>
 
-          <input
-            ref={inventoryInputRef}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            className="hidden"
-            onChange={handleInventoryFileChange}
-          />
           <input
             ref={ordersInputRef}
             type="file"
             accept=".xlsx,.xls,.csv"
             className="hidden"
             onChange={handleOrdersFileChange}
-          />
-          <input
-            ref={skuImportInputRef}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            className="hidden"
-            onChange={handleSkuImportFileChange}
           />
 
           {error && (
@@ -3176,179 +3129,6 @@ export default function ProductSalesPage() {
           {inventoryError && (
             <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               {inventoryError}
-            </div>
-          )}
-
-          {skuImportResult && (
-            <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex flex-wrap items-center gap-4 text-sm text-slate-700">
-                <span className="font-semibold text-slate-900">{formatSkuImportTitle(skuImportResult.mode)}</span>
-                <span>阶段 {skuImportResult.stage || '-'}</span>
-                <span>文件 {skuImportResult.fileName || '-'}</span>
-                <span>读取行数 {skuImportResult.totalRows}</span>
-                <span>文件内 SKU 数 {skuImportResult.extractedSkuCount}</span>
-                <span>去重后 SKU 数 {skuImportResult.uniqueSkuCount}</span>
-                <span>已存在主 SKU 数 {skuImportResult.existingSkuCount}</span>
-                <span>已存在别称 SKU 数 {skuImportResult.existingAliasSkuCount || 0}</span>
-                <span>从 Product.sku 括号识别出的别称 SKU 数 {skuImportResult.productSkuParenthesisAliasSkuCount || 0}</span>
-                <span>从 Product.name 括号识别出的别称 SKU 数 {skuImportResult.productNameParenthesisAliasSkuCount || 0}</span>
-                <span>可新建 SKU 数 {skuImportResult.newSkuCount}</span>
-                <span>可补齐空 SKU 数 {skuImportResult.fillableSkuCount || 0}</span>
-                <span>文件内重复 SKU 数 {skuImportResult.duplicateInFileCount}</span>
-                <span>疑似重复数量 {skuImportResult.suspiciousCount}</span>
-                {skuImportResult.mode === 'import' && (
-                  <span>实际新建 SKU 数 {skuImportResult.createdCount || 0}</span>
-                )}
-                {skuImportResult.mode === 'import' && (
-                  <span>实际补齐 SKU 数 {skuImportResult.filledCount || 0}</span>
-                )}
-                {skuImportResult.mode === 'import' && (
-                  <span>实际创建别称 SKU 数 {skuImportResult.aliasCreatedCount || 0}</span>
-                )}
-              </div>
-              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                新建产品将默认使用 SKU 作为产品名称，后续可在产品库中补充真实名称、颜色、长度和图片。
-              </div>
-              {((skuImportResult.existingAliasSkuCount || 0) > 0 || (skuImportResult.aliasMatchedSkuCount || 0) > 0) && (
-                <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
-                  检测到部分 SKU 已作为产品别称存在，不会重复创建产品。
-                </div>
-              )}
-              {skuImportResult.mode === 'dryRun' && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    onClick={() => void handleConfirmSkuImport()}
-                    className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-                    disabled={!pendingSkuImportFile || importingSkus}
-                  >
-                    {importingSkus ? '导入 SKU 中...' : '确认导入 SKU'}
-                  </button>
-                  <button
-                    onClick={handleImportSkus}
-                    className="inline-flex items-center justify-center rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                    disabled={checkingSkuImport || importingSkus}
-                  >
-                    重新选择文件
-                  </button>
-                </div>
-              )}
-              {skuImportResult.newSkus.length > 0 && (
-                <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-                  <div className="font-medium">新增 SKU 列表</div>
-                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.newSkus.join('\n')}</pre>
-                </div>
-              )}
-              {skuImportResult.fillableSkus && skuImportResult.fillableSkus.length > 0 && (
-                <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
-                  <div className="font-medium">可补齐空 SKU 列表</div>
-                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.fillableSkus.join('\n')}</pre>
-                </div>
-              )}
-              {skuImportResult.existingSkus.length > 0 && (
-                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                  <div className="font-medium">已存在主 SKU 列表</div>
-                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.existingSkus.join('\n')}</pre>
-                </div>
-              )}
-              {skuImportResult.existingAliasSkus && skuImportResult.existingAliasSkus.length > 0 && (
-                <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
-                  <div className="font-medium">已存在别称 SKU 列表</div>
-                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.existingAliasSkus.join('\n')}</pre>
-                </div>
-              )}
-              {skuImportResult.productSkuParenthesisAliasSkus && skuImportResult.productSkuParenthesisAliasSkus.length > 0 && (
-                <div className="mt-4 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-800">
-                  <div className="font-medium">从 Product.sku 括号识别出的 SKU 别称</div>
-                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.productSkuParenthesisAliasSkus.join('\n')}</pre>
-                </div>
-              )}
-              {skuImportResult.productNameParenthesisAliasSkus && skuImportResult.productNameParenthesisAliasSkus.length > 0 && (
-                <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-800">
-                  <div className="font-medium">从 Product.name 括号识别出的 SKU 别称</div>
-                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs">{skuImportResult.productNameParenthesisAliasSkus.join('\n')}</pre>
-                </div>
-              )}
-              {skuImportResult.suspiciousRows.length > 0 && (
-                <div className="mt-4 overflow-x-auto">
-                  <div className="mb-2 text-sm font-medium text-slate-900">疑似重复列表</div>
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-left text-slate-500">
-                        <th className="px-3 py-2">行号</th>
-                        <th className="px-3 py-2">SKU</th>
-                        <th className="px-3 py-2">商品名称</th>
-                        <th className="px-3 py-2">原因</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {skuImportResult.suspiciousRows.map((item, index) => (
-                        <tr key={`sku-suspicious-${item.row}-${item.sku}-${index}`} className="border-b border-slate-100">
-                          <td className="px-3 py-2 text-slate-700">{item.row}</td>
-                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
-                          <td className="px-3 py-2 text-slate-700">{item.productName || '-'}</td>
-                          <td className="px-3 py-2 text-amber-700">{item.reason}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {skuImportResult.skippedRows.length > 0 && (
-                <div className="mt-4 overflow-x-auto">
-                  <div className="mb-2 text-sm font-medium text-slate-900">跳过行</div>
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-left text-slate-500">
-                        <th className="px-3 py-2">行号</th>
-                        <th className="px-3 py-2">SKU</th>
-                        <th className="px-3 py-2">商品名称</th>
-                        <th className="px-3 py-2">原因</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {skuImportResult.skippedRows.map((item, index) => (
-                        <tr key={`sku-skipped-${item.row}-${item.sku}-${index}`} className="border-b border-slate-100">
-                          <td className="px-3 py-2 text-slate-700">{item.row}</td>
-                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
-                          <td className="px-3 py-2 text-slate-700">{item.productName || '-'}</td>
-                          <td className="px-3 py-2 text-slate-500">{item.reason}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {skuImportResult.failedRows.length > 0 && (
-                <div className="mt-4 overflow-x-auto">
-                  <div className="mb-2 text-sm font-medium text-slate-900">失败行</div>
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-left text-slate-500">
-                        <th className="px-3 py-2">行号</th>
-                        <th className="px-3 py-2">SKU</th>
-                        <th className="px-3 py-2">商品名称</th>
-                        <th className="px-3 py-2">原因</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {skuImportResult.failedRows.map((item, index) => (
-                        <tr key={`sku-failed-${item.row}-${item.sku}-${index}`} className="border-b border-slate-100">
-                          <td className="px-3 py-2 text-slate-700">{item.row}</td>
-                          <td className="px-3 py-2 text-slate-700">{item.sku || '-'}</td>
-                          <td className="px-3 py-2 text-slate-700">{item.productName || '-'}</td>
-                          <td className="px-3 py-2 text-red-600">{item.reason}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-
-          {skuImportError && (
-            <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              {skuImportError}
             </div>
           )}
 
@@ -4481,8 +4261,8 @@ export default function ProductSalesPage() {
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <h3 className="text-lg font-semibold text-slate-900">设置初始库存</h3>
-                        <p className="mt-1 text-sm text-slate-600">手动设置某个 SKU 的理论库存起点，趋势图会优先按这个基准减去库存消耗量。</p>
+                        <h3 className="text-lg font-semibold text-slate-900">初始库存（历史修复）</h3>
+                        <p className="mt-1 text-sm text-slate-600">仅用于历史库存重建/修复，不是正式库存导入入口。</p>
                       </div>
                       <button
                         onClick={closeStockBaselineModal}
@@ -4800,8 +4580,8 @@ export default function ProductSalesPage() {
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <h3 className="text-lg font-semibold text-slate-900">补货/调整库存</h3>
-                        <p className="mt-1 text-sm text-slate-600">补货和调整只参与系统预计库存计算，不会直接修改 Product.stock。</p>
+                        <h3 className="text-lg font-semibold text-slate-900">库存调整记录</h3>
+                        <p className="mt-1 text-sm text-slate-600">用于损耗/人工修正记录，会影响实时库存计算；正式盘点请使用库存与订货 → 库存导入。</p>
                       </div>
                       <button
                         onClick={closeStockAdjustmentModal}
@@ -5272,107 +5052,6 @@ export default function ProductSalesPage() {
                 </div>
               )}
 
-              {stockEditTarget && (
-                <div
-                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
-                  onClick={closeStockEditModal}
-                >
-                  <div
-                    className="w-full max-w-md max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <h3 className="text-lg font-semibold text-slate-900">编辑库存</h3>
-                        <p className="mt-1 text-sm text-slate-600">SKU：{stockEditTarget.sku}</p>
-                        <p className="mt-1 text-sm text-slate-600">当前库存：{stockEditTarget.stock}</p>
-                      </div>
-                      <button
-                        onClick={closeStockEditModal}
-                        className="text-sm text-slate-500 hover:text-slate-700"
-                        disabled={Boolean(editingStockSku)}
-                      >
-                        关闭
-                      </button>
-                    </div>
-
-                    <div className="mt-5 max-h-[calc(100vh-10rem)] space-y-4 overflow-y-auto pr-1">
-                      <div>
-                        <div className="mb-2 text-sm font-medium text-slate-900">修改方式</div>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                          {[
-                            { value: 'set', label: '设置为指定库存' },
-                            { value: 'increase', label: '增加库存' },
-                            { value: 'decrease', label: '减少库存' },
-                          ].map((option) => (
-                            <button
-                              key={option.value}
-                              onClick={() => {
-                                const nextMode = option.value as StockEditMode
-                                setStockEditMode(nextMode)
-                                setStockEditValue(nextMode === 'set' ? String(stockEditTarget.stock) : '')
-                                setStockEditError(null)
-                              }}
-                              className={`rounded-lg border px-3 py-2 text-sm ${
-                                stockEditMode === option.value
-                                  ? 'border-slate-900 bg-slate-900 text-white'
-                                  : 'border-slate-300 text-slate-700 hover:bg-slate-50'
-                              }`}
-                              disabled={Boolean(editingStockSku)}
-                            >
-                              {option.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-sm font-medium text-slate-900">
-                          {stockEditMode === 'set' ? '新的库存数值' : '调整数量'}
-                        </label>
-                        <input
-                          type="number"
-                          min="0"
-                          step="1"
-                          inputMode="numeric"
-                          value={stockEditValue}
-                          onChange={(event) => {
-                            setStockEditValue(event.target.value)
-                            setStockEditError(null)
-                          }}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
-                          placeholder={stockEditMode === 'set' ? '请输入新的库存数值' : '请输入调整数量'}
-                          disabled={Boolean(editingStockSku)}
-                        />
-                      </div>
-
-                      {stockEditError && (
-                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                          {stockEditError}
-                        </div>
-                      )}
-
-                      <div className="flex justify-end gap-3">
-                        <button
-                          onClick={closeStockEditModal}
-                          className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                          disabled={Boolean(editingStockSku)}
-                        >
-                          取消
-                        </button>
-                        <button
-                          onClick={handleSaveStock}
-                          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-                          disabled={Boolean(editingStockSku)}
-                        >
-                          {editingStockSku ? '保存中...' : '保存'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {groupManagerOpen && (
                 <div
                   className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
@@ -5504,100 +5183,6 @@ export default function ProductSalesPage() {
                           </div>
                         </div>
                       </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {reconcilePreviewOpen && reconcilePreviewData && (
-                <div
-                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
-                  onClick={closeReconcilePreviewModal}
-                >
-                  <div
-                    className="w-full max-w-6xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-xl bg-white p-6 shadow-xl"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <h3 className="text-lg font-semibold text-slate-900">按平台库存校准预览</h3>
-                        <p className="mt-1 text-sm text-slate-600">
-                          当前仅为预览，不会修改库存。确认执行功能将在下一步开启。
-                        </p>
-                      </div>
-                      <button
-                        onClick={closeReconcilePreviewModal}
-                        className="text-sm text-slate-500 hover:text-slate-700"
-                        disabled={reconcilePreviewLoading}
-                      >
-                        关闭
-                      </button>
-                    </div>
-
-                    <div className="mt-4 grid gap-4 md:grid-cols-4">
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                        <div className="text-xs text-slate-500">候选 SKU</div>
-                        <div className="mt-1 text-2xl font-bold text-slate-900">{reconcilePreviewData.summary.candidateCount}</div>
-                      </div>
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                        <div className="text-xs text-slate-500">跳过：无初始库存</div>
-                        <div className="mt-1 text-2xl font-bold text-slate-900">{reconcilePreviewData.summary.skippedNoBaseline}</div>
-                      </div>
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                        <div className="text-xs text-slate-500">跳过：无平台快照</div>
-                        <div className="mt-1 text-2xl font-bold text-slate-900">{reconcilePreviewData.summary.skippedNoSnapshot}</div>
-                      </div>
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                        <div className="text-xs text-slate-500">跳过：差异不达阈值</div>
-                        <div className="mt-1 text-2xl font-bold text-slate-900">{reconcilePreviewData.summary.skippedDiffTooSmall}</div>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 text-xs text-slate-500">
-                      当前阈值：|库存差异| &gt; {reconcilePreviewData.threshold}，仅预览 canonical 主 SKU，且要求已设置初始库存并存在平台快照。
-                    </div>
-
-                    <div className="mt-4 max-h-[calc(100vh-16rem)] overflow-auto rounded-lg border border-slate-200">
-                      <table className="min-w-[1320px] w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-slate-200 bg-slate-50">
-                            <th className="px-4 py-3 text-left font-semibold text-slate-900">SKU</th>
-                            <th className="px-4 py-3 text-left font-semibold text-slate-900">产品名称</th>
-                            <th className="px-4 py-3 text-center font-semibold text-slate-900">平台实际库存</th>
-                            <th className="px-4 py-3 text-center font-semibold text-slate-900">系统预计库存</th>
-                            <th className="px-4 py-3 text-center font-semibold text-slate-900">库存差异</th>
-                            <th className="px-4 py-3 text-center font-semibold text-slate-900">建议调整数</th>
-                            <th className="px-4 py-3 text-center font-semibold text-slate-900">available</th>
-                            <th className="px-4 py-3 text-center font-semibold text-slate-900">locked</th>
-                            <th className="px-4 py-3 text-center font-semibold text-slate-900">total</th>
-                            <th className="px-4 py-3 text-left font-semibold text-slate-900">快照日期</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {reconcilePreviewData.items.length === 0 ? (
-                            <tr>
-                              <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
-                                当前没有符合阈值和快照条件的校准候选 SKU。
-                              </td>
-                            </tr>
-                          ) : (
-                            reconcilePreviewData.items.map((item) => (
-                              <tr key={`${item.productId}:${item.sku}`} className="border-b border-slate-100">
-                                <td className="px-4 py-3 font-medium text-slate-900">{item.sku}</td>
-                                <td className="px-4 py-3 text-slate-700">{item.productName}</td>
-                                <td className="px-4 py-3 text-center font-semibold text-slate-900">{item.platformStock}</td>
-                                <td className="px-4 py-3 text-center text-slate-700">{item.estimatedStock}</td>
-                                <td className={`px-4 py-3 text-center font-semibold ${getInventoryDiffTextClass(item.inventoryDiff)}`}>{formatSignedNumber(item.inventoryDiff)}</td>
-                                <td className={`px-4 py-3 text-center font-semibold ${getInventoryDiffTextClass(item.adjustmentQty)}`}>{formatSignedNumber(item.adjustmentQty)}</td>
-                                <td className="px-4 py-3 text-center text-slate-700">{item.availableQty ?? '—'}</td>
-                                <td className="px-4 py-3 text-center text-slate-700">{item.lockedQty ?? '—'}</td>
-                                <td className="px-4 py-3 text-center text-slate-700">{item.totalQty ?? '—'}</td>
-                                <td className="px-4 py-3 text-slate-600">{item.latestSnapshotDate || '无平台快照'}</td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
                     </div>
                   </div>
                 </div>
@@ -5892,24 +5477,6 @@ export default function ProductSalesPage() {
                                             <div>
                                               <div className="text-sm font-semibold text-slate-900">SKU：{product.sku}</div>
                                               <div className="mt-1 text-xs text-slate-500">详情区保留库存口径解释，主表只看当前可用库存和风险提醒。</div>
-                                            </div>
-                                            <div className="flex flex-wrap gap-2">
-                                              <button
-                                                onClick={() => handleEditStock(product)}
-                                                className="inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-                                                disabled
-                                                title="正式库存请使用库存与订货中心"
-                                              >
-                                                编辑库存（legacy）
-                                              </button>
-                                              <button
-                                                onClick={() => void handleDeleteInventory(product)}
-                                                className="inline-flex items-center justify-center rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                                disabled
-                                                title="正式库存请使用库存与订货中心"
-                                              >
-                                                删除库存（legacy）
-                                              </button>
                                             </div>
                                           </div>
                                           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
