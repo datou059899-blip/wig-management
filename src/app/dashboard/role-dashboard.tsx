@@ -102,71 +102,115 @@ function ProgressBar({
 }
 
 // ============ 产品运营 Dashboard ============
+type TodayWorkStats = {
+  inventoryRiskCount: number
+  stockoutCount: number
+  highRiskCount: number
+  overduePurchaseCount: number
+  businessMaintenanceCount: number
+  missingCostCount: number
+  missingPriceCount: number
+  missingSupplierCount: number
+  newProductPendingCount: number
+  newProductUnfiledCount: number
+  newProductInProgressCount: number
+}
+
+const overduePurchaseStatuses = new Set([
+  'ORDERED',
+  'PRODUCING',
+  'IN_TRANSIT',
+  'PARTIALLY_RECEIVED',
+])
+
+function startOfLocalDay(date: Date) {
+  const copy = new Date(date)
+  copy.setHours(0, 0, 0, 0)
+  return copy
+}
+
+function isOverduePurchase(order: any) {
+  if (!overduePurchaseStatuses.has(order?.status) || !order?.expectedArrivalDate) {
+    return false
+  }
+  const expected = new Date(order.expectedArrivalDate)
+  if (Number.isNaN(expected.getTime())) {
+    return false
+  }
+  return startOfLocalDay(expected).getTime() < startOfLocalDay(new Date()).getTime()
+}
+
 function ProductOperatorDashboard() {
-  const [stats, setStats] = useState<any>(null)
+  const [stats, setStats] = useState<TodayWorkStats | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [productsRes, opportunitiesRes] = await Promise.all([
-          fetch('/api/products?pageSize=1000'),
+        const [salesRes, businessRes, purchaseOrdersRes, opportunitiesRes] = await Promise.all([
+          fetch('/api/product-sales?range=7'),
+          fetch('/api/inventory-purchasing/products/business'),
+          fetch('/api/inventory-purchasing/purchase-orders'),
           fetch('/api/product-opportunities'),
         ])
-        const products = await productsRes.json()
+        const sales = await salesRes.json()
+        const business = await businessRes.json()
+        const purchaseOrders = await purchaseOrdersRes.json()
         const opportunities = await opportunitiesRes.json()
 
-        const productList = products.products || []
-        
-        const workflowStats = {
-          待收集: 0,
-          已收集: 0,
-          已拿货: 0,
-          已打样: 0,
-          已确认主推: 0,
-          已建联达人: 0,
-          已有脚本: 0,
-          已出片: 0,
-        }
+        const salesProducts = sales.products || []
+        const activeRiskProducts = salesProducts.filter((product: any) =>
+          product.businessStatus === 'ACTIVE' &&
+          (product.inventoryRisk === '断货' || product.inventoryRisk === '高风险')
+        )
 
-        const getStage = (p: any) => {
-          if (p.postedAt) return '已出片'
-          if (p.scriptReadyAt) return '已有脚本'
-          if (p.outreachLinkedAt) return '已建联达人'
-          if (p.mainConfirmedAt) return '已确认主推'
-          if (p.sampleSentAt) return '已打样'
-          if (p.pickedUpAt) return '已拿货'
-          if (p.collectedAt) return '已收集'
-          return '待收集'
-        }
+        const businessItems = business.items || []
+        const activeBusinessItems = businessItems.filter((item: any) => item.businessStatus === 'ACTIVE')
+        const missingBusinessProductIds = new Set<string>()
+        let missingCostCount = 0
+        let missingPriceCount = 0
+        let missingSupplierCount = 0
 
-        productList.forEach((p: any) => {
-          const stage = getStage(p)
-          if (workflowStats[stage as keyof typeof workflowStats] !== undefined) {
-            workflowStats[stage as keyof typeof workflowStats]++
+        activeBusinessItems.forEach((item: any) => {
+          const productId = String(item.id || item.productId || item.sku)
+          if (!(Number(item.costCny) > 0)) {
+            missingCostCount++
+            missingBusinessProductIds.add(productId)
+          }
+          if (item.currentSellingPriceUsd === null || item.currentSellingPriceUsd === undefined) {
+            missingPriceCount++
+            missingBusinessProductIds.add(productId)
+          }
+          if (!item.defaultSupplier) {
+            missingSupplierCount++
+            missingBusinessProductIds.add(productId)
           }
         })
 
-        const needsOutreach = productList.filter((p: any) => 
-          p.mainConfirmedAt && !p.outreachLinkedAt
-        ).length
-
-        const needsScript = productList.filter((p: any) => 
-          p.outreachLinkedAt && !p.scriptReadyAt
-        ).length
-
-        const opportunitiesList = opportunities.opportunities || []
-        const urgentOpportunities = opportunitiesList.filter((o: any) => 
-          o.status === '建议马上补'
-        ).length
+        const orders = purchaseOrders.orders || []
+        const purchaseDevelopmentItems = opportunities.purchaseDevelopmentItems || []
+        const unfinishedDevelopmentItems = purchaseDevelopmentItems.filter((item: any) =>
+          !item.opportunityExists || item.opportunity?.status !== '已完成'
+        )
 
         setStats({
-          workflowStats,
-          needsOutreach,
-          needsScript,
-          urgentOpportunities,
-          totalProducts: productList.length,
-          totalOpportunities: opportunitiesList.length,
+          inventoryRiskCount: activeRiskProducts.length,
+          stockoutCount: salesProducts.filter((product: any) =>
+            product.businessStatus === 'ACTIVE' && product.inventoryRisk === '断货'
+          ).length,
+          highRiskCount: salesProducts.filter((product: any) =>
+            product.businessStatus === 'ACTIVE' && product.inventoryRisk === '高风险'
+          ).length,
+          overduePurchaseCount: orders.filter(isOverduePurchase).length,
+          businessMaintenanceCount: missingBusinessProductIds.size,
+          missingCostCount,
+          missingPriceCount,
+          missingSupplierCount,
+          newProductPendingCount: unfinishedDevelopmentItems.length,
+          newProductUnfiledCount: unfinishedDevelopmentItems.filter((item: any) => !item.opportunityExists).length,
+          newProductInProgressCount: unfinishedDevelopmentItems.filter((item: any) =>
+            item.opportunityExists && item.opportunity?.status !== '已完成'
+          ).length,
         })
       } catch (error) {
         console.error('获取数据失败:', error)
@@ -186,135 +230,126 @@ function ProductOperatorDashboard() {
   }
 
   const s = stats!
+  const workItems = [
+    {
+      title: '库存经营风险',
+      count: s.inventoryRiskCount,
+      description: s.inventoryRiskCount > 0
+        ? `${s.stockoutCount} 个 ACTIVE 商品已断货，${s.highRiskCount} 个可售天数 ≤ 7。`
+        : 'ACTIVE 商品暂无断货或 7 天内高风险。',
+      href: '/dashboard/product-sales',
+      action: '去销售分析',
+      icon: '!',
+      tone: s.inventoryRiskCount > 0 ? 'rose' : 'slate',
+    },
+    {
+      title: '采购逾期',
+      count: s.overduePurchaseCount,
+      description: s.overduePurchaseCount > 0
+        ? '存在预计到货日早于今天的未完成采购单。'
+        : '未完成采购单暂无逾期到货提醒。',
+      href: '/dashboard/inventory-purchasing?tab=orders',
+      action: '去订货/在途',
+      icon: '↗',
+      tone: s.overduePurchaseCount > 0 ? 'amber' : 'slate',
+    },
+    {
+      title: '商品经营资料待维护',
+      count: s.businessMaintenanceCount,
+      description: s.businessMaintenanceCount > 0
+        ? `${s.missingCostCount} 个缺成本，${s.missingPriceCount} 个缺售价，${s.missingSupplierCount} 个缺 Supplier。`
+        : 'ACTIVE 商品的成本、售价和 Supplier 资料暂无待维护项。',
+      href: '/dashboard/inventory-purchasing?tab=business',
+      action: '去商品经营',
+      icon: '•',
+      tone: s.businessMaintenanceCount > 0 ? 'orange' : 'slate',
+    },
+    {
+      title: '新品待处理',
+      count: s.newProductPendingCount,
+      description: s.newProductPendingCount > 0
+        ? `${s.newProductUnfiledCount} 条未建档，${s.newProductInProgressCount} 条开发档案未完成。`
+        : '采购来源新品暂无待建档或待完成档案。',
+      href: '/dashboard/products/opportunities',
+      action: '去新品开发池',
+      icon: '+',
+      tone: s.newProductPendingCount > 0 ? 'blue' : 'slate',
+    },
+  ]
+
+  const toneClasses: Record<string, string> = {
+    rose: 'border-rose-200 bg-rose-50/40 text-rose-700',
+    amber: 'border-amber-200 bg-amber-50/40 text-amber-700',
+    orange: 'border-orange-200 bg-orange-50/40 text-orange-700',
+    blue: 'border-blue-200 bg-blue-50/40 text-blue-700',
+    slate: 'border-slate-200 bg-slate-50 text-slate-400',
+  }
+
+  const shortcuts = [
+    { title: '导入订单', description: '上传 TikTok 订单表', href: '/dashboard/product-sales' },
+    { title: '库存导入', description: '生成 PREVIEW 并确认快照', href: '/dashboard/inventory-purchasing?tab=import' },
+    { title: '订货/在途', description: '查看采购单和到货状态', href: '/dashboard/inventory-purchasing?tab=orders' },
+    { title: '新品开发池', description: '整理采购新品开发档案', href: '/dashboard/products/opportunities' },
+  ]
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* 页面标题 */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">产品运营中心</h1>
-        <p className="mt-1 text-slate-500">跟进产品推进状态，管理选品更新，把握主推款节奏</p>
+        <h1 className="text-2xl font-bold text-slate-900">今日待处理中心</h1>
+        <p className="mt-1 text-slate-500">只汇总今天需要处理的异常和待办，具体操作进入对应正式页面完成。</p>
       </div>
 
-      {/* 统计卡片 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard
-          title="产品总数"
-          value={s.totalProducts}
-          subtitle="全部产品"
-          href="/dashboard/products"
-          color="blue"
-          icon={
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-            </svg>
-          }
-        />
-        <StatCard
-          title="选品机会"
-          value={s.totalOpportunities}
-          subtitle="待处理"
-          href="/dashboard/products/opportunities"
-          color="purple"
-          icon={
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          }
-        />
-        <StatCard
-          title="待建联达人"
-          value={s.needsOutreach}
-          subtitle="主推款"
-          href="/dashboard/products?needsOutreach=1"
-          color="orange"
-          icon={
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-          }
-        />
-        <StatCard
-          title="建议马上补"
-          value={s.urgentOpportunities}
-          subtitle="紧急"
-          href="/dashboard/products/opportunities?status=建议马上补"
-          color="red"
-          icon={
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          }
-        />
-      </div>
-
-      {/* 产品推进状态 */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6">
+      {/* 今日待处理 */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-semibold text-slate-900">产品推进状态</h2>
-          <Link href="/dashboard/products" className="text-sm text-primary-600 hover:text-primary-700 font-medium">
-            查看全部 →
-          </Link>
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">今日待处理</h2>
+            <p className="mt-1 text-sm text-slate-500">按风险优先展示，工作台只做提醒和跳转。</p>
+          </div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {Object.entries(s.workflowStats).map(([stage, count]) => (
+        <div className="space-y-3">
+          {workItems.map((item) => (
             <Link
-              key={stage}
-              href={`/dashboard/products?workflow=${stage}`}
-              className="p-4 rounded-xl bg-slate-50 hover:bg-slate-100 transition-colors"
+              key={item.title}
+              href={item.href}
+              className="group flex items-center gap-4 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-brand-200 hover:shadow-sm"
             >
-              <div className="text-sm text-slate-500">{stage}</div>
-              <div className="mt-1 text-2xl font-bold text-slate-900">{String(count)}</div>
+              <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-sm font-semibold ${toneClasses[item.tone]}`}>
+                {item.icon}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="font-semibold text-slate-900">{item.title}</span>
+                  <span className={item.count > 0 ? 'text-lg font-bold text-slate-900' : 'text-lg font-bold text-slate-400'}>
+                    {item.count}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-slate-500">{item.description}</p>
+              </div>
+              <span className="shrink-0 text-sm font-medium text-primary-600 group-hover:text-primary-700">
+                {item.action} →
+              </span>
             </Link>
           ))}
         </div>
       </div>
 
       {/* 快捷操作 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Link 
-          href="/dashboard/products"
-          className="flex items-center gap-4 p-6 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl text-white hover:shadow-lg hover:shadow-blue-500/25 transition-all"
-        >
-          <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-            </svg>
-          </div>
-          <div>
-            <div className="font-semibold">产品列表</div>
-            <div className="text-sm text-blue-100">管理全部产品</div>
-          </div>
-        </Link>
-
-        <Link 
-          href="/dashboard/products/opportunities"
-          className="flex items-center gap-4 p-6 bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl text-white hover:shadow-lg hover:shadow-purple-500/25 transition-all"
-        >
-          <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          </div>
-          <div>
-            <div className="font-semibold">新品开发池</div>
-            <div className="text-sm text-purple-100">发现新机会</div>
-          </div>
-        </Link>
-
-        <Link 
-          href="/dashboard/influencers"
-          className="flex items-center gap-4 p-6 bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl text-white hover:shadow-lg hover:shadow-orange-500/25 transition-all"
-        >
-          <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-          </div>
-          <div>
-            <div className="font-semibold">达人建联</div>
-            <div className="text-sm text-orange-100">管理合作关系</div>
-          </div>
-        </Link>
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <h2 className="text-lg font-semibold text-slate-900">快捷操作</h2>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {shortcuts.map((shortcut) => (
+            <Link
+              key={shortcut.title}
+              href={shortcut.href}
+              className="rounded-xl border border-slate-200 p-4 transition hover:border-brand-200 hover:bg-slate-50"
+            >
+              <div className="font-semibold text-slate-900">{shortcut.title}</div>
+              <div className="mt-1 text-sm text-slate-500">{shortcut.description}</div>
+            </Link>
+          ))}
+        </div>
       </div>
     </div>
   )
