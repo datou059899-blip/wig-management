@@ -213,7 +213,7 @@ function ProductOperatorDashboard() {
           title="选品机会"
           value={s.totalOpportunities}
           subtitle="待处理"
-          href="/dashboard/opportunities"
+          href="/dashboard/products/opportunities"
           color="purple"
           icon={
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -237,7 +237,7 @@ function ProductOperatorDashboard() {
           title="建议马上补"
           value={s.urgentOpportunities}
           subtitle="紧急"
-          href="/dashboard/opportunities?status=建议马上补"
+          href="/dashboard/products/opportunities?status=建议马上补"
           color="red"
           icon={
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -287,7 +287,7 @@ function ProductOperatorDashboard() {
         </Link>
 
         <Link 
-          href="/dashboard/opportunities"
+          href="/dashboard/products/opportunities"
           className="flex items-center gap-4 p-6 bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl text-white hover:shadow-lg hover:shadow-purple-500/25 transition-all"
         >
           <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
@@ -296,7 +296,7 @@ function ProductOperatorDashboard() {
             </svg>
           </div>
           <div>
-            <div className="font-semibold">选品更新池</div>
+            <div className="font-semibold">新品开发池</div>
             <div className="text-sm text-purple-100">发现新机会</div>
           </div>
         </Link>

@@ -30,7 +30,7 @@ export const ROLE_DESCRIPTIONS: Record<string, string> = {
 export const ROLE_DEFAULT_PAGES: Record<string, string> = {
   admin: '/dashboard',
   boss: '/dashboard/overview',
-  product: '/dashboard/opportunities',
+  product: '/dashboard/products/opportunities',
   operator: '/dashboard/workbench',
   bd: '/dashboard/influencers',
   editor: '/dashboard/scripts',
@@ -39,10 +39,10 @@ export const ROLE_DEFAULT_PAGES: Record<string, string> = {
 
 /** 各角色可访问的模块（用于展示） */
 export const ROLE_MODULES: Record<string, string[]> = {
-  admin: ['今日工作台', '选品更新池', '产品列表', '达人建联', '脚本拆解', '经营数据', 'TikTok 同步', '价格对账', '用户管理', '系统设置', '概览'],
+  admin: ['今日工作台', '新品开发池', '产品列表', '达人建联', '脚本拆解', '经营数据', 'TikTok 同步', '价格对账', '用户管理', '系统设置', '概览'],
   boss: ['概览', '经营数据', '产品列表', '达人建联', '脚本拆解'],
-  product: ['今日工作台', '选品更新池', '产品列表', '达人建联', '脚本拆解', '经营数据'],
-  operator: ['今日工作台', '选品更新池', '产品列表', '达人建联', '脚本拆解', '经营数据', 'TikTok 同步', '价格对账'],
+  product: ['今日工作台', '新品开发池', '产品列表', '达人建联', '脚本拆解', '经营数据'],
+  operator: ['今日工作台', '新品开发池', '产品列表', '达人建联', '脚本拆解', '经营数据', 'TikTok 同步', '价格对账'],
   bd: ['今日工作台', '达人建联', '产品列表', '脚本拆解'],
   editor: ['今日工作台', '脚本拆解'],
   viewer: ['概览', '产品列表', '脚本拆解', '经营数据', '达人建联'],
@@ -62,7 +62,7 @@ export const DEPARTMENTS = [
 const NAV_ITEMS: { name: string; href: string; icon: string; key: string; isSystem?: boolean }[] = [
   // 业务导航（按工作顺序）
   { name: '今日工作台', href: '/dashboard/workbench', icon: '✅', key: 'workbench' },
-  { name: '选品更新池', href: '/dashboard/opportunities', icon: '🎯', key: 'opportunities' },
+  { name: '新品开发池', href: '/dashboard/products/opportunities', icon: '🎯', key: 'opportunities' },
   { name: '产品列表', href: '/dashboard/products', icon: '📦', key: 'products' },
   { name: '达人建联', href: '/dashboard/influencers', icon: '🤝', key: 'influencers' },
   { name: '脚本拆解', href: '/dashboard/scripts', icon: '✂️', key: 'scripts' },
@@ -279,6 +279,7 @@ export function canAccessPath(pathname: string, role?: string): boolean {
   if (pathname === '/dashboard/settings') return canAccessSettings(mapped)
   if (pathname === '/dashboard/tiktok-sync') return canAccessTiktokSync(mapped)
   if (pathname === '/dashboard/products') return canAccessProducts(mapped)
+  if (pathname.startsWith('/dashboard/products/opportunities')) return canAccessProductOpportunities(mapped)
   if (pathname.startsWith('/dashboard/opportunities')) return canAccessProductOpportunities(mapped)
   if (pathname === '/dashboard/price-check') return canAccessPriceCheck(mapped)
   if (pathname === '/dashboard/performance') return canAccessPerformance(mapped)
