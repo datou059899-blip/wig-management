@@ -402,13 +402,24 @@ export async function updatePurchaseOrder(id: string, input: PurchaseOrderInput)
   return summarizeOrder(order)
 }
 
-export async function linkPurchaseOrderItemProduct(itemId: string, productId: string) {
+export async function linkPurchaseOrderItemProductInTransaction(
+  tx: Prisma.TransactionClient,
+  {
+    itemId,
+    productId,
+    allowedLinkStatuses,
+  }: {
+    itemId: string
+    productId: string
+    allowedLinkStatuses?: string[]
+  },
+) {
   const safeItemId = trimString(itemId)
   const safeProductId = trimString(productId)
   if (!safeItemId || !safeProductId) throw new Error('采购明细和商品不能为空')
 
   const [item, product] = await Promise.all([
-    prisma.purchaseOrderItem.findUnique({
+    tx.purchaseOrderItem.findUnique({
       where: { id: safeItemId },
       select: {
         id: true,
@@ -416,7 +427,7 @@ export async function linkPurchaseOrderItemProduct(itemId: string, productId: st
         productId: true,
       },
     }),
-    prisma.product.findUnique({
+    tx.product.findUnique({
       where: { id: safeProductId },
       select: { id: true, sku: true, name: true, isActive: true },
     }),
@@ -430,12 +441,27 @@ export async function linkPurchaseOrderItemProduct(itemId: string, productId: st
   if (item.productId) throw new Error('采购明细已关联商品')
   if (!product || !product.isActive) throw new Error('关联商品不存在或已停用')
 
-  await prisma.purchaseOrderItem.update({
-    where: { id: safeItemId },
+  const updateResult = await tx.purchaseOrderItem.updateMany({
+    where: {
+      id: safeItemId,
+      productId: null,
+      ...(allowedLinkStatuses ? { linkStatus: { in: allowedLinkStatuses } } : {}),
+    },
     data: { productId: product.id, linkStatus: null },
   })
+  if (updateResult.count !== 1) {
+    throw new Error('采购明细已被其他操作处理，请刷新后重试')
+  }
 
-  return getPurchaseOrder(item.purchaseOrderId)
+  return { purchaseOrderId: item.purchaseOrderId, product }
+}
+
+export async function linkPurchaseOrderItemProduct(itemId: string, productId: string) {
+  const result = await prisma.$transaction((tx) => (
+    linkPurchaseOrderItemProductInTransaction(tx, { itemId, productId })
+  ))
+
+  return getPurchaseOrder(result.purchaseOrderId)
 }
 
 export async function updatePurchaseOrderItemLinkStatus(itemId: string, linkStatus: string | null) {

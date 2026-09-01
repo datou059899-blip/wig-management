@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { createProduct, ProductSkuConflictError } from '@/lib/products'
+import { linkPurchaseOrderItemProductInTransaction } from '@/lib/purchaseOrders'
 
 const DEVELOPMENT_LINK_STATUSES = ['NEW_PRODUCT', 'DIFFERENT_CRAFT', 'SKU_PENDING']
 
@@ -102,20 +103,11 @@ export async function POST(
       }
 
       if (purchaseItem) {
-        const purchaseItemUpdate = await tx.purchaseOrderItem.updateMany({
-          where: {
-            id: purchaseItem.id,
-            productId: null,
-            linkStatus: { in: DEVELOPMENT_LINK_STATUSES },
-          },
-          data: {
-            productId: product.id,
-            linkStatus: null,
-          },
+        await linkPurchaseOrderItemProductInTransaction(tx, {
+          itemId: purchaseItem.id,
+          productId: product.id,
+          allowedLinkStatuses: DEVELOPMENT_LINK_STATUSES,
         })
-        if (purchaseItemUpdate.count !== 1) {
-          throw new Error('采购明细已被其他操作处理，请刷新后重试')
-        }
       }
 
       return product
