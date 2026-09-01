@@ -72,30 +72,6 @@ interface ProductBulkUpdateResult {
   parseIssueRows: ProductBulkIssueRow[]
 }
 
-interface ResetNameToSkuPreviewRow {
-  sku: string
-  currentName: string
-  nextName: string
-  status: 'update' | 'unchanged' | 'skip-empty-sku'
-}
-
-interface ResetNameToSkuSkippedRow {
-  sku: string
-  currentName: string
-  nextName: string
-  reason: string
-}
-
-interface ResetNameToSkuResult {
-  dryRun: boolean
-  totalProductCount: number
-  updateCount: number
-  unchangedCount: number
-  skippedEmptySkuCount: number
-  previewRows: ResetNameToSkuPreviewRow[]
-  skippedRows: ResetNameToSkuSkippedRow[]
-}
-
 const STYLE_OPTIONS = [
   { value: '', label: '请选择' },
   { value: 'Straight', label: 'Straight (直发)' },
@@ -134,8 +110,8 @@ export default function ProductsPage() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [productToDelete, setProductToDelete] = useState<Product | null>(null)
+  const [showAdminMaintenance, setShowAdminMaintenance] = useState(false)
   const [showBulkUpdateModal, setShowBulkUpdateModal] = useState(false)
-  const [showResetNameModal, setShowResetNameModal] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [recentlyUpdated, setRecentlyUpdated] = useState<string | null>(null)
@@ -146,8 +122,6 @@ export default function ProductsPage() {
   const [bulkUpdateAllowOverwrite, setBulkUpdateAllowOverwrite] = useState(false)
   const [bulkUpdateLoading, setBulkUpdateLoading] = useState(false)
   const [bulkUpdateResult, setBulkUpdateResult] = useState<ProductBulkUpdateResult | null>(null)
-  const [resetNameLoading, setResetNameLoading] = useState(false)
-  const [resetNameResult, setResetNameResult] = useState<ResetNameToSkuResult | null>(null)
   
   // 图片预览状态
   const [previewProduct, setPreviewProduct] = useState<Product | null>(null)
@@ -233,11 +207,6 @@ export default function ProductsPage() {
     setShowBulkUpdateModal(true)
   }
 
-  const handleOpenResetNameModal = () => {
-    setResetNameResult(null)
-    setShowResetNameModal(true)
-  }
-
   const handleRunBulkUpdate = async (dryRun: boolean) => {
     if (!bulkUpdateText.trim()) {
       setToast({ message: '请先粘贴批量更新内容', type: 'error' })
@@ -276,32 +245,6 @@ export default function ProductsPage() {
     }
   }
 
-  const handleResetNameToSku = async (dryRun: boolean) => {
-    try {
-      setResetNameLoading(true)
-      const res = await fetch('/api/products/reset-name-to-sku', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dryRun }),
-      })
-
-      const data = await res.json()
-      if (!res.ok) {
-        throw new Error(data.error || '名称重置为 SKU 失败')
-      }
-
-      setResetNameResult(data)
-      if (!dryRun) {
-        await fetchProducts()
-        setToast({ message: `已将 ${data.updateCount} 个产品名称重置为 SKU`, type: 'success' })
-      }
-    } catch (error: any) {
-      setToast({ message: error.message || '名称重置为 SKU 失败', type: 'error' })
-    } finally {
-      setResetNameLoading(false)
-    }
-  }
-
   // 处理编辑
   const handleEdit = (product: Product) => {
     setEditingProduct({ ...product })
@@ -309,13 +252,13 @@ export default function ProductsPage() {
     setShowEditModal(true)
   }
 
-  // 处理删除确认
+  // 处理停用确认
   const handleDeleteClick = (product: Product) => {
     setProductToDelete(product)
     setShowDeleteConfirm(true)
   }
 
-  // 执行删除（软删除）
+  // 执行停用（软删除）
   const handleDeleteConfirm = async () => {
     if (!productToDelete) return
     try {
@@ -328,11 +271,11 @@ export default function ProductsPage() {
         fetchProducts()
       } else {
         const error = await res.json()
-        setToast({ message: error.error || '删除失败', type: 'error' })
+        setToast({ message: error.error || '停用失败', type: 'error' })
       }
     } catch (error) {
-      console.error('删除失败:', error)
-      setToast({ message: '删除失败', type: 'error' })
+      console.error('停用失败:', error)
+      setToast({ message: '停用失败', type: 'error' })
     }
   }
 
@@ -545,22 +488,14 @@ export default function ProductsPage() {
         {canEdit && (
           <div className="flex flex-wrap gap-3">
             <button
-              onClick={handleOpenResetNameModal}
-              className="px-4 py-3 border border-emerald-200 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100 transition-colors flex items-center gap-2 whitespace-nowrap"
+              onClick={() => setShowAdminMaintenance((value) => !value)}
+              className="px-4 py-3 border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2 whitespace-nowrap"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
-              名称重置为 SKU
-            </button>
-            <button
-              onClick={handleOpenBulkUpdateModal}
-              className="px-4 py-3 border border-blue-200 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors flex items-center gap-2 whitespace-nowrap"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h10" />
-              </svg>
-              批量更新产品信息
+              管理员维护
             </button>
             <button
               onClick={handleAdd}
@@ -574,6 +509,31 @@ export default function ProductsPage() {
           </div>
         )}
       </div>
+
+      {canEdit && showAdminMaintenance && (
+        <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm font-medium text-gray-900">管理员维护</div>
+              <p className="mt-1 text-xs text-gray-500">
+                历史修复工具默认收起；正式经营字段、库存和 SKU Alias 请在对应模块维护。
+              </p>
+            </div>
+            <button
+              onClick={handleOpenBulkUpdateModal}
+              className="px-4 py-2 border border-blue-200 bg-white text-blue-700 rounded-lg hover:bg-blue-50 transition-colors flex items-center justify-center gap-2 whitespace-nowrap text-sm"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h10" />
+              </svg>
+              批量更新产品基础信息
+            </button>
+          </div>
+          <p className="mt-3 text-xs text-gray-500">
+            仅用于批量维护商品名称、颜色、长度、款式、图片等基础资料。不修改库存、成本、售价、Supplier、经营状态或 SKU Alias。
+          </p>
+        </div>
+      )}
 
       {/* 状态栏 */}
       <div className="mb-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
@@ -682,7 +642,7 @@ export default function ProductsPage() {
                       <button
                         onClick={() => handleDeleteClick(product)}
                         className="p-1.5 bg-white/90 rounded-md shadow-sm hover:bg-white"
-                        title="删除"
+                        title="停用"
                       >
                         <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -805,8 +765,8 @@ export default function ProductsPage() {
           <div className="bg-white rounded-xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
             <div className="p-6 border-b border-gray-200 flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold">批量更新产品信息</h2>
-                <p className="mt-1 text-sm text-gray-500">按 SKU 精准匹配产品，支持先 dryRun 预览，再确认更新。默认仅补空字段；勾选允许覆盖后，适合清洗测试库中的长标题和属性。</p>
+                <h2 className="text-lg font-semibold">批量更新产品基础信息</h2>
+                <p className="mt-1 text-sm text-gray-500">仅用于批量维护商品名称、颜色、长度、款式、图片等基础资料。不修改库存、成本、售价、Supplier、经营状态或 SKU Alias。</p>
               </div>
               <button
                 onClick={() => setShowBulkUpdateModal(false)}
@@ -1044,117 +1004,6 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {showResetNameModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="p-6 border-b border-gray-200 flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-semibold">将产品名称重置为 SKU</h2>
-                <p className="mt-1 text-sm text-gray-500">仅作用于当前测试库 `Product` 表，只会执行 `Product.name = Product.sku`。不会改 `sku`、库存、图片、属性、订单、销售或任何其他字段。</p>
-              </div>
-              <button
-                onClick={() => setShowResetNameModal(false)}
-                className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
-                disabled={resetNameLoading}
-              >
-                关闭
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-900">
-                <div className="font-medium">安全说明</div>
-                <div className="mt-2 space-y-1 text-emerald-800">
-                  <div>1. 只修改 `Product.name`。</div>
-                  <div>2. `Product.sku` 为空的产品会跳过，不更新。</div>
-                  <div>3. 必须先点 `Dry Run` 看预览，再点 `确认重置` 执行。</div>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-3">
-                <button
-                  onClick={() => void handleResetNameToSku(true)}
-                  disabled={resetNameLoading}
-                  className="px-4 py-2 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                >
-                  {resetNameLoading ? '处理中...' : '先 Dry Run'}
-                </button>
-                <button
-                  onClick={() => void handleResetNameToSku(false)}
-                  disabled={resetNameLoading || !resetNameResult?.dryRun}
-                  className="px-4 py-2 rounded-lg bg-emerald-600 text-sm text-white hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  确认重置
-                </button>
-              </div>
-
-              {!resetNameResult ? (
-                <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-10 text-sm text-gray-500">
-                  先点 `Dry Run` 查看总产品数、将更新数量、无需更新数量、SKU 为空跳过数量，以及每个产品当前名称和重置后的名称。
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex flex-wrap gap-3 text-sm text-gray-700">
-                    <span>总产品数 {resetNameResult.totalProductCount}</span>
-                    <span>将更新 {resetNameResult.updateCount}</span>
-                    <span>无需更新 {resetNameResult.unchangedCount}</span>
-                    <span>SKU 为空跳过 {resetNameResult.skippedEmptySkuCount}</span>
-                    <span>{resetNameResult.dryRun ? '当前模式：Dry Run' : '当前模式：已执行更新'}</span>
-                  </div>
-
-                  <div className="overflow-x-auto rounded-lg border border-gray-200">
-                    <table className="min-w-[980px] w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-gray-200 bg-gray-50 text-left text-gray-500">
-                          <th className="px-3 py-2 whitespace-nowrap">SKU</th>
-                          <th className="px-3 py-2 whitespace-nowrap">当前名称</th>
-                          <th className="px-3 py-2 whitespace-nowrap">重置后名称</th>
-                          <th className="px-3 py-2 whitespace-nowrap">状态</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {resetNameResult.previewRows.map((row, index) => (
-                          <tr key={`${row.sku || 'empty'}-${index}`} className="border-b border-gray-100">
-                            <td className="px-3 py-2 whitespace-nowrap font-mono text-gray-700">{row.sku || '-'}</td>
-                            <td className="px-3 py-2 min-w-[280px] text-gray-700">{row.currentName || '-'}</td>
-                            <td className="px-3 py-2 min-w-[280px] text-gray-900">{row.nextName || '-'}</td>
-                            <td className="px-3 py-2 whitespace-nowrap text-gray-700">{row.status}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {resetNameResult.skippedRows.length > 0 && (
-                    <details className="rounded-lg border border-rose-200 bg-white" open>
-                      <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-rose-800">SKU 为空跳过明细</summary>
-                      <div className="overflow-x-auto border-t border-rose-200">
-                        <table className="min-w-[760px] w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-rose-200 text-left text-rose-900">
-                              <th className="px-3 py-2 whitespace-nowrap">当前名称</th>
-                              <th className="px-3 py-2 whitespace-nowrap">原因</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {resetNameResult.skippedRows.map((row, index) => (
-                              <tr key={`skipped-empty-sku-${index}`} className="border-b border-rose-100">
-                                <td className="px-3 py-2 min-w-[280px] text-gray-700">{row.currentName || '-'}</td>
-                                <td className="px-3 py-2 min-w-[240px] text-rose-700">{row.reason}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </details>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 新增产品弹窗 */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -1322,24 +1171,24 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* 删除确认弹窗 */}
+      {/* 停用确认弹窗 */}
       {showDeleteConfirm && productToDelete && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl max-w-md w-full">
             <div className="p-6 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-red-600">确认下架产品</h2>
+              <h2 className="text-lg font-semibold text-red-600">确认停用产品</h2>
             </div>
             <div className="p-6">
               <p className="text-gray-700 mb-4">
-                确定要下架产品 <strong>"{productToDelete.name}"</strong> 吗？
+                确认停用该产品 <strong>"{productToDelete.name}"</strong> 吗？
               </p>
               <p className="text-sm text-gray-500">
-                下架后产品将不再显示在产品库中，但历史关联数据（如达人建联、寄样记录等）将保留。
+                停用后产品将不再显示在产品库中，但历史关联数据（如达人建联、寄样记录等）将保留。
               </p>
             </div>
             <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
               <button onClick={() => { setShowDeleteConfirm(false); setProductToDelete(null); }} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg">取消</button>
-              <button onClick={handleDeleteConfirm} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">确认下架</button>
+              <button onClick={handleDeleteConfirm} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">确认停用</button>
             </div>
           </div>
         </div>
