@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
-import { EmptyStatePresets } from '@/components/EmptyState'
 import { isLead } from '@/lib/permissions'
 import { useToast } from '@/components/ToastProvider'
 
@@ -43,6 +42,28 @@ type WorkTask = {
   completedResult?: string | null
   completedAt?: string | null
   createdAt?: string | null
+}
+
+type BusinessTodoStats = {
+  inventoryRiskCount: number
+  stockoutCount: number
+  highRiskCount: number
+  inventoryRiskItems: any[]
+  overduePurchaseCount: number
+  overduePurchaseItems: any[]
+  businessMaintenanceCount: number
+  missingCostCount: number
+  missingPriceCount: number
+  missingSupplierCount: number
+  businessMaintenanceItems: any[]
+  newProductPendingCount: number
+  newProductUnfiledCount: number
+  newProductInProgressCount: number
+  newProductPendingItems: any[]
+  businessStatusConflictCount: number
+  businessStatusConflictItems: any[]
+  upcomingArrivals: any[]
+  upcomingTasks: WorkTask[]
 }
 
 const toLocalDateKey = (d: Date) => {
@@ -102,6 +123,82 @@ const SOURCE_MODULE_OPTIONS = [
   { value: '自定义', label: '自定义' },
 ]
 
+const overduePurchaseStatuses = new Set([
+  'ORDERED',
+  'PRODUCING',
+  'IN_TRANSIT',
+  'PARTIALLY_RECEIVED',
+])
+
+const emptyBusinessTodoStats: BusinessTodoStats = {
+  inventoryRiskCount: 0,
+  stockoutCount: 0,
+  highRiskCount: 0,
+  inventoryRiskItems: [],
+  overduePurchaseCount: 0,
+  overduePurchaseItems: [],
+  businessMaintenanceCount: 0,
+  missingCostCount: 0,
+  missingPriceCount: 0,
+  missingSupplierCount: 0,
+  businessMaintenanceItems: [],
+  newProductPendingCount: 0,
+  newProductUnfiledCount: 0,
+  newProductInProgressCount: 0,
+  newProductPendingItems: [],
+  businessStatusConflictCount: 0,
+  businessStatusConflictItems: [],
+  upcomingArrivals: [],
+  upcomingTasks: [],
+}
+
+function startOfLocalDay(date: Date) {
+  const copy = new Date(date)
+  copy.setHours(0, 0, 0, 0)
+  return copy
+}
+
+function isOverduePurchase(order: any) {
+  if (!overduePurchaseStatuses.has(order?.status) || !order?.expectedArrivalDate) {
+    return false
+  }
+  const expected = new Date(order.expectedArrivalDate)
+  if (Number.isNaN(expected.getTime())) {
+    return false
+  }
+  return startOfLocalDay(expected).getTime() < startOfLocalDay(new Date()).getTime()
+}
+
+function daysBetweenLocalDates(from: Date, to: Date) {
+  const msPerDay = 24 * 60 * 60 * 1000
+  return Math.floor((startOfLocalDay(to).getTime() - startOfLocalDay(from).getTime()) / msPerDay)
+}
+
+function addLocalDays(date: Date, days: number) {
+  const copy = startOfLocalDay(date)
+  copy.setDate(copy.getDate() + days)
+  return copy
+}
+
+function formatMonthDay(value: string | Date | null | undefined) {
+  if (!value) return '—'
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return `${date.getMonth() + 1}/${date.getDate()}`
+}
+
+function getSupplierName(order: any) {
+  return order?.supplier?.name || order?.supplierNameSnapshot || '未填写供应商'
+}
+
+function getPurchaseDevelopmentState(item: any) {
+  if (item?.opportunity?.productId || item?.productId) return '已转正式商品'
+  if (item?.opportunityExists) return item?.opportunity?.status ? `已建档 · ${item.opportunity.status}` : '已建档待继续'
+  if (item?.linkStatus === 'DIFFERENT_CRAFT') return '同名不同工艺'
+  if (item?.linkStatus === 'SKU_PENDING') return '待确认 SKU'
+  return '未建档'
+}
+
 export default function WorkbenchPage() {
   const router = useRouter()
   const { data: session } = useSession()
@@ -122,6 +219,8 @@ export default function WorkbenchPage() {
   const [syncing, setSyncing] = useState(false)
   const [loading, setLoading] = useState(true)
   const [users, setUsers] = useState<{id: string, name: string, email: string, role: string}[]>([])
+  const [businessTodos, setBusinessTodos] = useState<BusinessTodoStats>(emptyBusinessTodoStats)
+  const [showAllTasks, setShowAllTasks] = useState(false)
 
   const dayKey = useMemo(() => toLocalDateKey(new Date()), [])
   const now = new Date()
@@ -165,6 +264,141 @@ export default function WorkbenchPage() {
     }
   }
 
+  const fetchBusinessTodos = async () => {
+    try {
+      const [salesRes, businessRes, purchaseOrdersRes, opportunitiesRes, workTasksRes] = await Promise.all([
+        fetch('/api/product-sales?range=7'),
+        fetch('/api/inventory-purchasing/products/business'),
+        fetch('/api/inventory-purchasing/purchase-orders'),
+        fetch('/api/product-opportunities'),
+        fetch('/api/work-tasks?mine=1'),
+      ])
+
+      const [sales, business, purchaseOrders, opportunities, workTasks] = await Promise.all([
+        salesRes.ok ? salesRes.json() : Promise.resolve({ products: [] }),
+        businessRes.ok ? businessRes.json() : Promise.resolve({ items: [] }),
+        purchaseOrdersRes.ok ? purchaseOrdersRes.json() : Promise.resolve({ orders: [] }),
+        opportunitiesRes.ok ? opportunitiesRes.json() : Promise.resolve({ purchaseDevelopmentItems: [] }),
+        workTasksRes.ok ? workTasksRes.json() : Promise.resolve({ tasks: [] }),
+      ])
+
+      const salesProducts = sales.products || []
+      const activeInventoryRisk = salesProducts.filter((product: any) =>
+        product.businessStatus === 'ACTIVE' &&
+        (product.inventoryRisk === '断货' || product.inventoryRisk === '高风险')
+      ).sort((a: any, b: any) => {
+        if (a.inventoryRisk === '断货' && b.inventoryRisk !== '断货') return -1
+        if (a.inventoryRisk !== '断货' && b.inventoryRisk === '断货') return 1
+        const aDays = a.currentSellableDays ?? Number.POSITIVE_INFINITY
+        const bDays = b.currentSellableDays ?? Number.POSITIVE_INFINITY
+        return aDays - bDays
+      })
+      const businessStatusConflicts = salesProducts.filter((product: any) =>
+        ['OUT_OF_STOCK_DELISTED', 'DISCONTINUED'].includes(product.businessStatus) &&
+        ((Number(product.weekSales) || 0) > 0 || (Number(product.monthSales) || 0) > 0)
+      ).sort((a: any, b: any) => (Number(b.weekSales) || 0) - (Number(a.weekSales) || 0))
+
+      const activeBusinessItems = (business.items || []).filter((item: any) => item.businessStatus === 'ACTIVE')
+      const missingBusinessProductIds = new Set<string>()
+      let missingCostCount = 0
+      let missingPriceCount = 0
+      let missingSupplierCount = 0
+      const businessMaintenanceItems: any[] = []
+
+      activeBusinessItems.forEach((item: any) => {
+        const productKey = String(item.id || item.productId || item.sku)
+        const missingFields: string[] = []
+        if (!(Number(item.costCny) > 0)) {
+          missingCostCount++
+          missingBusinessProductIds.add(productKey)
+          missingFields.push('缺成本')
+        }
+        if (item.currentSellingPriceUsd === null || item.currentSellingPriceUsd === undefined) {
+          missingPriceCount++
+          missingBusinessProductIds.add(productKey)
+          missingFields.push('缺售价')
+        }
+        if (!item.defaultSupplier) {
+          missingSupplierCount++
+          missingBusinessProductIds.add(productKey)
+          missingFields.push('缺 Supplier')
+        }
+        if (missingFields.length > 0) {
+          businessMaintenanceItems.push({ ...item, missingFields })
+        }
+      })
+
+      const purchaseDevelopmentItems = opportunities.purchaseDevelopmentItems || []
+      const unfinishedDevelopmentItems = purchaseDevelopmentItems.filter((item: any) =>
+        item.productId == null &&
+        (!item.opportunityExists || item.opportunity?.status !== '已完成')
+      )
+      const today = startOfLocalDay(new Date())
+      const sevenDaysLater = addLocalDays(today, 7)
+      const purchaseOrdersList = purchaseOrders.orders || []
+      const overduePurchaseItems = purchaseOrdersList
+        .filter(isOverduePurchase)
+        .map((order: any) => ({
+          ...order,
+          overdueDays: daysBetweenLocalDates(new Date(order.expectedArrivalDate), today),
+        }))
+        .sort((a: any, b: any) => b.overdueDays - a.overdueDays)
+      const upcomingArrivals = purchaseOrdersList
+        .filter((order: any) => {
+          if (!overduePurchaseStatuses.has(order?.status) || !order?.expectedArrivalDate) return false
+          const expected = startOfLocalDay(new Date(order.expectedArrivalDate))
+          return expected.getTime() >= today.getTime() && expected.getTime() <= sevenDaysLater.getTime()
+        })
+        .map((order: any) => {
+          const unfinishedItemCount = purchaseDevelopmentItems.filter((item: any) =>
+            item.purchaseOrderId === order.id &&
+            item.productId == null &&
+            ['NEW_PRODUCT', 'DIFFERENT_CRAFT', 'SKU_PENDING'].includes(item.linkStatus) &&
+            (!item.opportunityExists || item.opportunity?.status !== '已完成' || !item.opportunity?.productId)
+          ).length
+          return { ...order, unfinishedItemCount }
+        })
+        .sort((a: any, b: any) => new Date(a.expectedArrivalDate).getTime() - new Date(b.expectedArrivalDate).getTime())
+      const upcomingTasks = ((workTasks.tasks || []) as WorkTask[])
+        .filter((task) => {
+          if (task.status === '已完成') return false
+          const due = startOfLocalDay(new Date(task.dueDate))
+          return due.getTime() > today.getTime() && due.getTime() <= sevenDaysLater.getTime()
+        })
+        .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime() || priorityOrder(a.priority) - priorityOrder(b.priority))
+
+      setBusinessTodos({
+        inventoryRiskCount: activeInventoryRisk.length,
+        stockoutCount: salesProducts.filter((product: any) =>
+          product.businessStatus === 'ACTIVE' && product.inventoryRisk === '断货'
+        ).length,
+        highRiskCount: salesProducts.filter((product: any) =>
+          product.businessStatus === 'ACTIVE' && product.inventoryRisk === '高风险'
+        ).length,
+        inventoryRiskItems: activeInventoryRisk.slice(0, 3),
+        overduePurchaseCount: overduePurchaseItems.length,
+        overduePurchaseItems: overduePurchaseItems.slice(0, 3),
+        businessMaintenanceCount: missingBusinessProductIds.size,
+        missingCostCount,
+        missingPriceCount,
+        missingSupplierCount,
+        businessMaintenanceItems: businessMaintenanceItems.slice(0, 3),
+        newProductPendingCount: unfinishedDevelopmentItems.length,
+        newProductUnfiledCount: unfinishedDevelopmentItems.filter((item: any) => !item.opportunityExists).length,
+        newProductInProgressCount: unfinishedDevelopmentItems.filter((item: any) =>
+          item.opportunityExists && item.opportunity?.status !== '已完成'
+        ).length,
+        newProductPendingItems: unfinishedDevelopmentItems.slice(0, 3),
+        businessStatusConflictCount: businessStatusConflicts.length,
+        businessStatusConflictItems: businessStatusConflicts.slice(0, 3),
+        upcomingArrivals: upcomingArrivals.slice(0, 5),
+        upcomingTasks: upcomingTasks.slice(0, 5),
+      })
+    } catch {
+      setBusinessTodos(emptyBusinessTodoStats)
+    }
+  }
+
   useEffect(() => {
     void (async () => {
       try {
@@ -174,6 +408,7 @@ export default function WorkbenchPage() {
         setSyncing(false)
         await fetchTasks()
         await fetchUsers()
+        await fetchBusinessTodos()
       }
     })()
     const t = setInterval(() => fetchTasks(), 30000)
@@ -579,19 +814,150 @@ export default function WorkbenchPage() {
   }
 
   const hasAnyTask = categorized.primary.length > 0 || categorized.secondary.length > 0 || categorized.mySelfTasks.length > 0 || categorized.delayed.length > 0 || categorized.pending.length > 0
+  const businessTodoItems = [
+    {
+      title: '库存高风险',
+      count: businessTodos.inventoryRiskCount,
+      description: businessTodos.inventoryRiskCount > 0
+        ? `${businessTodos.stockoutCount} 个 ACTIVE 商品已断货，${businessTodos.highRiskCount} 个可售天数 ≤ 7。`
+        : '✓ ACTIVE 商品暂无断货或 7 天内高风险。',
+      href: '/dashboard/product-sales',
+      action: '去销售分析',
+      icon: '!',
+      tone: businessTodos.inventoryRiskCount > 0 ? 'rose' : 'slate',
+      details: businessTodos.inventoryRiskItems.map((product: any) => ({
+        title: product.sku || product.name || '-',
+        meta: product.inventoryRisk === '断货'
+          ? `断货 · 近30天售 ${product.monthSales || 0}`
+          : `预计可售 ${product.currentSellableDays ?? '—'} 天`,
+      })),
+    },
+    {
+      title: '采购逾期',
+      count: businessTodos.overduePurchaseCount,
+      description: businessTodos.overduePurchaseCount > 0
+        ? '存在预计到货日早于今天的未完成采购单。'
+        : '✓ 暂无采购逾期。',
+      href: '/dashboard/inventory-purchasing?tab=orders',
+      action: '去订货/在途',
+      icon: '↗',
+      tone: businessTodos.overduePurchaseCount > 0 ? 'amber' : 'slate',
+      details: businessTodos.overduePurchaseItems.map((order: any) => ({
+        title: getSupplierName(order),
+        meta: `${order.orderNo || '-'} · 逾期 ${order.overdueDays || 0} 天 · 待到 ${order.openQty || 0} 件`,
+      })),
+    },
+    {
+      title: '商品经营资料待维护',
+      count: businessTodos.businessMaintenanceCount,
+      description: businessTodos.businessMaintenanceCount > 0
+        ? `${businessTodos.missingCostCount} 个缺成本，${businessTodos.missingPriceCount} 个缺售价，${businessTodos.missingSupplierCount} 个缺 Supplier。`
+        : '✓ ACTIVE 商品经营资料暂无待维护项。',
+      href: '/dashboard/inventory-purchasing?tab=business',
+      action: '去商品经营',
+      icon: '•',
+      tone: businessTodos.businessMaintenanceCount > 0 ? 'orange' : 'slate',
+      details: businessTodos.businessMaintenanceItems.map((item: any) => ({
+        title: item.sku || item.name || '-',
+        meta: (item.missingFields || []).join(' · '),
+      })),
+    },
+    {
+      title: '新品待处理',
+      count: businessTodos.newProductPendingCount,
+      description: businessTodos.newProductPendingCount > 0
+        ? `${businessTodos.newProductUnfiledCount} 条未建档，${businessTodos.newProductInProgressCount} 条开发档案未完成。`
+        : '✓ 采购来源新品暂无待处理项。',
+      href: '/dashboard/products/opportunities',
+      action: '去新品开发池',
+      icon: '+',
+      tone: businessTodos.newProductPendingCount > 0 ? 'blue' : 'slate',
+      details: businessTodos.newProductPendingItems.map((item: any) => ({
+        title: item.productNameSnapshot || '-',
+        meta: `${item.linkStatusLabel || item.linkStatus || '未标记'} · ${item.supplierName || '未填写供应商'} · ${getPurchaseDevelopmentState(item)}`,
+      })),
+    },
+    {
+      title: '经营状态异常',
+      count: businessTodos.businessStatusConflictCount,
+      description: businessTodos.businessStatusConflictCount > 0
+        ? '缺货下架/停售商品近期仍出现销售记录。'
+        : '✓ 暂无经营状态与销售冲突。',
+      href: '/dashboard/inventory-purchasing?tab=business',
+      action: '去商品经营',
+      icon: '!',
+      tone: businessTodos.businessStatusConflictCount > 0 ? 'amber' : 'slate',
+      details: businessTodos.businessStatusConflictItems.map((product: any) => ({
+        title: product.sku || product.name || '-',
+        meta: `当前：${product.stockStatus || product.businessStatus} · 近7天仍有 ${product.weekSales || 0} 单`,
+      })),
+    },
+  ]
+
+  const activeBusinessTodoItems = businessTodoItems.filter((item) => item.count > 0)
+  const resolvedBusinessTodoTitles = businessTodoItems
+    .filter((item) => item.count === 0)
+    .map((item) => item.title)
+
+  const todoToneClasses: Record<string, string> = {
+    rose: 'border-rose-200 bg-rose-50/40 text-rose-700',
+    amber: 'border-amber-200 bg-amber-50/40 text-amber-700',
+    orange: 'border-orange-200 bg-orange-50/40 text-orange-700',
+    blue: 'border-blue-200 bg-blue-50/40 text-blue-700',
+    slate: 'border-slate-200 bg-slate-50 text-slate-400',
+  }
+
+  const shortcuts = [
+    { title: '导入订单', href: '/dashboard/product-sales' },
+    { title: '库存导入', href: '/dashboard/inventory-purchasing?tab=import' },
+    { title: '新建采购', href: '/dashboard/inventory-purchasing?tab=orders' },
+    { title: '新品建档', href: '/dashboard/products/opportunities' },
+  ]
+
+  const taskSummaryItems = [
+    { label: '今日首要', value: categorized.primary.length, color: 'bg-green-500' },
+    { label: '今日次要', value: categorized.secondary.length, color: 'bg-blue-400' },
+    { label: '逾期/延期', value: categorized.delayed.length, color: 'bg-red-500' },
+    { label: '待处理', value: categorized.pending.length, color: 'bg-gray-400' },
+    { label: '自建任务', value: categorized.mySelfTasks.length, color: 'bg-purple-400' },
+  ]
+
+  const uniqueTasks = (items: WorkTask[]) => {
+    const seen = new Set<string>()
+    return items.filter((task) => {
+      if (seen.has(task.id)) return false
+      seen.add(task.id)
+      return true
+    })
+  }
+
+  const prioritizedFocusTasks = uniqueTasks([
+    ...categorized.delayed,
+    ...categorized.primary,
+    ...categorized.secondary,
+    ...categorized.pending,
+    ...categorized.mySelfTasks,
+  ]).slice(0, 8)
+
+  const fullTaskGroups = [
+    { title: '今日首要', tasks: categorized.primary, color: 'bg-green-500' },
+    { title: '今日次要', tasks: categorized.secondary, color: 'bg-blue-400' },
+    { title: '自建任务', tasks: categorized.mySelfTasks, color: 'bg-purple-400' },
+    { title: '逾期/延期', tasks: categorized.delayed, color: 'bg-red-500', highlight: true },
+    { title: '待处理', tasks: categorized.pending, color: 'bg-gray-400' },
+    { title: '最近完成', tasks: categorized.completed, color: 'bg-green-500', completed: true },
+  ]
 
   return (
-    <div className="space-y-6">
+    <div className="relative z-10 flex min-h-screen flex-col gap-6 bg-[#fdfcfb]">
       {/* 页面标题 */}
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">
-            {teamView && isLeadRole ? '团队任务概览' : '今日工作台'}
+            今日工作台
           </h1>
           <p className="mt-1 text-sm text-gray-500">
-            {teamView && isLeadRole 
-              ? '查看全员任务进度，管理排期与优先级' 
-              : '清晰了解今日任务优先级，延续昨日未完成事项'}
+            先看今天需要处理的经营事项，再处理个人和团队任务。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -632,6 +998,79 @@ export default function WorkbenchPage() {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,65fr)_minmax(320px,35fr)]">
+        <div className="space-y-6">
+      {/* 今日需要处理 */}
+      <section className="card p-5">
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">今日需要处理</h2>
+          <p className="mt-1 text-sm text-gray-500">优先显示具体对象，复用正式业务页面口径。</p>
+        </div>
+        {activeBusinessTodoItems.length === 0 ? (
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 px-4 py-3">
+            <div className="text-sm font-semibold text-emerald-700">✓ 当前暂无经营异常</div>
+            <div className="mt-1 text-sm text-emerald-700/80">
+              库存、采购、商品资料、新品开发暂时没有需要处理的事项。
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {activeBusinessTodoItems.map((item) => (
+              <button
+                key={item.title}
+                type="button"
+                onClick={() => router.push(item.href)}
+                className="group flex w-full items-center gap-4 rounded-xl border border-gray-100 bg-white p-4 text-left transition hover:border-brand-200 hover:shadow-sm"
+              >
+                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-sm font-semibold ${todoToneClasses[item.tone]}`}>
+                  {item.icon}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <span className="font-semibold text-gray-900">{item.title}</span>
+                    <span className="text-lg font-bold text-gray-900">{item.count}</span>
+                  </span>
+                  <span className="mt-1 block text-sm text-gray-500">{item.description}</span>
+                  {item.details.length > 0 && (
+                    <span className="mt-3 block space-y-1.5">
+                      {item.details.map((detail: any) => (
+                        <span key={`${item.title}-${detail.title}-${detail.meta}`} className="block rounded-lg bg-gray-50 px-3 py-2">
+                          <span className="block text-sm font-medium text-gray-800">{detail.title}</span>
+                          <span className="block text-xs text-gray-500">{detail.meta}</span>
+                        </span>
+                      ))}
+                      {item.count > item.details.length && (
+                        <span className="block text-xs text-gray-400">还有 {item.count - item.details.length} 个</span>
+                      )}
+                    </span>
+                  )}
+                </span>
+                <span className="shrink-0 text-sm font-medium text-primary-600 group-hover:text-primary-700">
+                  {item.action} →
+                </span>
+              </button>
+            ))}
+            {resolvedBusinessTodoTitles.length > 0 && (
+              <div className="px-1 text-xs text-gray-400">
+                ✓ {resolvedBusinessTodoTitles.join('、')}正常
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section className="card p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">{teamView && isLeadRole ? '团队任务' : '我的任务'}</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              {teamView && isLeadRole
+                ? '查看全员任务进度，管理排期与优先级。'
+                : '保留原有任务创建、编辑、完成和延期处理能力。'}
+            </p>
+          </div>
+        </div>
+
       {/* 同步状态 */}
       {syncing && (
         <div className="text-xs text-green-600 bg-green-50 rounded-lg border border-green-100 p-3 flex items-center gap-2">
@@ -639,62 +1078,45 @@ export default function WorkbenchPage() {
         </div>
       )}
 
-      {/* 无任务空状态 */}
+      {/* 任务概览摘要 */}
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+        {taskSummaryItems.map((item) => (
+          <div key={item.label} className="rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-2">
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <span className={`h-2 w-2 rounded-full ${item.color}`} />
+              {item.label}
+            </div>
+            <div className="mt-1 text-xl font-semibold text-gray-900">{item.value}</div>
+          </div>
+        ))}
+      </div>
+
       {!loading && !hasAnyTask && (
-        <div className="card p-8">
-          {EmptyStatePresets.noTasks(
-            <button type="button" onClick={() => {
-              // 打开弹窗时重置表单，确保使用最新的 currentUserId
-              setForm({
-                title: '',
-                sourceModule: '产品',
-                taskType: 'personal',
-                priority: '中',
-                assigneeUserId: currentUserId,
-                ownerUserId: currentUserId,
-                dueDate: dayKey,
-                remindAt: '',
-                isTodayMustDo: false,
-                relatedEntityId: '',
-                note: '',
-                department: '',
-                collaboratorUserIds: [],
-                requireCompletionNote: false,
-                requireCompletionLink: false,
-                requireCompletionResult: false,
-              })
-              setCreateOpen(true)
-            }} className="btn-primary">
-              创建任务
-            </button>
-          )}
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 px-4 py-3">
+          <div className="text-sm font-semibold text-emerald-700">✓ 今天暂无待处理任务</div>
+          <div className="mt-1 text-sm text-emerald-700/80">
+            当前没有需要处理的人工任务。
+          </div>
         </div>
       )}
 
-      {/* 有任务时显示内容 */}
+      {/* 有任务时默认只显示当前重点任务 */}
       {hasAnyTask && (
         <>
-          {/* 任务概览统计 */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <div className="card p-4 border-l-4 border-l-green-500">
-              <div className="text-xs text-gray-500">今日首要</div>
-              <div className="text-2xl font-bold text-gray-900 mt-1">{categorized.primary.length}</div>
+          <div className="rounded-xl border border-gray-100 bg-white p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-gray-900">当前重点任务</div>
+                <div className="mt-1 text-xs text-gray-500">
+                  按逾期/延期、今日首要、今日次要、待处理、自建任务排序。
+                </div>
+              </div>
+              <span className="text-xs text-gray-400">最多显示 8 项</span>
             </div>
-            <div className="card p-4 border-l-4 border-l-blue-400">
-              <div className="text-xs text-gray-500">今日次要</div>
-              <div className="text-2xl font-bold text-gray-900 mt-1">{categorized.secondary.length}</div>
-            </div>
-            <div className="card p-4 border-l-4 border-l-purple-400">
-              <div className="text-xs text-gray-500">{teamView && isLeadRole ? '全部自建' : '我的自建'}</div>
-              <div className="text-2xl font-bold text-gray-900 mt-1">{categorized.mySelfTasks.length}</div>
-            </div>
-            <div className="card p-4 border-l-4 border-l-red-500">
-              <div className="text-xs text-gray-500">逾期/延期</div>
-              <div className="text-2xl font-bold text-gray-900 mt-1">{categorized.delayed.length}</div>
-            </div>
-            <div className="card p-4 border-l-4 border-l-gray-400">
-              <div className="text-xs text-gray-500">待处理</div>
-              <div className="text-2xl font-bold text-gray-900 mt-1">{categorized.pending.length}</div>
+            <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+              {prioritizedFocusTasks.map((t) => (
+                <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManage} showAssignee={teamView} />
+              ))}
             </div>
           </div>
 
@@ -728,148 +1150,173 @@ export default function WorkbenchPage() {
             </div>
           )}
 
-          {/* 任务列表 5 列 */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-5 gap-4">
-            {/* 首要任务 */}
-            <section className="card p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-green-500"></span> 今日首要
-                </div>
-                <span className="text-xs text-gray-400">{categorized.primary.length} 项</span>
-              </div>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin">
-                {categorized.primary.length === 0 ? (
-                  <div className="text-xs text-gray-400 py-4 text-center">暂无首要任务</div>
-                ) : (
-                  categorized.primary.map((t) => (
-                    <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManage} showAssignee={teamView} />
-                  ))
-                )}
-              </div>
-            </section>
-
-            {/* 次要任务 */}
-            <section className="card p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-blue-400"></span> 今日次要
-                </div>
-                <span className="text-xs text-gray-400">{categorized.secondary.length} 项</span>
-              </div>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin">
-                {categorized.secondary.length === 0 ? (
-                  <div className="text-xs text-gray-400 py-4 text-center">暂无次要任务</div>
-                ) : (
-                  categorized.secondary.map((t) => (
-                    <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManage} showAssignee={teamView} />
-                  ))
-                )}
-              </div>
-            </section>
-
-            {/* 自建任务 */}
-            <section className="card p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-purple-400"></span> 自建任务
-                </div>
-                <span className="text-xs text-gray-400">{categorized.mySelfTasks.length} 项</span>
-              </div>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin">
-                {categorized.mySelfTasks.length === 0 ? (
-                  <div className="text-xs text-gray-400 py-4 text-center">暂无自建任务</div>
-                ) : (
-                  categorized.mySelfTasks.map((t) => (
-                    <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManage} showAssignee={teamView} />
-                  ))
-                )}
-              </div>
-            </section>
-
-            {/* 逾期/延期任务 */}
-            <section className="card p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-red-500"></span> 逾期/延期
-                </div>
-                <span className="text-xs text-gray-400">{categorized.delayed.length} 项</span>
-              </div>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin">
-                {categorized.delayed.length === 0 ? (
-                  <div className="text-xs text-green-600 py-4 text-center flex items-center justify-center gap-1">
-                    <span>✓</span> 暂无逾期任务
-                  </div>
-                ) : (
-                  categorized.delayed.map((t) => (
-                    <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManage} showAssignee={teamView} />
-                  ))
-                )}
-              </div>
-            </section>
-
-            {/* 待处理任务 */}
-            <section className="card p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-gray-400"></span> 待处理
-                </div>
-                <span className="text-xs text-gray-400">{categorized.pending.length} 项</span>
-              </div>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin">
-                {categorized.pending.length === 0 ? (
-                  <div className="text-xs text-gray-400 py-4 text-center">暂无待处理任务</div>
-                ) : (
-                  categorized.pending.map((t) => (
-                    <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManage} showAssignee={teamView} />
-                  ))
-                )}
-              </div>
-            </section>
-          </div>
-
-          {/* 最近完成任务 */}
-          {categorized.completed.length > 0 && (
-            <div className="card p-4">
-              <div className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                <span className="text-green-500">✓</span> 最近完成
-              </div>
-              <div className="space-y-2">
-                {categorized.completed.map((t) => (
-                  <div key={t.id} className="flex items-center justify-between py-2 px-3 rounded-lg bg-gray-50/50 text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="text-gray-400">{moduleIcons[t.sourceModule] || '📋'}</span>
-                      <span className="text-gray-600 line-through">{t.title}</span>
-                      <span className={`badge ${taskTypeColors[t.taskType]}`}>{taskTypeLabels[t.taskType]}</span>
-                      {teamView && <span className="text-xs text-gray-400">@{t.assigneeName}</span>}
-                    </div>
-                    <span className="text-xs text-gray-400">
-                      {t.completedAt ? new Date(t.completedAt).toLocaleString('zh-CN').slice(0, 16) : '已完成'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </>
       )}
 
-      {/* 轻提示区 */}
-      <div className="card p-4 bg-gradient-to-r from-green-50 to-emerald-50 border-green-100">
-        <div className="flex items-start gap-3">
-          <div className="text-xl">💡</div>
-          <div>
-            <div className="text-sm font-medium text-green-800">
-              {isLeadRole ? '总负责人工作台' : '工作台说明'}
-            </div>
-            <div className="text-xs text-green-700 mt-1">
-              {isLeadRole 
-                ? '总负责人可以切换「团队任务」视图查看全员进度，分配任务给指定用户，设置优先级和今日必做。'
-                : '任务分为三类：负责人分配（蓝色）、系统生成（绿色）、自建任务（紫色）。负责人可指派任务给其他用户。'}
-            </div>
-          </div>
-        </div>
+      <div>
+        <button
+          type="button"
+          onClick={() => setShowAllTasks(!showAllTasks)}
+          className="text-sm font-medium text-primary-600 hover:text-primary-700"
+        >
+          {showAllTasks ? '收起全部任务 ↑' : '查看全部任务 ↓'}
+        </button>
       </div>
+
+      {showAllTasks && (
+        <div className="space-y-3">
+          {fullTaskGroups.map((group) => (
+            <section
+              key={group.title}
+              className={`rounded-xl border p-4 ${group.highlight ? 'border-red-100 bg-red-50/30' : 'border-gray-100 bg-white'}`}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                  <span className={`h-2 w-2 rounded-full ${group.color}`} />
+                  {group.title}
+                </div>
+                <span className="text-xs text-gray-400">{group.tasks.length} 项</span>
+              </div>
+              {group.tasks.length === 0 ? (
+                <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-400">暂无任务</div>
+              ) : (
+                <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+                  {group.tasks.map((t) => (
+                    group.completed ? (
+                      <div key={t.id} className="flex items-center justify-between gap-3 rounded-lg bg-gray-50 px-3 py-2 text-sm">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="text-gray-400">{moduleIcons[t.sourceModule] || '📋'}</span>
+                          <span className="truncate text-gray-500 line-through">{t.title}</span>
+                          {teamView && <span className="text-xs text-gray-400">@{t.assigneeName}</span>}
+                        </div>
+                        <span className="shrink-0 text-xs text-gray-400">
+                          {t.completedAt ? new Date(t.completedAt).toLocaleString('zh-CN').slice(0, 16) : '已完成'}
+                        </span>
+                      </div>
+                    ) : (
+                      <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManage} showAssignee={teamView} />
+                    )
+                  ))}
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
+      )}
+
+      </section>
+
+        </div>
+
+        <aside className="space-y-6">
+          <section className="card p-5">
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">未来 7 天</h2>
+              <p className="mt-1 text-sm text-gray-500">只放有明确日期的到货和任务。</p>
+            </div>
+
+            <div className="space-y-5">
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-gray-800">预计到货</h3>
+                  <span className="text-xs text-gray-400">{businessTodos.upcomingArrivals.length} 项</span>
+                </div>
+                {businessTodos.upcomingArrivals.length === 0 ? (
+                  <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-400">未来 7 天暂无预计到货。</div>
+                ) : (
+                  <div className="space-y-2">
+                    {businessTodos.upcomingArrivals.map((order: any) => (
+                      <button
+                        key={order.id}
+                        type="button"
+                        onClick={() => router.push('/dashboard/inventory-purchasing?tab=orders')}
+                        className="w-full rounded-lg border border-gray-100 bg-white px-3 py-2 text-left transition hover:border-brand-200 hover:bg-gray-50"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-gray-900">{formatMonthDay(order.expectedArrivalDate)}</span>
+                          <span className="text-xs text-gray-400">待到 {order.openQty || 0} 件</span>
+                        </div>
+                        <div className="mt-1 text-sm text-gray-700">{getSupplierName(order)}</div>
+                        <div className="mt-0.5 text-xs text-gray-500">{order.orderNo || '-'}</div>
+                        {order.unfinishedItemCount > 0 && (
+                          <div className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700">
+                            ⚠ 其中 {order.unfinishedItemCount} 个新品尚未完成正式建档
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-gray-800">即将到期任务</h3>
+                  <span className="text-xs text-gray-400">{businessTodos.upcomingTasks.length} 项</span>
+                </div>
+                {businessTodos.upcomingTasks.length === 0 ? (
+                  <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-400">未来 7 天暂无即将到期任务。</div>
+                ) : (
+                  <div className="space-y-2">
+                    {businessTodos.upcomingTasks.map((task) => (
+                      <div key={task.id} className="rounded-lg border border-gray-100 bg-white px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-sm font-medium text-gray-900">{task.title}</span>
+                          <span className="shrink-0 text-xs text-gray-400">{formatMonthDay(task.dueDate)}</span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-gray-500">
+                          <span>{task.priority}优先级</span>
+                          {task.assigneeName && <span>· {task.assigneeName}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        </aside>
+      </div>
+
+      {/* 快捷操作 */}
+      <section className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-sm font-semibold text-gray-700">快捷操作</span>
+          {shortcuts.map((shortcut) => (
+            <button
+              key={shortcut.title}
+              type="button"
+              onClick={() => router.push(shortcut.href)}
+              className="rounded-full border border-gray-200 px-3 py-1.5 text-sm text-gray-700 transition hover:border-brand-200 hover:bg-gray-50 hover:text-primary-700"
+            >
+              {shortcut.title}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* 最近完成 */}
+      {categorized.completed.length > 0 && (
+        <section className="rounded-xl border border-gray-100 bg-gray-50/50 p-3">
+          <div className="mb-2 flex items-center gap-2 text-sm font-medium text-gray-600">
+            <span className="text-green-500">✓</span> 最近完成
+          </div>
+          <div className="space-y-1.5">
+            {categorized.completed.slice(0, 3).map((t) => (
+              <div key={t.id} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-sm">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="text-gray-400">{moduleIcons[t.sourceModule] || '📋'}</span>
+                  <span className="truncate text-gray-500 line-through">{t.title}</span>
+                  {teamView && <span className="text-xs text-gray-400">@{t.assigneeName}</span>}
+                </div>
+                <span className="shrink-0 text-xs text-gray-400">
+                  {t.completedAt ? new Date(t.completedAt).toLocaleString('zh-CN').slice(0, 16) : '已完成'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* 新建任务弹窗 */}
       {createOpen && (
