@@ -32,9 +32,24 @@ const ICONS: Record<string, string> = {
   settings: '🔧',
 }
 
+const NAV_GROUPS = [
+  { title: '今日', ids: ['workbench', 'overview'] },
+  { title: '商品与供应链', ids: ['products', 'productOpportunities', 'inventoryPurchasing', 'materials'] },
+  { title: '销售经营', ids: ['productSales', 'performance', 'priceCheck'] },
+  { title: '内容增长', ids: ['influencers', 'viralVideos', 'videoMetrics'] },
+  { title: '系统维护', ids: ['tiktokSync', 'users', 'settings'] },
+] as const
+
+function getNavLabel(item: { id: string; name: string }) {
+  return item.id === 'productSales' ? '销售分析' : item.name
+}
+
 function isActive(pathname: string, href: string): boolean {
   if (href === '/dashboard') {
     return pathname === '/dashboard'
+  }
+  if (href === '/dashboard/products') {
+    return pathname === href
   }
   return pathname.startsWith(href)
 }
@@ -52,6 +67,23 @@ export default function Sidebar() {
     const hasViralVideos = rawItems.some((item) => item.id === 'viralVideos')
     return rawItems.filter((item) => !(hasViralVideos && item.id === 'scripts'))
   }, [role, permissionMode, allowedPages])
+
+  const groupedNavItems = useMemo(() => {
+    const usedIds = new Set<string>()
+    const groups: Array<{ title: string; items: typeof navItems }> = NAV_GROUPS.map((group) => {
+      const items = group.ids
+        .map((id) => navItems.find((item) => item.id === id))
+        .filter(Boolean) as typeof navItems
+      items.forEach((item) => usedIds.add(item.id))
+      return { title: group.title, items }
+    }).filter((group) => group.items.length > 0)
+
+    const otherItems = navItems.filter((item) => !usedIds.has(item.id))
+    if (otherItems.length > 0) {
+      groups.push({ title: '其他', items: otherItems })
+    }
+    return groups
+  }, [navItems])
   
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -99,24 +131,33 @@ export default function Sidebar() {
         </div>
 
         <nav className="flex-1 overflow-y-auto py-3 px-2">
-          <div className="space-y-0.5">
-            {navItems.map((item) => {
-              const active = isActive(pathname, item.path)
-              return (
-                <Link
-                  key={item.id}
-                  href={item.path}
-                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                    active
-                      ? 'bg-gradient-to-r from-pink-500 to-pink-600 text-white shadow-lg shadow-pink-500/25'
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                  }`}
-                >
-                  <span>{ICONS[item.id] || '📄'}</span>
-                  <span className="truncate">{item.name}</span>
-                </Link>
-              )
-            })}
+          <div className="space-y-4">
+            {groupedNavItems.map((group) => (
+              <div key={group.title}>
+                <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  {group.title}
+                </div>
+                <div className="space-y-0.5">
+                  {group.items.map((item) => {
+                    const active = isActive(pathname, item.path)
+                    return (
+                      <Link
+                        key={item.id}
+                        href={item.path}
+                        className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                          active
+                            ? 'bg-gradient-to-r from-pink-500 to-pink-600 text-white shadow-lg shadow-pink-500/25'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <span>{ICONS[item.id] || '📄'}</span>
+                        <span className="truncate">{getNavLabel(item)}</span>
+                      </Link>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         </nav>
 
@@ -153,16 +194,25 @@ export default function Sidebar() {
         <div className="absolute inset-0 bg-black/50" onClick={() => setMobileMenuOpen(false)} />
         <aside className={`absolute left-0 top-14 bottom-0 w-[260px] bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-slate-300 flex flex-col shadow-2xl transform transition-transform ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
           <nav className="flex-1 overflow-y-auto py-3 px-3">
-            <div className="space-y-1">
-              {navItems.map((item) => {
-                const active = isActive(pathname, item.path)
-                return (
-                  <Link key={item.id} href={item.path} className={`flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium ${active ? 'bg-gradient-to-r from-pink-500 to-pink-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}>
-                    <span>{ICONS[item.id] || '📄'}</span>
-                    <span>{item.name}</span>
-                  </Link>
-                )
-              })}
+            <div className="space-y-4">
+              {groupedNavItems.map((group) => (
+                <div key={group.title}>
+                  <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    {group.title}
+                  </div>
+                  <div className="space-y-1">
+                    {group.items.map((item) => {
+                      const active = isActive(pathname, item.path)
+                      return (
+                        <Link key={item.id} href={item.path} className={`flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium ${active ? 'bg-gradient-to-r from-pink-500 to-pink-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}>
+                          <span>{ICONS[item.id] || '📄'}</span>
+                          <span>{getNavLabel(item)}</span>
+                        </Link>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </nav>
         </aside>

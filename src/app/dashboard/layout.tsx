@@ -3,7 +3,6 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import Sidebar from '@/components/Sidebar'
 import { PageGuard } from '@/components/PageGuard'
-import { BrandWatermark } from '@/components/BrandWatermark'
 import { ToastProvider } from '@/components/ToastProvider'
 
 export default async function DashboardLayout({
@@ -30,8 +29,6 @@ export default async function DashboardLayout({
           <div className="p-4 lg:p-6">
             <PageGuard>{children}</PageGuard>
           </div>
-          {/* 全局品牌水印 - 所有 dashboard 页面统一显示 */}
-          <BrandWatermark />
         </main>
       </ToastProvider>
     </div>
