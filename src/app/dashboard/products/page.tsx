@@ -4,7 +4,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
-import { canAccessProducts, canEditProducts } from '@/lib/permissions'
+import { canEditProducts } from '@/lib/permissions'
+import { canAccessPageForUser } from '@/lib/pagePermissions'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
 import { useToast } from '@/components/ToastProvider'
@@ -88,7 +89,7 @@ export default function ProductsPage() {
   const { data: session } = useSession()
   const toast = useToast()
   const userRole = (session?.user as any)?.role
-  const canAccess = canAccessProducts(userRole)
+  const canAccess = canAccessPageForUser(session?.user as any, 'products')
   const canEdit = canEditProducts(userRole)
   const fileInputRef = useRef<HTMLInputElement>(null)
 

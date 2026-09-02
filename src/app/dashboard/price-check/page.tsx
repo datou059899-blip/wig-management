@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
-import { canAccessPriceCheck } from '@/lib/permissions'
+import { canAccessPageForUser } from '@/lib/pagePermissions'
 import { PageHeader } from '@/components/layout/PageHeader'
 
 interface PriceCheckItem {
@@ -18,8 +18,7 @@ interface PriceCheckItem {
 export default function PriceCheckPage() {
   const router = useRouter()
   const { data: session } = useSession()
-  const role = (session?.user as any)?.role
-  const canAccess = canAccessPriceCheck(role)
+  const canAccess = canAccessPageForUser(session?.user as any, 'priceCheck')
   const [items, setItems] = useState<PriceCheckItem[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState(

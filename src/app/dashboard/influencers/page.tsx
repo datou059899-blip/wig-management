@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { canAccessInfluencers, canManageInfluencers } from '@/lib/permissions'
+import { canManageInfluencers } from '@/lib/permissions'
+import { canAccessPageForUser } from '@/lib/pagePermissions'
 import SampleShipments from './SampleShipments'
 // import { TaskSummaryBar } from '@/components/TaskSummaryBar'
 // 跨用户同步：以数据库/API 为唯一真源（不再用 localStorage 作为真源）
@@ -803,7 +804,7 @@ export default function InfluencersPage() {
   const router = useRouter()
   const { data: session } = useSession()
   const role = (session?.user as any)?.role as string | undefined
-  const canAccess = canAccessInfluencers(role)
+  const canAccess = canAccessPageForUser(session?.user as any, 'influencers')
   const canManage = canManageInfluencers(role)
   const operatorName = (session?.user as any)?.name || session?.user?.email || '运营'
 

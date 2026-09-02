@@ -21,6 +21,7 @@ const ICONS: Record<string, string> = {
   overview: '📊',
   products: '📦',
   productOpportunities: '💡',
+  productSales: '📊',
   influencers: '👥',
   scripts: '📝',
   viralVideos: '🎬',
@@ -30,6 +31,10 @@ const ICONS: Record<string, string> = {
   priceCheck: '💵',
   users: '⚙️',
   settings: '🔧',
+}
+
+function getNavLabel(item: { id: string; name: string }) {
+  return item.id === 'productSales' ? '销售分析' : item.name
 }
 
 // 判断是否为当前页面
@@ -92,7 +97,7 @@ export default function Navbar() {
                   }`}
                 >
                   <span className="mr-1.5">{ICONS[item.id] || '📄'}</span>
-                  {item.name}
+                  {getNavLabel(item)}
                 </Link>
               ))}
               
@@ -126,7 +131,7 @@ export default function Navbar() {
                           onClick={() => setMoreOpen(false)}
                         >
                           <span className="text-base">{ICONS[item.id] || '📄'}</span>
-                          {item.name}
+                          {getNavLabel(item)}
                         </Link>
                       ))}
                     </div>

@@ -196,15 +196,22 @@ export const PATH_TO_PAGE_ID: Record<string, PagePermissionKey> = {
   ...Object.fromEntries(
     PAGE_PERMISSION_OPTIONS.map((page) => [page.path, page.id as PagePermissionKey])
   ),
+  '/dashboard/opportunities': 'productOpportunities',
   '/dashboard/account': 'workbench',
 };
+
+export const DASHBOARD_ENTRY_PATHS = ['/dashboard'] as const;
+
+export function isDashboardEntryPath(pathname: string): boolean {
+  return DASHBOARD_ENTRY_PATHS.includes(pathname as (typeof DASHBOARD_ENTRY_PATHS)[number]);
+}
 
 // 角色默认权限映射
 export const ROLE_DEFAULT_PAGES: Record<string, PagePermissionKey[]> = {
   admin: PAGE_PERMISSION_OPTIONS
     .filter((page) => page.adminDefault)
     .map((page) => page.id as PagePermissionKey),
-  boss: ['overview', 'performance', 'productSales', 'inventoryPurchasing', 'materials', 'products', 'influencers', 'scripts', 'viralVideos', 'videoMetrics'],
+  boss: ['workbench', 'overview', 'performance', 'productSales', 'inventoryPurchasing', 'materials', 'products', 'influencers', 'scripts', 'viralVideos', 'videoMetrics'],
   product: ['workbench', 'products', 'productOpportunities', 'productSales', 'inventoryPurchasing', 'materials', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance'],
   operator: ['workbench', 'products', 'productOpportunities', 'productSales', 'inventoryPurchasing', 'materials', 'influencers', 'scripts', 'viralVideos', 'videoMetrics', 'performance', 'tiktokSync', 'priceCheck'],
   bd: ['workbench', 'influencers', 'products', 'scripts', 'viralVideos'],
@@ -285,6 +292,13 @@ export function canAccessPage(
   return hasPagePermission(ctx.role, ctx.permissionMode || 'role', ctx.allowedPages || '', pageId)
 }
 
+export function canAccessPageForUser(
+  user: Record<string, unknown> | null | undefined,
+  pageId: PagePermissionKey
+): boolean {
+  return canAccessPage(getSessionPermissionContext(user ? { user } : null), pageId)
+}
+
 export function canManagePage(
   ctx: SessionPermissionContext | null | undefined,
   pageId: PagePermissionKey
@@ -357,16 +371,14 @@ export function validateDefaultHomePage(
 }
 
 export function findPageIdByPath(pathname: string): PagePermissionKey | undefined {
-  let pageId = PATH_TO_PAGE_ID[pathname];
-
-  if (!pageId) {
-    for (const [path, id] of Object.entries(PATH_TO_PAGE_ID)) {
-      if (pathname.startsWith(path)) {
-        pageId = id;
-        break;
-      }
-    }
+  const exactPageId = PATH_TO_PAGE_ID[pathname];
+  if (exactPageId) {
+    return exactPageId;
   }
 
-  return pageId as PagePermissionKey | undefined;
+  const matchedEntry = Object.entries(PATH_TO_PAGE_ID)
+    .filter(([path]) => pathname.startsWith(`${path}/`))
+    .sort(([a], [b]) => b.length - a.length)[0];
+
+  return matchedEntry?.[1] as PagePermissionKey | undefined;
 }

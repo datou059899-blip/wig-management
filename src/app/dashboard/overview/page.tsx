@@ -2,14 +2,15 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import Link from 'next/link'
+import { canAccessPage, getSessionPermissionContext } from '@/lib/pagePermissions'
 
 export default async function OverviewPage() {
   const session = await getServerSession(authOptions)
   const role = (session?.user as any)?.role
-  if (role !== 'viewer' && role !== 'admin') {
+  if (!canAccessPage(getSessionPermissionContext(session), 'overview')) {
     return (
       <div className="text-center py-12 text-gray-500">
-        此页面仅面向只读角色，当前角色：{role}
+        无权限访问概览，当前角色：{role}
       </div>
     )
   }

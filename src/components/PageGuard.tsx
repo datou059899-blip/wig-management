@@ -3,7 +3,7 @@
 import { useSession } from 'next-auth/react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect } from 'react'
-import { findPageIdByPath, hasPagePermission } from '@/lib/pagePermissions'
+import { canAccessPage, findPageIdByPath, getSessionPermissionContext, isDashboardEntryPath } from '@/lib/pagePermissions'
 
 export function PageGuard({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession()
@@ -14,25 +14,21 @@ export function PageGuard({ children }: { children: React.ReactNode }) {
     if (status === 'loading') return
     if (!session) return
 
-    const role = (session.user as any)?.role as string
-    const permissionMode = (session.user as any)?.permissionMode as string
-    const allowedPages = (session.user as any)?.allowedPages as string
-
     // 获取当前页面ID
     const pageId = findPageIdByPath(pathname)
 
-    // 如果找不到页面ID或者是账号设置页面，允许访问
-    if (!pageId || pathname === '/dashboard/account') {
+    // /dashboard 是入口分流页；账号设置按当前策略继续允许
+    if (isDashboardEntryPath(pathname) || pathname === '/dashboard/account') {
+      return
+    }
+
+    // 当前阶段暂不改 unknown route 默认行为
+    if (!pageId) {
       return
     }
 
     // 检查权限
-    const hasPermission = hasPagePermission(
-      role,
-      permissionMode,
-      allowedPages,
-      pageId as any
-    )
+    const hasPermission = canAccessPage(getSessionPermissionContext(session), pageId)
 
     if (!hasPermission) {
       // 无权限，重定向到工作台
