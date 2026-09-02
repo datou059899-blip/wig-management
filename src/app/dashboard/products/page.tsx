@@ -4,7 +4,13 @@ import { useState, useEffect, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
-import { canEditProducts } from '@/lib/permissions'
+import {
+  canBulkEditProductBase,
+  canChangeCanonicalSku,
+  canCreateProductDirectly,
+  canDeactivateProduct,
+  canEditProductBase,
+} from '@/lib/permissions'
 import { canAccessPageForUser } from '@/lib/pagePermissions'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
@@ -90,7 +96,11 @@ export default function ProductsPage() {
   const toast = useToast()
   const userRole = (session?.user as any)?.role
   const canAccess = canAccessPageForUser(session?.user as any, 'products')
-  const canEdit = canEditProducts(userRole)
+  const canCreateProduct = canCreateProductDirectly(userRole)
+  const canEditBase = canEditProductBase(userRole)
+  const canChangeSku = canChangeCanonicalSku(userRole)
+  const canDeactivate = canDeactivateProduct(userRole)
+  const canBulkEdit = canBulkEditProductBase(userRole)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -486,32 +496,36 @@ export default function ProductsPage() {
           )}
         </div>
 
-        {canEdit && (
+        {(canBulkEdit || canCreateProduct) && (
           <div className="flex flex-wrap gap-3">
-            <button
-              onClick={() => setShowAdminMaintenance((value) => !value)}
-              className="px-4 py-3 border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2 whitespace-nowrap"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              管理员维护
-            </button>
-            <button
-              onClick={handleAdd}
-              className="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 whitespace-nowrap"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              新增产品
-            </button>
+            {canBulkEdit && (
+              <button
+                onClick={() => setShowAdminMaintenance((value) => !value)}
+                className="px-4 py-3 border border-gray-200 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2 whitespace-nowrap"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                管理员维护
+              </button>
+            )}
+            {canCreateProduct && (
+              <button
+                onClick={handleAdd}
+                className="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 whitespace-nowrap"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                新增产品
+              </button>
+            )}
           </div>
         )}
       </div>
 
-      {canEdit && showAdminMaintenance && (
+      {canBulkEdit && showAdminMaintenance && (
         <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -629,26 +643,30 @@ export default function ProductsPage() {
                   )}
 
                   {/* 操作按钮 */}
-                  {canEdit && (
+                  {(canEditBase || canDeactivate) && (
                     <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => handleEdit(product)}
-                        className="p-1.5 bg-white/90 rounded-md shadow-sm hover:bg-white"
-                        title="编辑"
-                      >
-                        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => handleDeleteClick(product)}
-                        className="p-1.5 bg-white/90 rounded-md shadow-sm hover:bg-white"
-                        title="停用"
-                      >
-                        <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
+                      {canEditBase && (
+                        <button
+                          onClick={() => handleEdit(product)}
+                          className="p-1.5 bg-white/90 rounded-md shadow-sm hover:bg-white"
+                          title="编辑"
+                        >
+                          <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                        </button>
+                      )}
+                      {canDeactivate && (
+                        <button
+                          onClick={() => handleDeleteClick(product)}
+                          className="p-1.5 bg-white/90 rounded-md shadow-sm hover:bg-white"
+                          title="停用"
+                        >
+                          <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -1133,7 +1151,10 @@ export default function ProductsPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">SKU</label>
-                <input type="text" value={editingProduct.sku || ''} onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                <input type="text" value={editingProduct.sku || ''} onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value })} disabled={!canChangeSku} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-500" />
+                {!canChangeSku && (
+                  <p className="mt-1 text-xs text-gray-500">Canonical SKU 仅管理员可修改。</p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">产品名称</label>

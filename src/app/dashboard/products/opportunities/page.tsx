@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
-import { canEditProducts } from '@/lib/permissions'
+import { canManageProductOpportunities } from '@/lib/permissions'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { EmptyStatePresets } from '@/components/EmptyState'
 import { useToast } from '@/components/ToastProvider'
@@ -134,7 +134,7 @@ export default function ProductOpportunitiesPage() {
   const { data: session } = useSession()
   const toast = useToast()
   const userRole = (session?.user as any)?.role
-  const canEdit = canEditProducts(userRole)
+  const canEdit = canManageProductOpportunities(userRole)
 
   const [opportunities, setOpportunities] = useState<Opportunity[]>([])
   const [purchaseDevelopmentItems, setPurchaseDevelopmentItems] = useState<PurchaseDevelopmentItem[]>([])

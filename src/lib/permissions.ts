@@ -196,6 +196,47 @@ export function canEditProducts(role?: string): boolean {
   return !!role
 }
 
+/** 是否可直接创建正式 Product */
+export function canCreateProductDirectly(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss', 'product'].includes(mapped || '')
+}
+
+/** 是否可编辑 Product 基础资料 */
+export function canEditProductBase(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss', 'product'].includes(mapped || '')
+}
+
+/** 是否可修改 canonical Product.sku */
+export function canChangeCanonicalSku(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return mapped === 'admin'
+}
+
+/** 是否可停用 Product */
+export function canDeactivateProduct(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss'].includes(mapped || '')
+}
+
+/** 是否可批量维护 Product 基础资料 */
+export function canBulkEditProductBase(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss', 'product'].includes(mapped || '')
+}
+
+/** 是否可管理新品开发档案 */
+export function canManageProductOpportunities(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'operator'].includes(mapped || '')
+}
+
+/** 是否可将新品开发档案转为正式 Product */
+export function canConvertProductOpportunity(role?: string): boolean {
+  return canManageProductOpportunities(role)
+}
+
 /** 是否可访问 TikTok 同步 */
 export function canAccessTiktokSync(role?: string): boolean {
   const mapped = mapOldRole(role)

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canBulkEditProductBase } from '@/lib/permissions'
 
 export const dynamic = 'force-dynamic'
 
@@ -114,6 +115,9 @@ async function requireProductEditor() {
   const session = await getServerSession(authOptions)
   if (!session) {
     return { error: NextResponse.json({ error: '未登录' }, { status: 401 }) }
+  }
+  if (!canBulkEditProductBase((session.user as any)?.role)) {
+    return { error: NextResponse.json({ error: '无权限' }, { status: 403 }) }
   }
 
   return { error: null }

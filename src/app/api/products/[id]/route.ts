@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canChangeCanonicalSku, canDeactivateProduct, canEditProductBase } from '@/lib/permissions'
 
 // 获取单个产品
 export async function GET(
@@ -40,11 +41,27 @@ export async function PUT(
     if (!session) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
     }
+    const role = (session.user as any)?.role
+    if (!canEditProductBase(role)) {
+      return NextResponse.json({ error: '无权限' }, { status: 403 })
+    }
 
     const data = await request.json()
 
-    // 如果 sku 为空字符串，设为 null 避免唯一约束冲突
-    const sku = data.sku?.trim() || null
+    const currentProduct = await prisma.product.findUnique({
+      where: { id: params.id },
+      select: { sku: true },
+    })
+    if (!currentProduct) {
+      return NextResponse.json({ error: '产品不存在' }, { status: 404 })
+    }
+    // 如果请求未包含 sku，视为不修改 canonical SKU；如果为空字符串，设为 null 避免唯一约束冲突
+    const sku = Object.prototype.hasOwnProperty.call(data, 'sku')
+      ? data.sku?.trim() || null
+      : currentProduct.sku || null
+    if ((currentProduct.sku || null) !== sku && !canChangeCanonicalSku(role)) {
+      return NextResponse.json({ error: '无权限' }, { status: 403 })
+    }
 
     const product = await prisma.product.update({
       where: { id: params.id },
@@ -80,6 +97,9 @@ export async function DELETE(
     const session = await getServerSession(authOptions)
     if (!session) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
+    }
+    if (!canDeactivateProduct((session.user as any)?.role)) {
+      return NextResponse.json({ error: '无权限' }, { status: 403 })
     }
 
     // 软删除：将 isActive 设为 false

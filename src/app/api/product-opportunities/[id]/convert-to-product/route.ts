@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { createProduct, ProductSkuConflictError } from '@/lib/products'
 import { linkPurchaseOrderItemProductInTransaction } from '@/lib/purchaseOrders'
+import { canConvertProductOpportunity } from '@/lib/permissions'
 
 const DEVELOPMENT_LINK_STATUSES = ['NEW_PRODUCT', 'DIFFERENT_CRAFT', 'SKU_PENDING']
 
@@ -22,7 +23,7 @@ export async function POST(
 ) {
   const session = await getServerSession(authOptions)
   const userRole = (session?.user as any)?.role
-  if (!session || (userRole !== 'admin' && userRole !== 'operator')) {
+  if (!session || !canConvertProductOpportunity(userRole)) {
     return unauthorized()
   }
 

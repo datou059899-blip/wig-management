@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { canManageProductOpportunities } from '@/lib/permissions'
 import { prisma } from '@/lib/prisma'
 
 const DEVELOPMENT_LINK_STATUSES = ['NEW_PRODUCT', 'DIFFERENT_CRAFT', 'SKU_PENDING']
@@ -218,7 +219,7 @@ export async function POST(request: NextRequest) {
     }
 
     const userRole = (session.user as any).role
-    if (userRole !== 'admin' && userRole !== 'operator') {
+    if (!canManageProductOpportunities(userRole)) {
       return NextResponse.json({ error: '无权限' }, { status: 403 })
     }
 
@@ -293,7 +294,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     const userRole = (session.user as any).role
-    if (userRole !== 'admin' && userRole !== 'operator') {
+    if (!canManageProductOpportunities(userRole)) {
       return NextResponse.json({ error: '无权限' }, { status: 403 })
     }
 
@@ -348,7 +349,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     const userRole = (session.user as any).role
-    if (userRole !== 'admin' && userRole !== 'operator') {
+    if (!canManageProductOpportunities(userRole)) {
       return NextResponse.json({ error: '无权限' }, { status: 403 })
     }
 

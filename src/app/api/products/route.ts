@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { createProduct, ProductSkuConflictError } from '@/lib/products'
+import { canCreateProductDirectly } from '@/lib/permissions'
 
 // 获取产品列表（带毛利和预警信息）
 export async function GET(request: NextRequest) {
@@ -134,6 +135,9 @@ export async function POST(request: NextRequest) {
     const session = await getServerSession(authOptions)
     if (!session) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
+    }
+    if (!canCreateProductDirectly((session.user as any)?.role)) {
+      return NextResponse.json({ error: '无权限' }, { status: 403 })
     }
 
     const data = await request.json()
