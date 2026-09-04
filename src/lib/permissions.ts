@@ -296,6 +296,24 @@ export function canAccessViralVideos(role?: string): boolean {
   return ['admin', 'boss', 'product', 'operator', 'bd', 'editor', 'viewer'].includes(mapped || '')
 }
 
+/** 是否可管理爆款案例库 */
+export function canManageViralVideos(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss', 'product', 'operator', 'bd'].includes(mapped || '')
+}
+
+/** 是否可删除爆款案例 */
+export function canDeleteViralVideos(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss', 'product', 'operator'].includes(mapped || '')
+}
+
+/** 是否可管理视频数据分析 */
+export function canManageVideoMetrics(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss', 'product', 'operator'].includes(mapped || '')
+}
+
 /** 是否可访问达人建联 */
 export function canAccessInfluencers(role?: string): boolean {
   const mapped = mapOldRole(role)

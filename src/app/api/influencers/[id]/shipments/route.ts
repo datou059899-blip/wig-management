@@ -2,14 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canAccessInfluencers, canManageInfluencers } from '@/lib/permissions'
 
 export const dynamic = 'force-dynamic'
-
-const canAccess = (role?: string) =>
-  role === 'admin' || role === 'lead' || role === 'operator' || role === 'influencer_operator'
-
-const canManage = (role?: string) =>
-  role === 'admin' || role === 'lead' || role === 'operator' || role === 'influencer_operator'
 
 // GET /api/influencers/[id]/shipments - 获取达人的所有寄样记录
 export async function GET(
@@ -21,7 +16,7 @@ export async function GET(
     if (!session) return NextResponse.json({ error: '未登录' }, { status: 401 })
 
     const role = (session.user as any)?.role as string | undefined
-    if (!canAccess(role)) return NextResponse.json({ error: '无权限' }, { status: 403 })
+    if (!canAccessInfluencers(role)) return NextResponse.json({ error: '无权限' }, { status: 403 })
 
     const { id } = params
 
@@ -48,7 +43,7 @@ export async function POST(
     if (!session) return NextResponse.json({ error: '未登录' }, { status: 401 })
 
     const role = (session.user as any)?.role as string | undefined
-    if (!canManage(role)) return NextResponse.json({ error: '无权限' }, { status: 403 })
+    if (!canManageInfluencers(role)) return NextResponse.json({ error: '无权限' }, { status: 403 })
 
     const { id } = params
     const body = await request.json()

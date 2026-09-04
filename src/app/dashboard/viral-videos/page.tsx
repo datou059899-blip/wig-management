@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSession } from "next-auth/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
+import { canDeleteViralVideos, canManageViralVideos } from "@/lib/permissions";
 
 type TabKey = "cases" | "recommended" | "mistakes" | "methods";
 
@@ -283,6 +285,10 @@ const buildMethodItems = (scripts: ScriptSummary[]): MethodItem[] => {
 };
 
 export default function ViralVideosPage() {
+  const { data: session } = useSession();
+  const role = (session?.user as any)?.role as string | undefined;
+  const canManage = canManageViralVideos(role);
+  const canDelete = canDeleteViralVideos(role);
   const [activeTab, setActiveTab] = useState<TabKey>("cases");
   const [videos, setVideos] = useState<ViralVideo[]>([]);
   const [scripts, setScripts] = useState<ScriptSummary[]>([]);
@@ -543,20 +549,26 @@ export default function ViralVideosPage() {
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 mt-3 pt-3 border-t border-gray-100">
-          <button
-            onClick={() => handleEdit(video)}
-            className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded transition-colors"
-          >
-            编辑
-          </button>
-          <button
-            onClick={() => handleDelete(video.id)}
-            className="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded transition-colors"
-          >
-            删除
-          </button>
-        </div>
+        {(canManage || canDelete) && (
+          <div className="flex items-center justify-end gap-2 mt-3 pt-3 border-t border-gray-100">
+            {canManage && (
+              <button
+                onClick={() => handleEdit(video)}
+                className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded transition-colors"
+              >
+                编辑
+              </button>
+            )}
+            {canDelete && (
+              <button
+                onClick={() => handleDelete(video.id)}
+                className="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded transition-colors"
+              >
+                删除
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -566,7 +578,7 @@ export default function ViralVideosPage() {
       <PageHeader
         title="爆款案例库"
         description="回答“什么视频爆了、为什么爆、哪些值得学习”"
-        actions={
+        actions={canManage ? (
           <button
             onClick={() => {
               setActiveTab("cases");
@@ -578,7 +590,7 @@ export default function ViralVideosPage() {
           >
             + 添加视频分析
           </button>
-        }
+        ) : null}
       />
 
       <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -664,7 +676,7 @@ export default function ViralVideosPage() {
                       type="button"
                       onClick={() => {
                         setActiveTab("cases");
-                        handleEdit(video);
+                        if (canManage) handleEdit(video);
                       }}
                       className="shrink-0 rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"
                     >

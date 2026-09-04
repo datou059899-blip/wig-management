@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canManageInfluencers } from '@/lib/permissions'
 
 // 更新寄样记录
 export async function PUT(
@@ -12,6 +13,10 @@ export async function PUT(
     const session = await getServerSession(authOptions)
     if (!session) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
+    }
+    const role = (session.user as any)?.role as string | undefined
+    if (!canManageInfluencers(role)) {
+      return NextResponse.json({ error: '无权限' }, { status: 403 })
     }
 
     const { shipmentId } = params
@@ -63,6 +68,10 @@ export async function DELETE(
     const session = await getServerSession(authOptions)
     if (!session) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
+    }
+    const role = (session.user as any)?.role as string | undefined
+    if (!canManageInfluencers(role)) {
+      return NextResponse.json({ error: '无权限' }, { status: 403 })
     }
 
     const { shipmentId } = params

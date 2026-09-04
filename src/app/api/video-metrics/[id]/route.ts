@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { canAccessPage, canManagePage, getSessionPermissionContext } from "@/lib/pagePermissions";
+import { canAccessPage, getSessionPermissionContext } from "@/lib/pagePermissions";
+import { canManageVideoMetrics } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { normalizeVideoMetricCategory } from "@/lib/videoMetricCategories";
 
@@ -52,8 +53,8 @@ export async function PUT(
       return NextResponse.json({ error: "未授权" }, { status: 401 });
     }
 
-    const permissionContext = getSessionPermissionContext(session);
-    if (!canManagePage(permissionContext, "videoMetrics")) {
+    const role = (session.user as any)?.role as string | undefined;
+    if (!canManageVideoMetrics(role)) {
       return NextResponse.json({ error: "无权限操作视频数据分析" }, { status: 403 });
     }
 
@@ -146,8 +147,8 @@ export async function DELETE(
       return NextResponse.json({ error: "未授权" }, { status: 401 });
     }
 
-    const permissionContext = getSessionPermissionContext(session);
-    if (!canManagePage(permissionContext, "videoMetrics")) {
+    const role = (session.user as any)?.role as string | undefined;
+    if (!canManageVideoMetrics(role)) {
       return NextResponse.json({ error: "无权限操作视频数据分析" }, { status: 403 });
     }
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { canManageViralVideos } from "@/lib/permissions";
 
 // GET - 获取热门视频列表
 export async function GET(request: NextRequest) {
@@ -51,6 +52,10 @@ export async function POST(request: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
       return NextResponse.json({ error: "未授权" }, { status: 401 });
+    }
+    const role = (session.user as any)?.role as string | undefined;
+    if (!canManageViralVideos(role)) {
+      return NextResponse.json({ error: "无权限操作爆款案例库" }, { status: 403 });
     }
 
     const data = await request.json();

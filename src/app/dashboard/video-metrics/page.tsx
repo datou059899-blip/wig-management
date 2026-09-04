@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
+import { canManageVideoMetrics } from "@/lib/permissions";
 import {
   buildVideoMetricCategoryLabelMap,
   getDefaultVideoMetricCategories,
@@ -152,6 +154,9 @@ const getPerformanceTag = (video: VideoMetric) => {
 };
 
 export default function VideoMetricsPage() {
+  const { data: session } = useSession();
+  const role = (session?.user as any)?.role as string | undefined;
+  const canManage = canManageVideoMetrics(role);
   const [videos, setVideos] = useState<VideoMetric[]>([]);
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState<VideoMetricsSummary | null>(null);
@@ -509,7 +514,7 @@ export default function VideoMetricsPage() {
       <PageHeader
         title="视频数据分析"
         description="追踪和分析自发短视频的表现数据"
-        actions={
+        actions={canManage ? (
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setCategoryModalOpen(true)}
@@ -528,7 +533,7 @@ export default function VideoMetricsPage() {
               + 添加数据
             </button>
           </div>
-        }
+        ) : null}
       />
 
       <div className="mb-6 flex flex-wrap items-end gap-4">
@@ -706,20 +711,24 @@ export default function VideoMetricsPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <div className="flex gap-2 justify-center">
-                          <button
-                            onClick={() => handleEdit(video)}
-                            className="text-blue-600 hover:text-blue-800 text-sm"
-                          >
-                            编辑
-                          </button>
-                          <button
-                            onClick={() => handleDelete(video.id)}
-                            className="text-red-600 hover:text-red-800 text-sm"
-                          >
-                            删除
-                          </button>
-                        </div>
+                        {canManage ? (
+                          <div className="flex gap-2 justify-center">
+                            <button
+                              onClick={() => handleEdit(video)}
+                              className="text-blue-600 hover:text-blue-800 text-sm"
+                            >
+                              编辑
+                            </button>
+                            <button
+                              onClick={() => handleDelete(video.id)}
+                              className="text-red-600 hover:text-red-800 text-sm"
+                            >
+                              删除
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400">只读</span>
+                        )}
                       </td>
                     </tr>
                   );
