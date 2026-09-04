@@ -237,6 +237,36 @@ export function canConvertProductOpportunity(role?: string): boolean {
   return canManageProductOpportunities(role)
 }
 
+/** 是否可创建自己的工作任务 */
+export function canCreateOwnWorkTask(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss', 'product', 'operator', 'bd', 'editor'].includes(mapped || '')
+}
+
+/** 是否可查看团队工作任务 */
+export function canViewTeamWorkTasks(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss'].includes(mapped || '')
+}
+
+/** 是否可指派工作任务给他人 */
+export function canAssignWorkTask(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss'].includes(mapped || '')
+}
+
+/** 是否可管理团队工作任务 */
+export function canManageTeamWorkTasks(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss'].includes(mapped || '')
+}
+
+/** 是否可触发 WorkTask 同步 */
+export function canRunWorkTaskSync(role?: string): boolean {
+  const mapped = mapOldRole(role)
+  return ['admin', 'boss'].includes(mapped || '')
+}
+
 /** 是否可访问 TikTok 同步 */
 export function canAccessTiktokSync(role?: string): boolean {
   const mapped = mapOldRole(role)

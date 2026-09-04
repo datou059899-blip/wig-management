@@ -2,11 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import {
+  canAssignWorkTask,
+  canCreateOwnWorkTask,
+  canViewTeamWorkTasks,
+  mapOldRole,
+} from '@/lib/permissions'
 
 export const dynamic = 'force-dynamic'
-
-const canManage = (role?: string) =>
-  ['admin', 'lead', 'product_operator', 'operator', 'editor', 'influencer_operator'].includes(role || '')
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -18,6 +21,12 @@ export async function GET(request: NextRequest) {
   const viewAs = (sp.get('viewAs') || '').trim() // 'owner' | 'creator' | ''
 
   const currentUserId = (session?.user as any)?.id
+  const role = (session?.user as any)?.role as string | undefined
+  const mappedRole = mapOldRole(role)
+
+  if (!mappedRole || mappedRole === 'viewer') {
+    return NextResponse.json({ error: '无权限' }, { status: 403 })
+  }
 
   const where: any = {}
 
@@ -26,18 +35,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: '未找到用户 ID' }, { status: 400 })
     }
     
+    const relatedToCurrentUser = [
+      { creatorUserId: currentUserId },
+      { ownerUserId: currentUserId },
+      { assigneeUserId: currentUserId },
+      { collaboratorUserIds: { has: currentUserId } },
+    ]
     if (viewAs === 'owner') {
-      // 负责人视角：看到自己作为 owner 的任务
-      where.ownerUserId = currentUserId
+      where.AND = [{ ownerUserId: currentUserId }]
     } else if (viewAs === 'creator') {
-      // 创建人视角：看到自己创建的任务
-      where.creatorUserId = currentUserId
+      where.AND = [{ creatorUserId: currentUserId }]
     } else {
-      // 默认：执行人视角（自己作为 assignee 的任务）
-      where.assigneeUserId = currentUserId
+      where.OR = relatedToCurrentUser
     }
+  } else if (!canViewTeamWorkTasks(role)) {
+    return NextResponse.json({ error: '无权限查看团队任务' }, { status: 403 })
   }
-  // mine=0 时不加过滤，返回全部（团队视角）
 
   if (status) where.status = status
 
@@ -72,7 +85,7 @@ export async function POST(request: NextRequest) {
     console.log('[WorkTasks POST] 用户角色:', role)
     console.log('[WorkTasks POST] 用户名称:', currentUserName)
     
-    if (!canManage(role)) {
+    if (!canCreateOwnWorkTask(role)) {
       console.log('[WorkTasks POST] 无权限，当前角色:', role)
       return NextResponse.json({ error: '无权限' }, { status: 403 })
     }
@@ -90,8 +103,11 @@ export async function POST(request: NextRequest) {
     const priority = String(body.priority || '中').trim()
     
     // 使用 userId 而不是用户名
-    const assigneeUserId = String(body.assigneeUserId || '').trim()
-    const ownerUserId = body.ownerUserId != null ? String(body.ownerUserId).trim() : null
+    const canAssign = canAssignWorkTask(role)
+    const requestedAssigneeUserId = String(body.assigneeUserId || currentUserId || '').trim()
+    const requestedOwnerUserId = body.ownerUserId != null ? String(body.ownerUserId).trim() : ''
+    const assigneeUserId = canAssign ? requestedAssigneeUserId : currentUserId
+    const ownerUserId = canAssign ? requestedOwnerUserId || currentUserId : currentUserId
     const relatedEntityId = String(body.relatedEntityId || '-').trim()
     const note = body.note != null ? String(body.note) : null
     const status = String(body.status || '待做').trim()
@@ -131,11 +147,26 @@ export async function POST(request: NextRequest) {
     const isTodayMustDo = body.isTodayMustDo === true
 
     // 任务类型和部门
-    const taskType = String(body.taskType || 'personal').trim() as 'personal' | 'team'
+    const requestedTaskType = String(body.taskType || 'personal').trim() as 'personal' | 'team'
+    if (!canAssign) {
+      if (requestedTaskType === 'team') {
+        return NextResponse.json({ error: '无权限创建团队任务' }, { status: 403 })
+      }
+      if (requestedAssigneeUserId && requestedAssigneeUserId !== currentUserId) {
+        return NextResponse.json({ error: '无权限指派他人任务' }, { status: 403 })
+      }
+      if (requestedOwnerUserId && requestedOwnerUserId !== currentUserId) {
+        return NextResponse.json({ error: '无权限设置他人为负责人' }, { status: 403 })
+      }
+      if (Array.isArray(body.collaboratorUserIds) && body.collaboratorUserIds.some((id: unknown) => String(id) !== currentUserId)) {
+        return NextResponse.json({ error: '无权限设置协作执行人' }, { status: 403 })
+      }
+    }
+    const taskType = canAssign ? requestedTaskType : 'personal'
     const department = taskType === 'team' ? String(body.department || '').trim() : null
     
     // 协作执行人
-    const collaboratorUserIds = body.collaboratorUserIds || []
+    const collaboratorUserIds = canAssign ? body.collaboratorUserIds || [] : []
 
     // 完成要求
     const requireCompletionNote = body.requireCompletionNote === true

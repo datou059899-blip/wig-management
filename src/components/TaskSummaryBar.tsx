@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
-import { isLead } from '@/lib/permissions'
+import { canCreateOwnWorkTask, canViewTeamWorkTasks } from '@/lib/permissions'
 
 type WorkTask = {
   id: string
@@ -42,8 +42,8 @@ export function TaskSummaryBar({ filterModule, limit = 5, showCompletionFeed: in
   const { data: session } = useSession()
   const router = useRouter()
   const role = (session?.user as any)?.role as string | undefined
-  const canManage = ['admin', 'lead', 'product_operator', 'operator', 'influencer_operator'].includes(role || '')
-  const isLeadRole = isLead(role)
+  const canCreateTask = canCreateOwnWorkTask(role)
+  const canViewTeamTasks = canViewTeamWorkTasks(role)
 
   const [tasks, setTasks] = useState<WorkTask[]>([])
   const [completedToday, setCompletedToday] = useState<WorkTask[]>([])
@@ -198,7 +198,7 @@ export function TaskSummaryBar({ filterModule, limit = 5, showCompletionFeed: in
           </div>
           
           <div className="flex items-center gap-2">
-            {isLeadRole && completedToday.length > 0 && (
+            {canViewTeamTasks && completedToday.length > 0 && (
               <button
                 onClick={() => setShowFeed(!showFeed)}
                 className="px-2.5 py-1.5 text-xs bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
@@ -212,7 +212,7 @@ export function TaskSummaryBar({ filterModule, limit = 5, showCompletionFeed: in
             >
               全部任务
             </button>
-            {canManage && (
+            {canCreateTask && (
               <button
                 onClick={() => router.push('/dashboard/workbench?create=1')}
                 className="px-2.5 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700"

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canRunWorkTaskSync } from '@/lib/permissions'
 
 export const dynamic = 'force-dynamic'
 
@@ -59,6 +60,7 @@ export async function POST(request: NextRequest) {
   // 任务对所有人可见，但生成动作只依赖"当前已登录用户触发"
   const role = (session.user as any)?.role as string | undefined
   if (!role) return NextResponse.json({ error: '用户信息缺失' }, { status: 400 })
+  if (!canRunWorkTaskSync(role)) return NextResponse.json({ error: '无权限同步任务' }, { status: 403 })
 
   const now = new Date()
   const dayKey = toLocalDateKey(now)

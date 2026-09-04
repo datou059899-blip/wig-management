@@ -3,7 +3,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
-import { isLead } from '@/lib/permissions'
+import {
+  canAssignWorkTask,
+  canCreateOwnWorkTask,
+  canManageTeamWorkTasks,
+  canRunWorkTaskSync,
+  canViewTeamWorkTasks,
+} from '@/lib/permissions'
 import { useToast } from '@/components/ToastProvider'
 
 type WorkTask = {
@@ -207,10 +213,11 @@ export default function WorkbenchPage() {
   const currentUserId = (session?.user as any)?.id || ''
   const currentUserName = (session?.user as any)?.name || (session?.user as any)?.email || ''
   
-  // 负责人权限（包括总负责人）
-  const canManage = ['admin', 'lead', 'product_operator', 'operator', 'influencer_operator'].includes(role || '')
-  // 总负责人视角
-  const isLeadRole = isLead(role)
+  const canCreateTask = canCreateOwnWorkTask(role)
+  const canViewTeamTasks = canViewTeamWorkTasks(role)
+  const canAssignTasks = canAssignWorkTask(role)
+  const canManageTeamTasks = canManageTeamWorkTasks(role)
+  const canSyncWorkTasks = canRunWorkTaskSync(role)
   // 团队任务视角（总负责人可以看到所有人任务）
   const [teamView, setTeamView] = useState(false)
 
@@ -229,7 +236,7 @@ export default function WorkbenchPage() {
     try {
       setLoading(true)
       // 如果是团队视角，获取所有任务
-      const endpoint = teamView ? '/api/work-tasks' : '/api/work-tasks?mine=1'
+      const endpoint = teamView && canViewTeamTasks ? '/api/work-tasks?mine=0' : '/api/work-tasks?mine=1'
       const res = await fetch(endpoint)
       const data = await res.json()
       if (res.ok) {
@@ -402,8 +409,10 @@ export default function WorkbenchPage() {
   useEffect(() => {
     void (async () => {
       try {
-        setSyncing(true)
-        await fetch('/api/work-tasks/sync', { method: 'POST' })
+        if (canSyncWorkTasks) {
+          setSyncing(true)
+          await fetch('/api/work-tasks/sync', { method: 'POST' })
+        }
       } finally {
         setSyncing(false)
         await fetchTasks()
@@ -413,10 +422,16 @@ export default function WorkbenchPage() {
     })()
     const t = setInterval(() => fetchTasks(), 30000)
     return () => clearInterval(t)
-  }, [teamView])
+  }, [teamView, canSyncWorkTasks, canViewTeamTasks])
 
   // 根据当前视图获取任务列表
-  const currentTasks = teamView && isLeadRole ? allTasks : tasks
+  const currentTasks = teamView && canViewTeamTasks ? allTasks : tasks
+
+  const canManageTask = (task: WorkTask) =>
+    canManageTeamTasks || task.creatorUserId === currentUserId || task.ownerUserId === currentUserId
+
+  const canCompleteTask = (task: WorkTask) =>
+    canManageTask(task) || task.assigneeUserId === currentUserId
 
   const categorized = useMemo(() => {
     const active = currentTasks.filter((t) => t.status !== '已完成')
@@ -698,18 +713,18 @@ export default function WorkbenchPage() {
       const payload = {
         title: form.title.trim(),
         sourceModule: form.sourceModule,
-        taskType: form.taskType,
+        taskType: canAssignTasks ? form.taskType : 'personal',
         priority: form.priority,
-        assigneeUserId: form.assigneeUserId,
-        ownerUserId: form.ownerUserId || null,
+        assigneeUserId: canAssignTasks ? form.assigneeUserId : currentUserId,
+        ownerUserId: canAssignTasks ? form.ownerUserId || null : currentUserId,
         dueDate: due.toISOString(),
         remindAt: remindAt ? remindAt.toISOString() : null,
         isTodayMustDo: form.isTodayMustDo,
         status: '待做',
         note: form.note || null,
         relatedEntityId: form.relatedEntityId || '-',
-        department: form.department || null,
-        collaboratorUserIds: form.collaboratorUserIds,
+        department: canAssignTasks ? form.department || null : null,
+        collaboratorUserIds: canAssignTasks ? form.collaboratorUserIds : [],
         requireCompletionNote: form.requireCompletionNote,
         requireCompletionLink: form.requireCompletionLink,
         requireCompletionResult: form.requireCompletionResult,
@@ -797,6 +812,10 @@ export default function WorkbenchPage() {
 
   const submitEdit = async () => {
     if (!editingTask) return
+    if (!canManageTask(editingTask)) {
+      setEditingTask(null)
+      return
+    }
     const updates: Partial<WorkTask> = {
       priority: editForm.priority,
       dueDate: new Date(editForm.dueDate + 'T18:00:00').toISOString(),
@@ -962,7 +981,7 @@ export default function WorkbenchPage() {
         </div>
         <div className="flex items-center gap-2">
           {/* 总负责人切换团队视图 */}
-          {isLeadRole && (
+          {canViewTeamTasks && (
             <button
               type="button"
               onClick={() => setTeamView(!teamView)}
@@ -971,30 +990,32 @@ export default function WorkbenchPage() {
               {teamView ? '👁️ 我的任务' : '👥 团队任务'}
             </button>
           )}
-          <button type="button" onClick={() => {
-            // 打开弹窗时重置表单，确保使用最新的 currentUserId
-            setForm({
-              title: '',
-              sourceModule: '产品',
-              taskType: 'personal',
-              priority: '中',
-              assigneeUserId: currentUserId,
-              ownerUserId: currentUserId,
-              dueDate: dayKey,
-              remindAt: '',
-              isTodayMustDo: false,
-              relatedEntityId: '',
-              note: '',
-              department: '',
-              collaboratorUserIds: [],
-              requireCompletionNote: false,
-              requireCompletionLink: false,
-              requireCompletionResult: false,
-            })
-            setCreateOpen(true)
-          }} className="btn-primary">
-            + 新建任务
-          </button>
+          {canCreateTask && (
+            <button type="button" onClick={() => {
+              // 打开弹窗时重置表单，确保使用最新的 currentUserId
+              setForm({
+                title: '',
+                sourceModule: '产品',
+                taskType: 'personal',
+                priority: '中',
+                assigneeUserId: currentUserId,
+                ownerUserId: currentUserId,
+                dueDate: dayKey,
+                remindAt: '',
+                isTodayMustDo: false,
+                relatedEntityId: '',
+                note: '',
+                department: '',
+                collaboratorUserIds: [],
+                requireCompletionNote: false,
+                requireCompletionLink: false,
+                requireCompletionResult: false,
+              })
+              setCreateOpen(true)
+            }} className="btn-primary">
+              + 新建任务
+            </button>
+          )}
         </div>
       </div>
 
@@ -1062,9 +1083,9 @@ export default function WorkbenchPage() {
       <section className="card p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">{teamView && isLeadRole ? '团队任务' : '我的任务'}</h2>
+            <h2 className="text-lg font-semibold text-gray-900">{teamView && canViewTeamTasks ? '团队任务' : '我的任务'}</h2>
             <p className="mt-1 text-sm text-gray-500">
-              {teamView && isLeadRole
+              {teamView && canViewTeamTasks
                 ? '查看全员任务进度，管理排期与优先级。'
                 : '保留原有任务创建、编辑、完成和延期处理能力。'}
             </p>
@@ -1115,13 +1136,13 @@ export default function WorkbenchPage() {
             </div>
             <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
               {prioritizedFocusTasks.map((t) => (
-                <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManage} showAssignee={teamView} />
+                <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManageTask(t)} canComplete={canCompleteTask(t)} showAssignee={teamView} />
               ))}
             </div>
           </div>
 
           {/* 团队视角：按人分组展示 */}
-          {teamView && isLeadRole && users.length > 0 && (
+          {teamView && canViewTeamTasks && users.length > 0 && (
             <div className="card p-4">
               <div className="text-sm font-semibold text-gray-700 mb-3">按负责人查看</div>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -1194,7 +1215,7 @@ export default function WorkbenchPage() {
                         </span>
                       </div>
                     ) : (
-                      <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManage} showAssignee={teamView} />
+                      <TaskCard key={t.id} task={t} onUpdate={updateTaskStatus} onEdit={openEdit} canManage={canManageTask(t)} canComplete={canCompleteTask(t)} showAssignee={teamView} />
                     )
                   ))}
                 </div>
@@ -1341,15 +1362,19 @@ export default function WorkbenchPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs text-gray-600 mb-1.5 block">任务类型</label>
-                  <select
-                    value={form.taskType}
-                    onChange={(e) => setForm({ ...form, taskType: e.target.value as 'personal' | 'team' })}
-                    className="input"
-                  >
-                    {TASK_TYPES.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  {canAssignTasks ? (
+                    <select
+                      value={form.taskType}
+                      onChange={(e) => setForm({ ...form, taskType: e.target.value as 'personal' | 'team' })}
+                      className="input"
+                    >
+                      {TASK_TYPES.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">个人任务</div>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs text-gray-600 mb-1.5 block">优先级</label>
@@ -1366,7 +1391,7 @@ export default function WorkbenchPage() {
               </div>
 
               {/* 团队任务时显示所属部门 */}
-              {form.taskType === 'team' && (
+              {canAssignTasks && form.taskType === 'team' && (
                 <div>
                   <label className="text-xs text-gray-600 mb-1.5 block">所属部门 *</label>
                   <select
@@ -1395,37 +1420,48 @@ export default function WorkbenchPage() {
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="text-xs text-gray-600 mb-1.5 block">负责人</label>
+                {canAssignTasks ? (
+                  <div>
+                    <label className="text-xs text-gray-600 mb-1.5 block">负责人</label>
+                    <select
+                      value={form.ownerUserId}
+                      onChange={(e) => setForm({ ...form, ownerUserId: e.target.value })}
+                      className="input"
+                    >
+                      {users.map((u) => (
+                        <option key={u.id} value={u.id}>{u.name} {u.id === currentUserId ? '(我)' : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-xs text-gray-600 mb-1.5 block">负责人</label>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">{currentUserName || '我'}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* 主执行人 */}
+              <div>
+                <label className="text-xs text-gray-600 mb-1.5 block">主执行人 *</label>
+                {canAssignTasks ? (
                   <select
-                    value={form.ownerUserId}
-                    onChange={(e) => setForm({ ...form, ownerUserId: e.target.value })}
+                    value={form.assigneeUserId}
+                    onChange={(e) => setForm({ ...form, assigneeUserId: e.target.value })}
                     className="input"
                   >
                     {users.map((u) => (
                       <option key={u.id} value={u.id}>{u.name} {u.id === currentUserId ? '(我)' : ''}</option>
                     ))}
                   </select>
-                </div>
-              </div>
-
-              {/* 主执行人 */}
-              <div>
-                <label className="text-xs text-gray-600 mb-1.5 block">主执行人 *</label>
-                <select
-                  value={form.assigneeUserId}
-                  onChange={(e) => setForm({ ...form, assigneeUserId: e.target.value })}
-                  className="input"
-                >
-                  {users.map((u) => (
-                    <option key={u.id} value={u.id}>{u.name} {u.id === currentUserId ? '(我)' : ''}</option>
-                  ))}
-                </select>
+                ) : (
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">{currentUserName || '我'}</div>
+                )}
                 <p className="text-[10px] text-gray-400 mt-1">主执行人对任务负主要责任</p>
               </div>
 
               {/* 团队任务时显示协作执行人 */}
-              {form.taskType === 'team' && (
+              {canAssignTasks && form.taskType === 'team' && (
                 <div>
                   <label className="text-xs text-gray-600 mb-1.5 block">协作执行人（可选）</label>
                   <div className="border border-gray-200 rounded-lg p-3 max-h-32 overflow-y-auto">
@@ -1533,7 +1569,7 @@ export default function WorkbenchPage() {
               <button onClick={() => setCreateOpen(false)} className="btn-secondary">取消</button>
               <button 
                 onClick={() => void submitCreate()} 
-                disabled={!form.title.trim() || !form.assigneeUserId || (form.taskType === 'team' && !form.department)} 
+                disabled={!form.title.trim() || (canAssignTasks && (!form.assigneeUserId || (form.taskType === 'team' && !form.department)))} 
                 className="btn-primary"
               >
                 创建
@@ -1665,35 +1701,37 @@ export default function WorkbenchPage() {
                 </div>
               </div>
 
-              {canManage && (
+              {editingTask && canManageTask(editingTask) && (
                 <>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs text-gray-600 mb-1.5 block">执行人</label>
-                      <select
-                        value={editForm.assigneeUserId}
-                        onChange={(e) => setEditForm({ ...editForm, assigneeUserId: e.target.value })}
-                        className="input"
-                      >
-                        {users.map((u) => (
-                          <option key={u.id} value={u.id}>{u.name}</option>
-                        ))}
-                      </select>
+                  {canAssignTasks && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs text-gray-600 mb-1.5 block">执行人</label>
+                        <select
+                          value={editForm.assigneeUserId}
+                          onChange={(e) => setEditForm({ ...editForm, assigneeUserId: e.target.value })}
+                          className="input"
+                        >
+                          {users.map((u) => (
+                            <option key={u.id} value={u.id}>{u.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 mb-1.5 block">负责人</label>
+                        <select
+                          value={editForm.ownerUserId}
+                          onChange={(e) => setEditForm({ ...editForm, ownerUserId: e.target.value })}
+                          className="input"
+                        >
+                          <option value="">默认创建人</option>
+                          {users.map((u) => (
+                            <option key={u.id} value={u.id}>{u.name}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                    <div>
-                      <label className="text-xs text-gray-600 mb-1.5 block">负责人</label>
-                      <select
-                        value={editForm.ownerUserId}
-                        onChange={(e) => setEditForm({ ...editForm, ownerUserId: e.target.value })}
-                        className="input"
-                      >
-                        <option value="">默认创建人</option>
-                        {users.map((u) => (
-                          <option key={u.id} value={u.id}>{u.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
+                  )}
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -1799,11 +1837,12 @@ export default function WorkbenchPage() {
 }
 
 // 任务卡片组件
-function TaskCard({ task, onUpdate, onEdit, canManage, showAssignee }: { 
+function TaskCard({ task, onUpdate, onEdit, canManage, canComplete, showAssignee }: { 
   task: WorkTask; 
   onUpdate: (id: string, status: string) => void;
   onEdit: (task: WorkTask) => void;
   canManage: boolean;
+  canComplete: boolean;
   showAssignee?: boolean;
 }) {
   const priorityColors: Record<string, string> = {
@@ -1813,11 +1852,13 @@ function TaskCard({ task, onUpdate, onEdit, canManage, showAssignee }: {
   }
 
   return (
-    <div className={`rounded-lg border p-3 hover:shadow-md transition-all cursor-pointer ${
+    <div className={`rounded-lg border p-3 hover:shadow-md transition-all ${
       task.status === '已延期' ? 'border-red-100 bg-red-50/50' : 
       task.isTodayMustDo ? 'border-green-100 bg-green-50/50' :
       'border-gray-100 bg-white'
-    }`} onClick={() => onEdit(task)}>
+    } ${canManage ? 'cursor-pointer' : 'cursor-default'}`} onClick={() => {
+      if (canManage) onEdit(task)
+    }}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium text-gray-900 leading-snug truncate">{task.title}</div>
@@ -1838,14 +1879,16 @@ function TaskCard({ task, onUpdate, onEdit, canManage, showAssignee }: {
         <div className="mt-2 text-xs text-gray-600 line-clamp-2 bg-gray-50 rounded px-2 py-1">{task.note}</div>
       )}
 
-      <div className="mt-3 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-        {task.status === '待做' && (
-          <button onClick={() => onUpdate(task.id, '进行中')} className="btn-secondary text-xs py-1 px-2">开始</button>
-        )}
-        {task.status !== '已完成' && (
-          <button onClick={() => onUpdate(task.id, '已完成')} className="btn-primary text-xs py-1 px-2">完成</button>
-        )}
-      </div>
+      {canComplete && (
+        <div className="mt-3 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          {task.status === '待做' && (
+            <button onClick={() => onUpdate(task.id, '进行中')} className="btn-secondary text-xs py-1 px-2">开始</button>
+          )}
+          {task.status !== '已完成' && (
+            <button onClick={() => onUpdate(task.id, '已完成')} className="btn-primary text-xs py-1 px-2">完成</button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

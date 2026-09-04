@@ -2,11 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canAssignWorkTask, canManageTeamWorkTasks, mapOldRole } from '@/lib/permissions'
 
 export const dynamic = 'force-dynamic'
 
-const canManage = (role?: string) =>
-  ['admin', 'lead', 'product_operator', 'operator', 'editor', 'influencer_operator'].includes(role || '')
+const isRelatedToTask = (task: any, userId: string) =>
+  task.creatorUserId === userId ||
+  task.ownerUserId === userId ||
+  task.assigneeUserId === userId ||
+  (Array.isArray(task.collaboratorUserIds) && task.collaboratorUserIds.includes(userId))
 
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions)
@@ -14,6 +18,9 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
   const id = String(params.id || '').trim()
   if (!id) return NextResponse.json({ error: '缺少 id' }, { status: 400 })
+  const role = (session.user as any)?.role as string | undefined
+  const currentUserId = (session.user as any)?.id as string
+  const mappedRole = mapOldRole(role)
 
   const task = await prisma.workTask.findUnique({
     where: { id },
@@ -25,6 +32,12 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   })
 
   if (!task) return NextResponse.json({ error: '任务不存在' }, { status: 404 })
+  if (!mappedRole || mappedRole === 'viewer') {
+    return NextResponse.json({ error: '无权限' }, { status: 403 })
+  }
+  if (!canManageTeamWorkTasks(role) && !isRelatedToTask(task, currentUserId)) {
+    return NextResponse.json({ error: '无权限' }, { status: 403 })
+  }
 
   return NextResponse.json({ task })
 }
@@ -35,7 +48,6 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
   const role = (session.user as any)?.role as string | undefined
   const currentUserId = (session.user as any)?.id as string
-  const currentUserName = (session.user as any)?.name as string | undefined
 
   const id = String(params.id || '').trim()
   if (!id) return NextResponse.json({ error: '缺少 id' }, { status: 400 })
@@ -43,32 +55,62 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   const existing = await prisma.workTask.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: '任务不存在' }, { status: 404 })
 
-  // 权限检查：管理员/负责人/创建人可以编辑，执行人只能更新自己的任务
-  const isManager = canManage(role) && ((existing as any).ownerUserId === currentUserId || (existing as any).creatorUserId === currentUserId)
+  const mappedRole = mapOldRole(role)
+  if (!mappedRole || mappedRole === 'viewer') {
+    return NextResponse.json({ error: '无权限' }, { status: 403 })
+  }
+
+  // 权限检查：admin/boss 可管理所有任务；创建人/负责人可管理自己的任务；执行人只能更新执行/完成字段。
+  const isTeamManager = canManageTeamWorkTasks(role)
+  const isOwnerOrCreator = (existing as any).ownerUserId === currentUserId || (existing as any).creatorUserId === currentUserId
+  const canEditManagementFields = isTeamManager || isOwnerOrCreator
   const isAssignee = (existing as any).assigneeUserId === currentUserId
   
-  if (!isManager && !isAssignee) {
+  if (!canEditManagementFields && !isAssignee) {
     return NextResponse.json({ error: '无权限' }, { status: 403 })
   }
 
   const body = await request.json()
   const patch: any = {}
 
-  // 基础字段更新
-  if (body.status != null) patch.status = String(body.status).trim()
-  if (body.note !== undefined) patch.note = body.note == null ? null : String(body.note)
-  if (body.dueDate !== undefined && body.dueDate !== null) {
-    const d = new Date(String(body.dueDate))
-    if (!isNaN(d.getTime())) patch.dueDate = d
+  if (!canEditManagementFields) {
+    const managerOnlyKeys = [
+      'priority',
+      'dueDate',
+      'note',
+      'assigneeUserId',
+      'ownerUserId',
+      'taskType',
+      'department',
+      'collaboratorUserIds',
+      'isTodayMustDo',
+      'remindAt',
+      'requireCompletionNote',
+      'requireCompletionLink',
+      'requireCompletionResult',
+    ]
+    if (managerOnlyKeys.some((key) => body[key] !== undefined)) {
+      return NextResponse.json({ error: '无权限修改任务管理字段' }, { status: 403 })
+    }
   }
 
-  // 只有管理员/负责人可以更新以下字段
-  if (isManager) {
+  if (body.status != null) patch.status = String(body.status).trim()
+
+  // admin/boss/创建人/负责人可以更新管理字段
+  if (canEditManagementFields) {
+    if (body.note !== undefined) patch.note = body.note == null ? null : String(body.note)
+    if (body.dueDate !== undefined && body.dueDate !== null) {
+      const d = new Date(String(body.dueDate))
+      if (!isNaN(d.getTime())) patch.dueDate = d
+    }
     if (body.priority != null) patch.priority = String(body.priority).trim()
     
     // 更新执行人 ID 和名称
     if (body.assigneeUserId != null) {
       const assigneeId = String(body.assigneeUserId).trim()
+      if (!canAssignWorkTask(role) && assigneeId !== (existing as any).assigneeUserId) {
+        return NextResponse.json({ error: '无权限重新指派任务' }, { status: 403 })
+      }
       patch.assigneeUserId = assigneeId
       // 获取用户名用于快照
       const assigneeUser = await prisma.user.findUnique({
@@ -81,6 +123,9 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     // 更新负责人 ID 和名称
     if (body.ownerUserId != null) {
       const ownerId = body.ownerUserId ? String(body.ownerUserId).trim() : null
+      if (!canAssignWorkTask(role) && ownerId !== (existing as any).ownerUserId) {
+        return NextResponse.json({ error: '无权限重新设置负责人' }, { status: 403 })
+      }
       if (ownerId) {
         const ownerUser = await prisma.user.findUnique({
           where: { id: ownerId },
@@ -92,6 +137,9 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
         patch.ownerUserId = null
         patch.ownerName = null
       }
+    }
+    if (!canAssignWorkTask(role) && body.taskType != null && String(body.taskType).trim() === 'team') {
+      return NextResponse.json({ error: '无权限改为团队任务' }, { status: 403 })
     }
     
     if (body.isTodayMustDo != null) patch.isTodayMustDo = body.isTodayMustDo === true
@@ -145,7 +193,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   }
 
   // 如果是执行人更新状态（非完成操作）
-  if (isAssignee && !isManager && body.status && body.status !== '已完成') {
+  if (isAssignee && !canEditManagementFields && body.status && body.status !== '已完成') {
     // 执行人只能更新自己的状态
     patch.status = String(body.status).trim()
   }
@@ -171,8 +219,13 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
   const existing = await prisma.workTask.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: '任务不存在' }, { status: 404 })
 
-  // 只有管理员/负责人/创建人可以删除
-  const isManager = canManage(role) && ((existing as any).ownerUserId === currentUserId || (existing as any).creatorUserId === currentUserId)
+  const mappedRole = mapOldRole(role)
+  if (!mappedRole || mappedRole === 'viewer') {
+    return NextResponse.json({ error: '无权限删除任务' }, { status: 403 })
+  }
+
+  // admin/boss 可删除；普通角色只能删除自己创建的任务。
+  const isManager = canManageTeamWorkTasks(role) || (existing as any).creatorUserId === currentUserId
   
   if (!isManager) {
     return NextResponse.json({ error: '无权限删除任务' }, { status: 403 })
