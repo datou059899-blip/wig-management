@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
+import Link from 'next/link'
 import {
   canBulkEditProductBase,
   canChangeCanonicalSku,
@@ -723,6 +724,12 @@ export default function ProductsPage() {
                       产品链接
                     </a>
                   )}
+                  <Link
+                    href={`/dashboard/products/${product.id}`}
+                    className="mt-2 inline-flex text-xs font-medium text-slate-700 hover:text-blue-700"
+                  >
+                    查看详情 →
+                  </Link>
                 </div>
               </div>
             ))}
