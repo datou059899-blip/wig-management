@@ -40,6 +40,8 @@ type PlatformStockSource =
   | 'product_stock_fallback'
   | 'none'
 
+type ActionSkuFilter = 'all' | 'needsAction'
+
 interface ProductData {
   id: string
   sku: string
@@ -92,6 +94,33 @@ interface ProductData {
   businessStatus: string
   stockStatus: string
   updatedAt: string
+}
+
+const NEEDS_ACTION_INVENTORY_RISKS = new Set(['断货', '高风险', '需关注'])
+const INVENTORY_RISK_PRIORITY: Record<string, number> = {
+  断货: 0,
+  高风险: 1,
+  需关注: 2,
+  正常: 3,
+  库存充足: 4,
+  无近期销量: 5,
+  缺货下架: 6,
+  停售: 7,
+}
+const DEFAULT_PRODUCT_SORT = {
+  key: 'currentAvailableStock',
+  direction: 'asc' as const,
+}
+
+function isNeedsActionProduct(product: ProductData) {
+  return product.businessStatus === 'ACTIVE' && NEEDS_ACTION_INVENTORY_RISKS.has(product.inventoryRisk)
+}
+
+function compareInventoryRiskSeverity(a: ProductData, b: ProductData) {
+  const riskDiff = (INVENTORY_RISK_PRIORITY[a.inventoryRisk] ?? 99) - (INVENTORY_RISK_PRIORITY[b.inventoryRisk] ?? 99)
+  if (riskDiff !== 0) return riskDiff
+
+  return a.sku.localeCompare(b.sku)
 }
 
 interface ReconcilePreviewItem {
@@ -1078,6 +1107,7 @@ export default function ProductSalesPage() {
   const [groups, setGroups] = useState<ProductSalesGroup[]>([])
   const [selectedSku, setSelectedSku] = useState('')
   const [selectedGroupId, setSelectedGroupId] = useState('')
+  const [actionSkuFilter, setActionSkuFilter] = useState<ActionSkuFilter>('all')
   const [trendRange, setTrendRange] = useState<TrendRange>('7')
   const [trendStartDate, setTrendStartDate] = useState('')
   const [trendEndDate, setTrendEndDate] = useState('')
@@ -1179,8 +1209,7 @@ export default function ProductSalesPage() {
   const [sampleStatsError, setSampleStatsError] = useState<string | null>(null)
   const [expandedProductIds, setExpandedProductIds] = useState<string[]>([])
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
-    key: 'currentAvailableStock',
-    direction: 'asc',
+    ...DEFAULT_PRODUCT_SORT,
   })
   const [inventoryReconciliationOpen, setInventoryReconciliationOpen] = useState(false)
   const [reconcilePreviewOpen, setReconcilePreviewOpen] = useState(false)
@@ -2669,9 +2698,20 @@ export default function ProductSalesPage() {
     return a.sku.localeCompare(b.sku)
   }
 
+  const needsActionCount = products.filter(isNeedsActionProduct).length
+  const useDefaultProductSort = sortConfig.key === DEFAULT_PRODUCT_SORT.key && sortConfig.direction === DEFAULT_PRODUCT_SORT.direction
   const sortedProducts = [...products].sort((a, b) => {
+    if (actionSkuFilter === 'needsAction' && useDefaultProductSort) {
+      return compareInventoryRiskSeverity(a, b)
+    }
+
     if (sortConfig.key === 'salesRankPriority') {
       const result = compareDefaultSalesRankSort(a, b)
+      return sortConfig.direction === 'asc' ? result : -result
+    }
+
+    if (sortConfig.key === 'inventoryRisk') {
+      const result = compareInventoryRiskSeverity(a, b)
       return sortConfig.direction === 'asc' ? result : -result
     }
 
@@ -2720,7 +2760,9 @@ export default function ProductSalesPage() {
 
     return 0
   })
-  const visibleProducts = sortedProducts
+  const visibleProducts = sortedProducts.filter((product) => (
+    actionSkuFilter === 'needsAction' ? isNeedsActionProduct(product) : true
+  ))
   const reconciliationProducts = [...products].sort((a, b) => {
     const diffGap = Math.abs(b.inventoryDiff ?? 0) - Math.abs(a.inventoryDiff ?? 0)
     if (diffGap !== 0) return diffGap
@@ -5322,7 +5364,29 @@ export default function ProductSalesPage() {
                           主表保留运营最常用的库存、销量和动销等级；复杂库存公式保留到详情和对账里。
                         </div>
                       </div>
-                      {tableRangeLoading && <span className="text-slate-500">筛选期销量刷新中...</span>}
+                      <div className="flex flex-wrap items-center gap-3">
+                        {tableRangeLoading && <span className="text-slate-500">筛选期销量刷新中...</span>}
+                        <div className="inline-flex rounded-lg border border-slate-300 bg-white p-1">
+                          <button
+                            type="button"
+                            onClick={() => setActionSkuFilter('all')}
+                            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                              actionSkuFilter === 'all' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            全部 SKU
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActionSkuFilter('needsAction')}
+                            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                              actionSkuFilter === 'needsAction' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            需要处理 {needsActionCount}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="min-w-[1180px] w-full text-sm">
@@ -5409,7 +5473,7 @@ export default function ProductSalesPage() {
                           {visibleProducts.length === 0 ? (
                             <tr>
                               <td colSpan={9} className="px-6 py-8 text-center text-slate-500">
-                                暂无产品数据
+                                {actionSkuFilter === 'needsAction' ? '暂无需要处理的 SKU' : '暂无产品数据'}
                               </td>
                             </tr>
                           ) : (
