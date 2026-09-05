@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { canAccessPage, getSessionPermissionContext } from '@/lib/pagePermissions'
 import { canManageProductOpportunities } from '@/lib/permissions'
 import { prisma } from '@/lib/prisma'
 
@@ -12,12 +13,57 @@ const LINK_STATUS_LABELS: Record<string, string> = {
   SKU_PENDING: '待确认SKU',
 }
 
+function mapOpportunity(item: {
+  id: string
+  name: string
+  category: string | null
+  styleType: string | null
+  heatLevel: string
+  sourceNote: string | null
+  existingSimilar: string | null
+  diffPoints: string | null
+  suggestedAction: string
+  priority: string
+  assignee: string | null
+  notes: string | null
+  status: string
+  productId: string | null
+  purchaseOrderItemId: string | null
+  createdAt: Date
+  updatedAt: Date
+}, product: { id: string; sku: string | null; name: string } | null = null) {
+  return {
+    id: item.id,
+    name: item.name,
+    category: item.category,
+    styleType: item.styleType,
+    heatLevel: item.heatLevel,
+    sourceNote: item.sourceNote,
+    existingSimilar: item.existingSimilar,
+    diffPoints: item.diffPoints,
+    suggestedAction: item.suggestedAction,
+    priority: item.priority,
+    assignee: item.assignee,
+    notes: item.notes,
+    status: item.status,
+    productId: item.productId,
+    product,
+    purchaseOrderItemId: item.purchaseOrderItemId,
+    createdAt: item.createdAt.toISOString(),
+    updatedAt: item.updatedAt.toISOString(),
+  }
+}
+
 // 获取选品更新池列表
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
     if (!session) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
+    }
+    const permissionContext = getSessionPermissionContext(session)
+    if (!canAccessPage(permissionContext, 'productOpportunities')) {
+      return NextResponse.json({ error: '无权限' }, { status: 403 })
     }
 
     const searchParams = request.nextUrl.searchParams
@@ -26,7 +72,7 @@ export async function GET(request: NextRequest) {
     const supplier = searchParams.get('supplier') || 'all'
     const search = searchParams.get('search') || ''
 
-    const where: any = {}
+    const where: any = { productId: null }
     
     if (status && status !== 'all') {
       where.status = status
@@ -96,6 +142,46 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const completedProductIdsBySearch = search
+      ? (await prisma.product.findMany({
+        where: {
+          OR: [
+            { sku: { contains: search } },
+            { name: { contains: search } },
+          ],
+        },
+        select: { id: true },
+        take: 50,
+      })).map((product) => product.id)
+      : []
+    const completedWhere: any = {
+      productId: { not: null },
+    }
+
+    if (search) {
+      completedWhere.OR = [
+        { name: { contains: search } },
+        { purchaseOrderItem: { is: { productNameSnapshot: { contains: search } } } },
+        { purchaseOrderItem: { is: { purchaseOrder: { is: { orderNo: { contains: search } } } } } },
+        ...(completedProductIdsBySearch.length ? [{ productId: { in: completedProductIdsBySearch } }] : []),
+      ]
+    }
+
+    if (supplier && supplier !== 'all') {
+      completedWhere.purchaseOrderItem = {
+        is: {
+          purchaseOrder: {
+            is: {
+              OR: [
+                { supplierNameSnapshot: supplier },
+                { supplier: { is: { name: supplier } } },
+              ],
+            },
+          },
+        },
+      }
+    }
+
     const [purchaseDevelopmentItems, allPurchaseDevelopmentItems] = await Promise.all([
       prisma.purchaseOrderItem.findMany({
         where: purchaseWhere,
@@ -130,6 +216,36 @@ export async function GET(request: NextRequest) {
         },
       }),
     ])
+    const completedOpportunities = await prisma.productOpportunity.findMany({
+      where: completedWhere,
+      include: {
+        purchaseOrderItem: {
+          include: {
+            purchaseOrder: {
+              select: {
+                id: true,
+                orderNo: true,
+                status: true,
+                expectedArrivalDate: true,
+                supplierId: true,
+                supplierNameSnapshot: true,
+                supplier: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 100,
+    })
+    const completedProductIds = completedOpportunities.map((item) => item.productId).filter(Boolean) as string[]
+    const completedProducts = completedProductIds.length
+      ? await prisma.product.findMany({
+        where: { id: { in: completedProductIds } },
+        select: { id: true, sku: true, name: true },
+      })
+      : []
+    const completedProductMap = new Map(completedProducts.map(product => [product.id, product]))
 
     // 统计各状态数量
     const statusCounts = await prisma.productOpportunity.groupBy({
@@ -170,25 +286,31 @@ export async function GET(request: NextRequest) {
         productStatus: '未关联',
         opportunityId: item.productOpportunity?.id || null,
         opportunityExists: Boolean(item.productOpportunity),
-        opportunity: item.productOpportunity ? {
-          id: item.productOpportunity.id,
-          name: item.productOpportunity.name,
-          category: item.productOpportunity.category,
-          styleType: item.productOpportunity.styleType,
-          heatLevel: item.productOpportunity.heatLevel,
-          sourceNote: item.productOpportunity.sourceNote,
-          existingSimilar: item.productOpportunity.existingSimilar,
-          diffPoints: item.productOpportunity.diffPoints,
-          suggestedAction: item.productOpportunity.suggestedAction,
-          priority: item.productOpportunity.priority,
-          assignee: item.productOpportunity.assignee,
-          notes: item.productOpportunity.notes,
-          status: item.productOpportunity.status,
-          productId: item.productOpportunity.productId,
-          purchaseOrderItemId: item.productOpportunity.purchaseOrderItemId,
-          createdAt: item.productOpportunity.createdAt.toISOString(),
-          updatedAt: item.productOpportunity.updatedAt.toISOString(),
-        } : null,
+        opportunity: item.productOpportunity ? mapOpportunity(item.productOpportunity) : null,
+      }
+    })
+    const completedDevelopmentItems = completedOpportunities.map((item) => {
+      const purchaseItem = item.purchaseOrderItem
+      const order = purchaseItem?.purchaseOrder || null
+      const product = item.productId ? completedProductMap.get(item.productId) || null : null
+      const supplierName = order?.supplier?.name || order?.supplierNameSnapshot || null
+
+      return {
+        id: item.id,
+        sourceType: purchaseItem ? 'purchase' : 'independent',
+        originalName: purchaseItem?.productNameSnapshot || item.name,
+        supplierName,
+        supplierId: order?.supplier?.id || order?.supplierId || null,
+        orderNo: order?.orderNo || null,
+        purchaseOrderId: order?.id || null,
+        purchaseOrderStatus: order?.status || null,
+        orderedQty: purchaseItem?.orderedQty ?? null,
+        expectedArrivalDate: order?.expectedArrivalDate?.toISOString() || null,
+        linkStatus: purchaseItem?.linkStatus || null,
+        linkStatusLabel: purchaseItem?.linkStatus ? LINK_STATUS_LABELS[purchaseItem.linkStatus] || purchaseItem.linkStatus : null,
+        opportunity: mapOpportunity(item, product),
+        product,
+        updatedAt: item.updatedAt.toISOString(),
       }
     })
 
@@ -196,6 +318,7 @@ export async function GET(request: NextRequest) {
       opportunities,
       statusCounts: Object.fromEntries(statusCounts.map(s => [s.status, s._count.id])),
       purchaseDevelopmentItems: mappedPurchaseDevelopmentItems,
+      completedDevelopmentItems,
       purchaseDevelopmentStats: {
         NEW_PRODUCT: purchaseStatusCounts.NEW_PRODUCT || 0,
         DIFFERENT_CRAFT: purchaseStatusCounts.DIFFERENT_CRAFT || 0,

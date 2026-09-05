@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { canManageProductOpportunities } from '@/lib/permissions'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -48,6 +48,19 @@ type PurchaseDevelopmentItem = {
   opportunityId: string | null
   opportunityExists: boolean
   opportunity: Opportunity | null
+}
+
+type CompletedDevelopmentItem = {
+  id: string
+  sourceType: 'purchase' | 'independent'
+  originalName: string
+  supplierName: string | null
+  orderNo: string | null
+  orderedQty: number | null
+  expectedArrivalDate: string | null
+  opportunity: Opportunity
+  product: { id: string; sku: string | null; name: string } | null
+  updatedAt: string
 }
 
 type ProductOption = {
@@ -138,11 +151,14 @@ export default function ProductOpportunitiesPage() {
 
   const [opportunities, setOpportunities] = useState<Opportunity[]>([])
   const [purchaseDevelopmentItems, setPurchaseDevelopmentItems] = useState<PurchaseDevelopmentItem[]>([])
+  const [completedDevelopmentItems, setCompletedDevelopmentItems] = useState<CompletedDevelopmentItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [viewMode, setViewMode] = useState<'pending' | 'completed'>('pending')
   const [statusFilter, setStatusFilter] = useState('all')
   const [priorityFilter, setPriorityFilter] = useState('all')
   const [supplierFilter, setSupplierFilter] = useState('all')
   const [search, setSearch] = useState('')
+  const [completedSearch, setCompletedSearch] = useState('')
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({})
   const [purchaseDevelopmentStats, setPurchaseDevelopmentStats] = useState({
     NEW_PRODUCT: 0,
@@ -196,6 +212,7 @@ export default function ProductOpportunitiesPage() {
       if (res.ok) {
         setOpportunities(data.opportunities || [])
         setPurchaseDevelopmentItems(data.purchaseDevelopmentItems || [])
+        setCompletedDevelopmentItems(data.completedDevelopmentItems || [])
         setStatusCounts(data.statusCounts || {})
         setPurchaseDevelopmentStats(data.purchaseDevelopmentStats || {
           NEW_PRODUCT: 0,
@@ -422,6 +439,17 @@ export default function ProductOpportunitiesPage() {
   const differentCraftCount = purchaseDevelopmentStats.DIFFERENT_CRAFT || 0
   const skuPendingCount = purchaseDevelopmentStats.SKU_PENDING || 0
   const developmentTotalCount = purchaseDevelopmentStats.total || 0
+  const filteredCompletedDevelopmentItems = useMemo(() => {
+    const keyword = completedSearch.trim().toLowerCase()
+    if (!keyword) return completedDevelopmentItems
+
+    return completedDevelopmentItems.filter((item) => [
+      item.originalName,
+      item.product?.sku || '',
+      item.product?.name || '',
+      item.orderNo || '',
+    ].some((value) => value.toLowerCase().includes(keyword)))
+  }, [completedDevelopmentItems, completedSearch])
 
   const formatDate = (value: string | null) => {
     if (!value) return '—'
@@ -450,6 +478,29 @@ export default function ProductOpportunitiesPage() {
         }
       />
 
+      <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1">
+        <button
+          type="button"
+          onClick={() => setViewMode('pending')}
+          className={`rounded-md px-4 py-2 text-sm font-medium ${
+            viewMode === 'pending' ? 'bg-orange-50 text-orange-700' : 'text-gray-500 hover:text-gray-900'
+          }`}
+        >
+          待处理
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode('completed')}
+          className={`rounded-md px-4 py-2 text-sm font-medium ${
+            viewMode === 'completed' ? 'bg-orange-50 text-orange-700' : 'text-gray-500 hover:text-gray-900'
+          }`}
+        >
+          已完成
+        </button>
+      </div>
+
+      {viewMode === 'pending' && (
+        <>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <button
           onClick={() => setStatusFilter('all')}
@@ -684,6 +735,84 @@ export default function ProductOpportunitiesPage() {
           </div>
         )}
       </div>
+        </>
+      )}
+
+      {viewMode === 'completed' && (
+        <div className="space-y-4">
+          <div className="filter-bar">
+            <div className="flex-1 min-w-[220px]">
+              <input
+                type="text"
+                placeholder="搜索原始款名、正式 SKU、商品名、采购单号"
+                value={completedSearch}
+                onChange={(e) => setCompletedSearch(e.target.value)}
+                className="input"
+              />
+            </div>
+          </div>
+
+          {filteredCompletedDevelopmentItems.length === 0 ? (
+            <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-500">
+              暂无已完成新品
+            </div>
+          ) : (
+            <div className="table-container">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>原始款名</th>
+                    <th>来源</th>
+                    <th>Supplier</th>
+                    <th>采购单号</th>
+                    <th>订购数量</th>
+                    <th>正式商品</th>
+                    <th>canonical SKU</th>
+                    <th>开发状态</th>
+                    <th>最近更新</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredCompletedDevelopmentItems.map((item) => (
+                    <tr key={item.id}>
+                      <td>
+                        <div className="font-medium text-gray-900">{item.originalName}</div>
+                        {item.expectedArrivalDate && (
+                          <div className="mt-1 text-xs text-gray-400">预计到货 {formatDate(item.expectedArrivalDate)}</div>
+                        )}
+                      </td>
+                      <td className="text-gray-700">
+                        {item.sourceType === 'purchase' ? '采购来源' : '独立新品'}
+                      </td>
+                      <td className="text-gray-700">{item.supplierName || '—'}</td>
+                      <td className="font-mono text-xs text-gray-600">{item.orderNo || '—'}</td>
+                      <td className="text-gray-700">
+                        {item.orderedQty === null ? '—' : item.orderedQty.toLocaleString('zh-CN')}
+                      </td>
+                      <td>
+                        <div className="font-medium text-gray-900">{item.product?.name || '—'}</div>
+                      </td>
+                      <td className="font-mono text-xs text-gray-700">{item.product?.sku || '—'}</td>
+                      <td><span className="badge badge-success">{item.opportunity.status}</span></td>
+                      <td className="text-xs text-gray-500">{formatDate(item.updatedAt)}</td>
+                      <td>
+                        {item.product?.id ? (
+                          <a href={`/dashboard/products/${item.product.id}`} className="text-emerald-600 hover:text-emerald-800 text-xs">
+                            查看商品
+                          </a>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 创建/编辑弹窗 */}
       {createOpen && (
