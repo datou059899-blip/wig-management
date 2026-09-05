@@ -44,6 +44,23 @@ implement → npm run build → review → commit
 够用就停。
 不要过度设计。
 
+Local Next.js 开发：
+
+同一个 working tree 不要同时运行 `npm run dev` 和 `npm run build`。
+两者都会使用 `.next`，可能导致本地 CSS/chunk 失效、`ChunkLoadError`、`/_next/static` 500、`MODULE_NOT_FOUND` 等假故障。
+
+执行 build 前先停止 dev。
+build 完成后再重新启动 dev。
+
+如果本地出现上述症状，优先：
+
+1. 停止 dev
+2. `rm -rf .next`
+3. `npm run dev`
+4. 浏览器新开标签页或 hard refresh
+
+遇到这类问题不要先修改业务代码。
+
 ---
 
 ## 2. Git Safety
