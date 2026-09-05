@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { signOut, useSession } from 'next-auth/react'
 import { getAllowedMenuItems } from '@/lib/pagePermissions'
 import { useState, useEffect, useMemo } from 'react'
+import GlobalSearchDialog from '@/components/GlobalSearchDialog'
 
 const ROLE_LABELS: Record<string, string> = {
   admin: '管理员',
@@ -128,6 +129,7 @@ export default function Sidebar() {
               <span className="text-slate-500 text-[10px]">运营工作台</span>
             </div>
           </Link>
+          <GlobalSearchDialog />
         </div>
 
         <nav className="flex-1 overflow-y-auto py-3 px-2">
