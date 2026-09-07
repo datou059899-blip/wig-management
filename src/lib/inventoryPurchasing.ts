@@ -67,7 +67,7 @@ export type InventorySummaryItem = {
   previousTotalStock: number | null
   changeQty: number | null
   latestSnapshotAt: string | null
-  source: 'snapshot' | 'product_stock_fallback' | 'none'
+  source: 'snapshot' | 'none'
 }
 
 type StrictSkuProduct = {
@@ -425,11 +425,11 @@ export async function getInventorySummaryItems(): Promise<InventorySummaryItem[]
       productId: product.id,
       sku: product.sku,
       productName: product.name,
-      currentTotalStock: latestQty ?? product.stock ?? null,
+      currentTotalStock: latestQty,
       previousTotalStock: previousQty,
       changeQty: latestQty === null || previousQty === null ? null : latestQty - previousQty,
       latestSnapshotAt: latest?.date.toISOString() ?? null,
-      source: latest ? 'snapshot' as const : product.stock !== null ? 'product_stock_fallback' as const : 'none' as const,
+      source: latest ? 'snapshot' as const : 'none' as const,
     }]
   })
 }

@@ -37,7 +37,6 @@ interface SummaryData {
 type PlatformStockSource =
   | 'snapshot_total'
   | 'snapshot_available_locked'
-  | 'product_stock_fallback'
   | 'none'
 
 type ActionSkuFilter = 'all' | 'needsAction'
@@ -2893,8 +2892,6 @@ export default function ProductSalesPage() {
         return '快照 totalQty'
       case 'snapshot_available_locked':
         return '快照 available+locked'
-      case 'product_stock_fallback':
-        return '非快照（Product.stock）'
       default:
         return '无平台快照'
     }

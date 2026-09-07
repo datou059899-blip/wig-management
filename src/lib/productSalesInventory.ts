@@ -65,7 +65,6 @@ const DEFAULT_RANK_SETTINGS: RankSettings = {
 export type PlatformStockSource =
   | 'snapshot_total'
   | 'snapshot_available_locked'
-  | 'product_stock_fallback'
   | 'none'
 
 export type ProductSalesInventoryProduct = {
@@ -285,7 +284,7 @@ function resolvePlatformStock(snapshot: {
   availableQty: number | null
   lockedQty: number | null
   date: Date
-} | null | undefined, fallbackStock: number) {
+} | null | undefined) {
   if (snapshot) {
     if (snapshot.totalQty !== null && snapshot.totalQty !== undefined) {
       return {
@@ -302,14 +301,6 @@ function resolvePlatformStock(snapshot: {
         source: 'snapshot_available_locked' as const,
         hasSnapshot: true,
       }
-    }
-  }
-
-  if (fallbackStock > 0) {
-    return {
-      stock: fallbackStock,
-      source: 'product_stock_fallback' as const,
-      hasSnapshot: false,
     }
   }
 
@@ -712,7 +703,7 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
     for (const candidateSku of orderedCandidateSkus) {
       const snapshot = latestSnapshotBySku.get(candidateSku)
       if (!snapshot) continue
-      const resolvedStock = resolvePlatformStock(snapshot, product.stock || 0)
+      const resolvedStock = resolvePlatformStock(snapshot)
       selectedSnapshot = snapshot
       selectedPlatformStock = resolvedStock.stock
       selectedPlatformSource = resolvedStock.source
@@ -721,7 +712,7 @@ export async function getProductSalesInventoryData(selectedRange: SelectedRange)
     }
 
     if (!selectedSnapshot) {
-      const resolvedStock = resolvePlatformStock(null, product.stock || 0)
+      const resolvedStock = resolvePlatformStock(null)
       selectedPlatformStock = resolvedStock.stock
       selectedPlatformSource = resolvedStock.source
       selectedHasPlatformSnapshot = resolvedStock.hasSnapshot

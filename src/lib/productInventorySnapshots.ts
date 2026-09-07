@@ -26,7 +26,7 @@ export type CurrentInventoryResult = {
   snapshotAdjustmentAfterQty: number
   snapshotConsumedAfterQty: number
   hasSnapshot: boolean
-  source: 'snapshot_total' | 'snapshot_available_locked' | 'product_stock_fallback' | 'none'
+  source: 'snapshot_total' | 'snapshot_available_locked' | 'none'
 }
 
 export function buildEffectiveInventorySnapshotWhere<T extends Record<string, unknown>>(where?: T) {
@@ -253,13 +253,12 @@ export async function getCurrentInventoryByProduct(
             : sum
         ), 0)
       : 0
-    const fallbackStock = product.stock ?? 0
     const currentStock = selectedSnapshot
       ? Math.max((snapshotStock ?? 0) + snapshotAdjustmentAfterQty - snapshotConsumedAfterQty, 0)
-      : Math.max(fallbackStock, 0)
+      : 0
     const source = selectedSnapshot
       ? resolved?.source === 'totalQty' ? 'snapshot_total' : 'snapshot_available_locked'
-      : product.stock !== null && product.stock !== undefined ? 'product_stock_fallback' : 'none'
+      : 'none'
 
     result.set(product.id, {
       productId: product.id,

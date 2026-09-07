@@ -13,7 +13,7 @@ type SummaryItem = {
   previousTotalStock: number | null
   changeQty: number | null
   latestSnapshotAt: string | null
-  source: 'snapshot' | 'product_stock_fallback' | 'none'
+  source: 'snapshot' | 'none'
 }
 
 type ImportBatch = {
@@ -1161,7 +1161,7 @@ export default function InventoryPurchasingPage() {
             <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
               <div className="border-b border-slate-200 px-5 py-4">
                 <h2 className="text-lg font-semibold text-slate-900">SKU 实时库存校准</h2>
-                <p className="mt-1 text-sm text-slate-500">只展示快照口径库存；没有有效快照时暂时显示历史 Product.stock fallback。</p>
+                <p className="mt-1 text-sm text-slate-500">只展示快照口径库存；没有有效快照时显示无数据。</p>
               </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -1185,7 +1185,7 @@ export default function InventoryPurchasingPage() {
                         <td className="px-4 py-3 text-slate-600">{formatQty(item.previousTotalStock)}</td>
                         <td className={`px-4 py-3 font-medium ${item.changeQty && item.changeQty < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{formatChange(item.changeQty)}</td>
                         <td className="px-4 py-3 text-slate-600">{formatDateTime(item.latestSnapshotAt)}</td>
-                        <td className="px-4 py-3 text-slate-500">{item.source === 'snapshot' ? '有效快照' : item.source === 'product_stock_fallback' ? '历史 Product.stock' : '无数据'}</td>
+                        <td className="px-4 py-3 text-slate-500">{item.source === 'snapshot' ? '有效快照' : '无数据'}</td>
                       </tr>
                     ))}
                   </tbody>
