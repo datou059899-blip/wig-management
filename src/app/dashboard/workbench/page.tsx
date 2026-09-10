@@ -10,6 +10,7 @@ import {
   canRunWorkTaskSync,
   canViewTeamWorkTasks,
 } from '@/lib/permissions'
+import { isNeedsActionProduct, parseProductSalesProducts } from '@/lib/productSalesNeedsAction'
 import { useToast } from '@/components/ToastProvider'
 
 type WorkTask = {
@@ -54,6 +55,7 @@ type BusinessTodoStats = {
   inventoryRiskCount: number
   stockoutCount: number
   highRiskCount: number
+  attentionRiskCount: number
   inventoryRiskItems: any[]
   overduePurchaseCount: number
   overduePurchaseItems: any[]
@@ -71,6 +73,8 @@ type BusinessTodoStats = {
   upcomingArrivals: any[]
   upcomingTasks: WorkTask[]
 }
+
+type BusinessTodosLoadState = 'loading' | 'success' | 'error'
 
 const toLocalDateKey = (d: Date) => {
   const y = d.getFullYear()
@@ -140,6 +144,7 @@ const emptyBusinessTodoStats: BusinessTodoStats = {
   inventoryRiskCount: 0,
   stockoutCount: 0,
   highRiskCount: 0,
+  attentionRiskCount: 0,
   inventoryRiskItems: [],
   overduePurchaseCount: 0,
   overduePurchaseItems: [],
@@ -227,6 +232,7 @@ export default function WorkbenchPage() {
   const [loading, setLoading] = useState(true)
   const [users, setUsers] = useState<{id: string, name: string, email: string, role: string}[]>([])
   const [businessTodos, setBusinessTodos] = useState<BusinessTodoStats>(emptyBusinessTodoStats)
+  const [businessTodosLoadState, setBusinessTodosLoadState] = useState<BusinessTodosLoadState>('loading')
   const [showAllTasks, setShowAllTasks] = useState(false)
 
   const dayKey = useMemo(() => toLocalDateKey(new Date()), [])
@@ -272,6 +278,7 @@ export default function WorkbenchPage() {
   }
 
   const fetchBusinessTodos = async () => {
+    setBusinessTodosLoadState('loading')
     try {
       const [salesRes, businessRes, purchaseOrdersRes, opportunitiesRes, workTasksRes] = await Promise.all([
         fetch('/api/product-sales?range=7'),
@@ -281,19 +288,20 @@ export default function WorkbenchPage() {
         fetch('/api/work-tasks?mine=1'),
       ])
 
+      if (!salesRes.ok) {
+        throw new Error(`销售分析请求失败 (${salesRes.status})`)
+      }
+
       const [sales, business, purchaseOrders, opportunities, workTasks] = await Promise.all([
-        salesRes.ok ? salesRes.json() : Promise.resolve({ products: [] }),
+        salesRes.json(),
         businessRes.ok ? businessRes.json() : Promise.resolve({ items: [] }),
         purchaseOrdersRes.ok ? purchaseOrdersRes.json() : Promise.resolve({ orders: [] }),
         opportunitiesRes.ok ? opportunitiesRes.json() : Promise.resolve({ purchaseDevelopmentItems: [] }),
         workTasksRes.ok ? workTasksRes.json() : Promise.resolve({ tasks: [] }),
       ])
 
-      const salesProducts = sales.products || []
-      const activeInventoryRisk = salesProducts.filter((product: any) =>
-        product.businessStatus === 'ACTIVE' &&
-        (product.inventoryRisk === '断货' || product.inventoryRisk === '高风险')
-      ).sort((a: any, b: any) => {
+      const salesProducts = parseProductSalesProducts<any>(sales)
+      const activeInventoryRisk = salesProducts.filter(isNeedsActionProduct).sort((a: any, b: any) => {
         if (a.inventoryRisk === '断货' && b.inventoryRisk !== '断货') return -1
         if (a.inventoryRisk !== '断货' && b.inventoryRisk === '断货') return 1
         const aDays = a.currentSellableDays ?? Number.POSITIVE_INFINITY
@@ -382,6 +390,9 @@ export default function WorkbenchPage() {
         highRiskCount: salesProducts.filter((product: any) =>
           product.businessStatus === 'ACTIVE' && product.inventoryRisk === '高风险'
         ).length,
+        attentionRiskCount: salesProducts.filter((product: any) =>
+          product.businessStatus === 'ACTIVE' && product.inventoryRisk === '需关注'
+        ).length,
         inventoryRiskItems: activeInventoryRisk.slice(0, 3),
         overduePurchaseCount: overduePurchaseItems.length,
         overduePurchaseItems: overduePurchaseItems.slice(0, 3),
@@ -401,8 +412,10 @@ export default function WorkbenchPage() {
         upcomingArrivals: upcomingArrivals.slice(0, 5),
         upcomingTasks: upcomingTasks.slice(0, 5),
       })
-    } catch {
-      setBusinessTodos(emptyBusinessTodoStats)
+      setBusinessTodosLoadState('success')
+    } catch (error) {
+      console.error('加载工作台经营异常失败:', error)
+      setBusinessTodosLoadState('error')
     }
   }
 
@@ -838,17 +851,15 @@ export default function WorkbenchPage() {
       title: '库存高风险',
       count: businessTodos.inventoryRiskCount,
       description: businessTodos.inventoryRiskCount > 0
-        ? `${businessTodos.stockoutCount} 个 ACTIVE 商品已断货，${businessTodos.highRiskCount} 个可售天数 ≤ 7。`
-        : '✓ ACTIVE 商品暂无断货或 7 天内高风险。',
+        ? `${businessTodos.stockoutCount} 个断货，${businessTodos.highRiskCount} 个高风险，${businessTodos.attentionRiskCount} 个需关注。`
+        : '✓ ACTIVE 商品暂无需要处理的库存风险。',
       href: '/dashboard/product-sales',
       action: '去销售分析',
       icon: '!',
       tone: businessTodos.inventoryRiskCount > 0 ? 'rose' : 'slate',
       details: businessTodos.inventoryRiskItems.map((product: any) => ({
-        title: product.sku || product.name || '-',
-        meta: product.inventoryRisk === '断货'
-          ? `断货 · 近30天售 ${product.monthSales || 0}`
-          : `预计可售 ${product.currentSellableDays ?? '—'} 天`,
+        title: [product.sku, product.name].filter(Boolean).join(' · ') || '-',
+        meta: `${product.inventoryRisk} · 当前库存 ${product.currentAvailableStock ?? '—'} · 可售 ${product.currentSellableDays ?? '—'} 天`,
       })),
     },
     {
@@ -1027,7 +1038,22 @@ export default function WorkbenchPage() {
           <h2 className="text-lg font-semibold text-gray-900">今日需要处理</h2>
           <p className="mt-1 text-sm text-gray-500">优先显示具体对象，复用正式业务页面口径。</p>
         </div>
-        {activeBusinessTodoItems.length === 0 ? (
+        {businessTodosLoadState === 'loading' ? (
+          <div className="rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-3 text-sm text-gray-500">
+            正在加载经营异常…
+          </div>
+        ) : businessTodosLoadState === 'error' ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-100 bg-rose-50/40 px-4 py-3">
+            <div className="text-sm text-rose-700">经营异常数据加载失败，请刷新后重试</div>
+            <button
+              type="button"
+              onClick={() => void fetchBusinessTodos()}
+              className="text-sm font-medium text-rose-700 hover:text-rose-800"
+            >
+              重新加载
+            </button>
+          </div>
+        ) : activeBusinessTodoItems.length === 0 ? (
           <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 px-4 py-3">
             <div className="text-sm font-semibold text-emerald-700">✓ 当前暂无经营异常</div>
             <div className="mt-1 text-sm text-emerald-700/80">

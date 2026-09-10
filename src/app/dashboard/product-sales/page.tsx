@@ -16,6 +16,7 @@ import {
   YAxis,
 } from 'recharts'
 import { PageGuard } from '@/components/PageGuard'
+import { isNeedsActionProduct } from '@/lib/productSalesNeedsAction'
 
 interface SummaryData {
   todaySales: number
@@ -95,7 +96,6 @@ interface ProductData {
   updatedAt: string
 }
 
-const NEEDS_ACTION_INVENTORY_RISKS = new Set(['断货', '高风险', '需关注'])
 const INVENTORY_RISK_PRIORITY: Record<string, number> = {
   断货: 0,
   高风险: 1,
@@ -109,10 +109,6 @@ const INVENTORY_RISK_PRIORITY: Record<string, number> = {
 const DEFAULT_PRODUCT_SORT = {
   key: 'currentAvailableStock',
   direction: 'asc' as const,
-}
-
-function isNeedsActionProduct(product: ProductData) {
-  return product.businessStatus === 'ACTIVE' && NEEDS_ACTION_INVENTORY_RISKS.has(product.inventoryRisk)
 }
 
 function compareInventoryRiskSeverity(a: ProductData, b: ProductData) {
