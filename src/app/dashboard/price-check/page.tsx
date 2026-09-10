@@ -8,10 +8,10 @@ import { PageHeader } from '@/components/layout/PageHeader'
 
 interface PriceCheckItem {
   sku: string
-  localPrice: number
+  localPrice: number | null
   tiktokPrice: number
-  difference: number
-  differencePercent: number
+  difference: number | null
+  differencePercent: number | null
   productName?: string
 }
 
@@ -70,10 +70,10 @@ export default function PriceCheckPage() {
       // 从 TikTok 同步数据遍历
       syncs.forEach((sync: any) => {
         const product = products.find((p: any) => p.sku === sync.sku)
-        const localPrice = product?.priceUsd || 0
+        const localPrice = typeof product?.effectivePrice === 'number' ? product.effectivePrice : null
         const tiktokPrice = sync.priceUsd || 0
-        const difference = localPrice - tiktokPrice
-        const differencePercent = tiktokPrice > 0 ? (difference / tiktokPrice) * 100 : 0
+        const difference = localPrice === null ? null : localPrice - tiktokPrice
+        const differencePercent = difference !== null && tiktokPrice > 0 ? (difference / tiktokPrice) * 100 : null
         
         priceItems.push({
           sku: sync.sku,
@@ -88,12 +88,13 @@ export default function PriceCheckPage() {
       // 找出有本地定价但未同步的产品
       products.forEach((product: any) => {
         if (!syncs.find((s: any) => s.sku === product.sku)) {
+          const localPrice = typeof product.effectivePrice === 'number' ? product.effectivePrice : null
           priceItems.push({
             sku: product.sku,
-            localPrice: product.priceUsd,
+            localPrice,
             tiktokPrice: 0,
-            difference: product.priceUsd,
-            differencePercent: -100,
+            difference: localPrice,
+            differencePercent: localPrice === null ? null : -100,
             productName: product.name
           })
         }
@@ -110,34 +111,34 @@ export default function PriceCheckPage() {
   const filteredItems = items.filter((item) => {
     if (filter === 'all') return true
     const hasTikTok = item.tiktokPrice > 0
-    const absDiff = Math.abs(item.differencePercent)
-    const isHigher = hasTikTok && item.localPrice > item.tiktokPrice
-    const isLower = hasTikTok && item.localPrice < item.tiktokPrice
-    const isMatch = hasTikTok && absDiff < 1
+    const absDiff = item.differencePercent === null ? null : Math.abs(item.differencePercent)
+    const isHigher = hasTikTok && item.localPrice !== null && item.localPrice > item.tiktokPrice
+    const isLower = hasTikTok && item.localPrice !== null && item.localPrice < item.tiktokPrice
+    const isMatch = hasTikTok && absDiff !== null && absDiff < 1
     const isNoTikTok = item.tiktokPrice === 0
     const isAbnormal =
-      !hasTikTok || item.localPrice <= 0 || absDiff >= thresholdPercent
+      !hasTikTok || item.localPrice === null || item.localPrice <= 0 || (absDiff !== null && absDiff >= thresholdPercent)
 
     if (filter === 'higher') return isHigher
     if (filter === 'lower') return isLower
     if (filter === 'match') return isMatch
     if (filter === 'noTikTok') return isNoTikTok
     if (filter === 'abnormal') return isAbnormal
-    if (filter === 'needAdjust') return hasTikTok && absDiff >= thresholdPercent
+    if (filter === 'needAdjust') return hasTikTok && absDiff !== null && absDiff >= thresholdPercent
     return true
   })
 
   const stats = {
     total: items.length,
-    higher: items.filter(i => i.localPrice > i.tiktokPrice).length,
-    lower: items.filter(i => i.localPrice < i.tiktokPrice && i.tiktokPrice > 0).length,
-    match: items.filter(i => Math.abs(i.differencePercent) < 1).length,
+    higher: items.filter(i => i.localPrice !== null && i.localPrice > i.tiktokPrice).length,
+    lower: items.filter(i => i.localPrice !== null && i.localPrice < i.tiktokPrice && i.tiktokPrice > 0).length,
+    match: items.filter(i => i.differencePercent !== null && Math.abs(i.differencePercent) < 1).length,
     noTikTok: items.filter(i => i.tiktokPrice === 0).length
   }
 
   const getSuggestion = (item: PriceCheckItem): string => {
     if (item.tiktokPrice === 0) return '待同步'
-    if (item.localPrice <= 0) return '检查异常'
+    if (item.localPrice === null || item.differencePercent === null || item.localPrice <= 0) return '检查异常'
     if (item.differencePercent >= thresholdPercent) return '建议下调'
     if (item.differencePercent <= -thresholdPercent) return '建议上调'
     if (Math.abs(item.differencePercent) < 1) return '保持一致'
@@ -337,14 +338,14 @@ export default function PriceCheckPage() {
                       <td className="px-4 py-2 text-xs text-right">
                         <span
                           className={
-                            item.localPrice > item.tiktokPrice
+                            item.localPrice !== null && item.localPrice > item.tiktokPrice
                               ? 'text-red-600'
-                              : item.localPrice < item.tiktokPrice
+                              : item.localPrice !== null && item.localPrice < item.tiktokPrice
                               ? 'text-green-600'
                               : ''
                           }
                         >
-                          ${item.localPrice.toFixed(2)}
+                          {item.localPrice === null ? '—' : `$${item.localPrice.toFixed(2)}`}
                         </span>
                       </td>
                       <td className="px-4 py-2 text-xs text-right">
@@ -353,19 +354,20 @@ export default function PriceCheckPage() {
                       <td className="px-4 py-2 text-xs text-right">
                         <span
                           className={
-                            item.difference > 0
+                            item.difference !== null && item.difference > 0
                               ? 'text-red-600'
-                              : item.difference < 0
+                              : item.difference !== null && item.difference < 0
                               ? 'text-green-600'
                               : ''
                           }
                         >
-                          {item.difference > 0 ? '+' : ''}
-                          {item.difference.toFixed(2)}
+                          {item.difference === null
+                            ? '—'
+                            : `${item.difference > 0 ? '+' : ''}${item.difference.toFixed(2)}`}
                         </span>
                       </td>
                       <td className="px-4 py-2 text-xs text-right">
-                        {item.tiktokPrice > 0 ? (
+                        {item.tiktokPrice > 0 && item.differencePercent !== null ? (
                           <span
                             className={`inline-flex items-center justify-end rounded-full px-2 py-0.5 text-[11px] ${
                               item.differencePercent >= thresholdPercent

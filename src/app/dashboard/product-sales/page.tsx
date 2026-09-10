@@ -2717,6 +2717,7 @@ export default function ProductSalesPage() {
     if (sortConfig.key === 'daysOfSupply') {
       const aValue = getDaysOfSupplyValue(a)
       const bValue = getDaysOfSupplyValue(b)
+      if (aValue === bValue) return a.sku.localeCompare(b.sku)
       return sortConfig.direction === 'asc' ? aValue - bValue : bValue - aValue
     }
 
@@ -2846,8 +2847,13 @@ export default function ProductSalesPage() {
     return 'text-slate-900'
   }
 
-  const getDaysOfSupplyValue = (product: ProductData) => {
-    if (product.currentSellableDays !== null && product.currentSellableDays !== undefined) return product.currentSellableDays
+  function getDaysOfSupplyValue(product: ProductData) {
+    if (typeof product.currentSellableDays === 'number' && Number.isFinite(product.currentSellableDays)) {
+      return product.currentSellableDays
+    }
+    if (!Number.isFinite(product.currentAvailableStock) || !Number.isFinite(product.avgDailySales) || product.avgDailySales <= 0) {
+      return Number.POSITIVE_INFINITY
+    }
     return Number((product.currentAvailableStock / product.avgDailySales).toFixed(1))
   }
 

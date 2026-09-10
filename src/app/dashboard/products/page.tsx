@@ -648,7 +648,10 @@ export default function ProductsPage() {
                     <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       {canEditBase && (
                         <button
-                          onClick={() => handleEdit(product)}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            handleEdit(product)
+                          }}
                           className="p-1.5 bg-white/90 rounded-md shadow-sm hover:bg-white"
                           title="编辑"
                         >
@@ -659,7 +662,10 @@ export default function ProductsPage() {
                       )}
                       {canDeactivate && (
                         <button
-                          onClick={() => handleDeleteClick(product)}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            handleDeleteClick(product)
+                          }}
                           className="p-1.5 bg-white/90 rounded-md shadow-sm hover:bg-white"
                           title="停用"
                         >
@@ -674,7 +680,10 @@ export default function ProductsPage() {
                   {/* 产品链接按钮 */}
                   {product.productUrl && (
                     <button
-                      onClick={() => openProductUrl(product.productUrl)}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        openProductUrl(product.productUrl)
+                      }}
                       className="absolute bottom-2 right-2 p-1.5 bg-blue-600/90 rounded-md shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-600"
                       title="打开产品链接"
                     >

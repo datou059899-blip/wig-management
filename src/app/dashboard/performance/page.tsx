@@ -21,9 +21,9 @@ type ProductPerf = {
   productLine: string
   owner: string
   status: 'normal' | 'watch' | 'pause'
-  todayGmv: number
-  todayOrders: number
-  todayAdsCost: number
+  rangeGmv: number
+  rangeOrders: number
+  rangeAdsCost: number
   lastUpdatedAt: string
 }
 
@@ -116,14 +116,14 @@ export default function PerformancePage() {
   }, [rows, search, productLine, statusFilter, ownerFilter])
 
   const getRoas = (row: ProductPerf) =>
-    row.todayAdsCost > 0 ? row.todayGmv / row.todayAdsCost : 0
+    row.rangeAdsCost > 0 ? row.rangeGmv / row.rangeAdsCost : 0
 
   const getSuggestion = (row: ProductPerf) => {
     const roas = getRoas(row)
-    if (row.todayAdsCost === 0 && row.todayGmv === 0) return '待投放'
-    if (roas >= 3 && row.todayOrders >= 5) return '可继续投放'
-    if (roas < 1 && row.todayAdsCost > 0) return '关注转化'
-    if (row.todayAdsCost > 0 && row.todayGmv === 0) return '关注花费'
+    if (row.rangeAdsCost === 0 && row.rangeGmv === 0) return '待投放'
+    if (roas >= 3 && row.rangeOrders >= 5) return '可继续投放'
+    if (roas < 1 && row.rangeAdsCost > 0) return '关注转化'
+    if (row.rangeAdsCost > 0 && row.rangeGmv === 0) return '关注花费'
     if (row.status === 'pause') return '检查库存'
     return '常规关注'
   }
@@ -676,7 +676,7 @@ export default function PerformancePage() {
         <div className="px-4 py-3 border-b flex items-center justify-between">
           <div className="text-sm font-semibold text-gray-900">产品表现</div>
           <div className="text-xs text-gray-500">
-            当前 {filteredRows.length} 个 SKU（按今日 GMV 由高到低排序）
+            当前 {filteredRows.length} 个 SKU（按所选时段 GMV 由高到低排序）
           </div>
         </div>
         {filteredRows.length === 0 ? (
@@ -690,10 +690,10 @@ export default function PerformancePage() {
                 <tr>
                   <th className="px-3 py-2 text-left font-medium text-gray-500">产品</th>
                   <th className="px-3 py-2 text-left font-medium text-gray-500">SKU</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-500">今日成交额</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-500">今日订单数</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-500">今日广告花费</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-500">今日 ROAS</th>
+                  <th className="px-3 py-2 text-right font-medium text-gray-500">所选时段成交额</th>
+                  <th className="px-3 py-2 text-right font-medium text-gray-500">所选时段订单数</th>
+                  <th className="px-3 py-2 text-right font-medium text-gray-500">所选时段广告花费</th>
+                  <th className="px-3 py-2 text-right font-medium text-gray-500">所选时段 ROAS</th>
                   <th className="px-3 py-2 text-left font-medium text-gray-500">最近更新时间</th>
                   <th className="px-3 py-2 text-left font-medium text-gray-500">状态</th>
                   <th className="px-3 py-2 text-left font-medium text-gray-500">建议动作</th>
@@ -702,7 +702,7 @@ export default function PerformancePage() {
               <tbody className="divide-y divide-gray-200">
                 {filteredRows
                   .slice()
-                  .sort((a, b) => b.todayGmv - a.todayGmv)
+                  .sort((a, b) => b.rangeGmv - a.rangeGmv)
                   .map((row) => {
                     const roas = getRoas(row)
                     const suggestion = getSuggestion(row)
@@ -713,11 +713,11 @@ export default function PerformancePage() {
                         </td>
                         <td className="px-3 py-2 text-[11px] text-gray-600">{row.sku}</td>
                         <td className="px-3 py-2 text-right text-xs">
-                          ${row.todayGmv.toFixed(2)}
+                          ${row.rangeGmv.toFixed(2)}
                         </td>
-                        <td className="px-3 py-2 text-right text-xs">{row.todayOrders}</td>
+                        <td className="px-3 py-2 text-right text-xs">{row.rangeOrders}</td>
                         <td className="px-3 py-2 text-right text-xs">
-                          ${row.todayAdsCost.toFixed(2)}
+                          ${row.rangeAdsCost.toFixed(2)}
                         </td>
                         <td className="px-3 py-2 text-right text-xs">
                           {roas.toFixed(2)}

@@ -45,9 +45,7 @@ export async function GET(request: NextRequest) {
     })
 
     const byDate = new Map<string, DayPoint>()
-    const todayStr = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0, 10)
-
-    const bySkuToday = new Map<
+    const bySkuRange = new Map<
       string,
       {
         sku: string
@@ -69,43 +67,41 @@ export async function GET(request: NextRequest) {
       existing.adsCost += rec.adsCost
       byDate.set(d, existing)
 
-      if (d === todayStr) {
-        const key = rec.sku
-        const cur = bySkuToday.get(key) || {
-          sku: rec.sku,
-          name: rec.productName,
-          productLine: rec.productLine,
-          owner: rec.owner,
-          gmv: 0,
-          orders: 0,
-          adsCost: 0,
-          lastUpdatedAt: rec.updatedAt.toISOString(),
-        }
-        cur.gmv += rec.gmv
-        cur.orders += rec.orders
-        cur.adsCost += rec.adsCost
-        if (rec.updatedAt > new Date(cur.lastUpdatedAt)) {
-          cur.lastUpdatedAt = rec.updatedAt.toISOString()
-        }
-        if (rec.productName) cur.name = rec.productName
-        if (rec.productLine) cur.productLine = rec.productLine
-        if (rec.owner) cur.owner = rec.owner
-        bySkuToday.set(key, cur)
+      const key = rec.sku
+      const cur = bySkuRange.get(key) || {
+        sku: rec.sku,
+        name: rec.productName,
+        productLine: rec.productLine,
+        owner: rec.owner,
+        gmv: 0,
+        orders: 0,
+        adsCost: 0,
+        lastUpdatedAt: rec.updatedAt.toISOString(),
       }
+      cur.gmv += rec.gmv
+      cur.orders += rec.orders
+      cur.adsCost += rec.adsCost
+      if (rec.updatedAt > new Date(cur.lastUpdatedAt)) {
+        cur.lastUpdatedAt = rec.updatedAt.toISOString()
+      }
+      if (rec.productName) cur.name = rec.productName
+      if (rec.productLine) cur.productLine = rec.productLine
+      if (rec.owner) cur.owner = rec.owner
+      bySkuRange.set(key, cur)
     }
 
     const trend: DayPoint[] = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))
 
-    const products = Array.from(bySkuToday.values()).map((row, index) => ({
+    const products = Array.from(bySkuRange.values()).map((row, index) => ({
       id: row.sku || String(index),
       name: row.name || row.sku,
       sku: row.sku,
       productLine: row.productLine || '',
       owner: row.owner || '未分配',
       status: 'normal' as const,
-      todayGmv: row.gmv,
-      todayOrders: row.orders,
-      todayAdsCost: row.adsCost,
+      rangeGmv: row.gmv,
+      rangeOrders: row.orders,
+      rangeAdsCost: row.adsCost,
       lastUpdatedAt: row.lastUpdatedAt,
     }))
 
@@ -145,4 +141,3 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: '获取经营数据失败' }, { status: 500 })
   }
 }
-
