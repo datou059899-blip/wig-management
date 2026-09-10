@@ -2,21 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
 // 简单的API密钥认证
-const API_KEY = process.env.TIKTOK_SYNC_API_KEY || 'your-secret-api-key';
-
-function verifyApiKey(request: NextRequest): boolean {
+function verifyApiKey(request: NextRequest, apiKey: string): boolean {
   const authHeader = request.headers.get('authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return false;
   }
   const token = authHeader.substring(7);
-  return token === API_KEY;
+  return token === apiKey;
 }
 
 // 导入订单数据
 export async function POST(request: NextRequest) {
+  const apiKey = process.env.TIKTOK_SYNC_API_KEY?.trim();
+  if (!apiKey) {
+    return NextResponse.json({ error: 'TikTok sync is not configured' }, { status: 503 });
+  }
+
   // 验证API密钥
-  if (!verifyApiKey(request)) {
+  if (!verifyApiKey(request, apiKey)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -252,7 +255,12 @@ async function handleAdsImport(adsData: any[], logId: string) {
 
 // 获取同步日志
 export async function GET(request: NextRequest) {
-  if (!verifyApiKey(request)) {
+  const apiKey = process.env.TIKTOK_SYNC_API_KEY?.trim();
+  if (!apiKey) {
+    return NextResponse.json({ error: 'TikTok sync is not configured' }, { status: 503 });
+  }
+
+  if (!verifyApiKey(request, apiKey)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
