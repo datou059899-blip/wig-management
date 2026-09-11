@@ -336,7 +336,7 @@ export default function PerformancePage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="经营数据中心"
+        title="经营数据"
         description="查看每日成交、花费、投产比和产品表现，让运营、投手和老板对生意情况一目了然。"
         actions={
           <div className="flex flex-wrap gap-2">
@@ -767,7 +767,7 @@ export default function PerformancePage() {
       </div>
 
       {/* 数据来源信息 */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-xs text-gray-600">
+      <div className="rounded-lg border border-gray-200 bg-white p-4 text-xs text-gray-600">
         <div className="flex flex-wrap gap-4">
           <div>
             <div className="text-gray-500">Shop 数据最近更新时间</div>
@@ -810,7 +810,7 @@ export default function PerformancePage() {
             </div>
           </div>
         </div>
-        <div className="mt-2 text-[11px] text-gray-500">
+        <div className="mt-3 border-t border-gray-100 pt-2 text-[11px] text-gray-400">
           当前数据基于 mock 导入逻辑，仅用于产品形态演示。接入真实订单与广告来源后，可复用相同 UI。
         </div>
       </div>

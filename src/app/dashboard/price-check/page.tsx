@@ -21,6 +21,8 @@ export default function PriceCheckPage() {
   const canAccess = canAccessPageForUser(session?.user as any, 'priceCheck')
   const [items, setItems] = useState<PriceCheckItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [hasTikTokSyncData, setHasTikTokSyncData] = useState(false)
   const [filter, setFilter] = useState(
     'all',
   ) // all, higher, lower, match, noTikTok, abnormal, needAdjust
@@ -39,6 +41,7 @@ export default function PriceCheckPage() {
 
   const fetchPriceData = async () => {
     setLoading(true)
+    setLoadError('')
     try {
       // 获取产品数据和 TikTok 同步数据
       const [productsRes, tiktokRes] = await Promise.all([
@@ -48,9 +51,11 @@ export default function PriceCheckPage() {
       
       const productsData = await productsRes.json()
       const tiktokData = await tiktokRes.json()
+      if (!productsRes.ok || !tiktokRes.ok) throw new Error('价格数据加载失败')
       
       const products = productsData.products || []
       const syncs = tiktokData.syncs || []
+      setHasTikTokSyncData(syncs.length > 0)
       
       // 最近同步时间
       if (syncs.length > 0) {
@@ -103,6 +108,8 @@ export default function PriceCheckPage() {
       setItems(priceItems)
     } catch (error) {
       console.error('获取价格数据失败:', error)
+      setLoadError('价格数据加载失败，请刷新后重试')
+      setHasTikTokSyncData(false)
     } finally {
       setLoading(false)
     }
@@ -189,7 +196,7 @@ export default function PriceCheckPage() {
       </div>
 
       {/* 价格体检概览（可点击筛选） */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      <div className={`${!loading && !loadError && hasTikTokSyncData ? 'grid' : 'hidden'} grid-cols-2 gap-3 md:grid-cols-5 mb-6`}>
         <button
           type="button"
           onClick={() => setFilter('all')}
@@ -243,7 +250,7 @@ export default function PriceCheckPage() {
       </div>
 
       {/* 按价格场景筛选 */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6">
+      <div className={`${!loading && !loadError && hasTikTokSyncData ? 'block' : 'hidden'} mb-6 rounded-lg border border-gray-200 bg-white p-4`}>
         <div className="flex gap-2 flex-wrap">
           <button
             onClick={() => setFilter('all')}
@@ -306,10 +313,20 @@ export default function PriceCheckPage() {
 
       {/* 价格对比表 */}
       {loading ? (
-        <div className="text-center py-12 text-gray-500">加载中...</div>
+        <div className="rounded-lg border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">价格数据加载中...</div>
+      ) : loadError ? (
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-red-200 bg-white px-4 py-4 text-sm text-red-700">
+          <span>{loadError}</span>
+          <button type="button" onClick={fetchPriceData} className="btn-secondary shrink-0">重新加载</button>
+        </div>
+      ) : !hasTikTokSyncData ? (
+        <div className="rounded-lg border border-gray-200 bg-white px-5 py-6">
+          <div className="text-sm font-medium text-gray-900">暂无可比 TikTok 售价数据</div>
+          <div className="mt-1 text-sm text-gray-500">完成 TikTok 同步后可进行价格体检</div>
+        </div>
       ) : filteredItems.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
-          当前条件下没有价格体检数据，试试切换上方筛选或先在 TikTok 同步工作台完成一次同步。
+        <div className="rounded-lg border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">
+          当前条件下没有价格体检数据，请调整筛选条件。
         </div>
       ) : (
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { canAccessTiktokSync } from '@/lib/permissions'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { EmptyState } from '@/components/EmptyState'
 
 interface ParsedRow {
   sku: string
@@ -528,7 +529,7 @@ export default function TikTokSyncPage() {
         </div>
 
         {filteredSyncData.length === 0 ? (
-          <p className="text-gray-500 text-center py-8">暂无同步数据，可先上传 TikTok 导出文件完成一次同步。</p>
+          <EmptyState title="暂无同步数据" description="上传 TikTok 导出文件后，同步结果会显示在这里" />
         ) : (
           <div className="overflow-x-auto border rounded-lg">
             <table className="min-w-full divide-y divide-gray-200">

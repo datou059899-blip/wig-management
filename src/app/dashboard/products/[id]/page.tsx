@@ -157,9 +157,17 @@ export default function ProductDetailPage() {
   }
 
   const { product, business, sales } = data
+  const hasSupplementalData = Boolean(
+    product.description?.trim()
+    || product.notes?.trim()
+    || product.material?.trim()
+    || product.productUrl
+    || product.materialUrl
+    || product.aliases.length,
+  )
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
+    <div>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <Link href="/dashboard/products" className="text-sm font-medium text-blue-600 hover:text-blue-700">← 返回产品库</Link>
         <div className="flex flex-wrap gap-2 text-xs">
@@ -169,9 +177,9 @@ export default function ProductDetailPage() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <div className="flex flex-col gap-5 md:flex-row">
-          <div className="h-28 w-28 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="flex flex-col gap-4 md:flex-row">
+          <div className="h-24 w-24 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
             {product.image ? (
               <img src={product.image} alt={product.name} className="h-full w-full object-cover" />
             ) : (
@@ -181,12 +189,12 @@ export default function ProductDetailPage() {
           <div className="min-w-0 flex-1">
             <h1 className="text-2xl font-semibold text-slate-900">{product.name}</h1>
             <div className="mt-2 font-mono text-sm text-slate-500">{product.sku || '无 SKU'}</div>
-            <div className="mt-4 flex flex-wrap gap-2 text-xs">
-              <span className="rounded-full border border-slate-200 px-2.5 py-1 text-slate-700">
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <span className="rounded-md border border-slate-200 px-2 py-0.5 text-slate-700">
                 {businessStatusLabel[product.businessStatus] || product.businessStatus}
               </span>
               {!product.isActive && (
-                <span className="rounded-full border border-slate-200 px-2.5 py-1 text-slate-500">已停用</span>
+                <span className="rounded-md border border-slate-200 px-2 py-0.5 text-slate-500">已停用</span>
               )}
             </div>
           </div>
@@ -273,40 +281,47 @@ export default function ProductDetailPage() {
       </Section>
 
       <Section title="产品资料">
-        <div className="space-y-4 text-sm">
-          <div>
-            <div className="text-xs text-slate-500">Description</div>
-            <div className="mt-1 whitespace-pre-wrap text-slate-800">{product.description || '暂无描述'}</div>
-          </div>
-          <div>
-            <div className="text-xs text-slate-500">Notes</div>
-            <div className="mt-1 whitespace-pre-wrap text-slate-800">{product.notes || '暂无备注'}</div>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            {product.productUrl ? (
-              <a href={product.productUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700">打开商品链接</a>
-            ) : (
-              <span className="text-slate-500">商品链接未填写</span>
-            )}
-            {product.materialUrl && (
-              <a href={product.materialUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700">打开素材链接</a>
-            )}
-          </div>
-          <div>
-            <div className="text-xs text-slate-500">SKU Alias</div>
-            {product.aliases.length ? (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {product.aliases.map((alias) => (
-                  <span key={alias.id} className="rounded-full border border-slate-200 px-2.5 py-1 font-mono text-xs text-slate-700">
-                    {alias.aliasSku}
-                  </span>
-                ))}
+        {hasSupplementalData ? (
+          <div className="space-y-4 text-sm">
+            {product.description?.trim() && (
+              <div>
+                <div className="text-xs text-slate-500">Description</div>
+                <div className="mt-1 whitespace-pre-wrap text-slate-800">{product.description}</div>
               </div>
-            ) : (
-              <div className="mt-1 text-sm text-slate-500">暂无 Alias</div>
+            )}
+            {product.notes?.trim() && (
+              <div>
+                <div className="text-xs text-slate-500">Notes</div>
+                <div className="mt-1 whitespace-pre-wrap text-slate-800">{product.notes}</div>
+              </div>
+            )}
+            {product.material?.trim() && <Field label="Material" value={product.material} />}
+            {(product.productUrl || product.materialUrl) && (
+              <div className="flex flex-wrap gap-3">
+                {product.productUrl && (
+                  <a href={product.productUrl} target="_blank" rel="noopener noreferrer" className="text-brand-600 hover:text-brand-700">打开商品链接</a>
+                )}
+                {product.materialUrl && (
+                  <a href={product.materialUrl} target="_blank" rel="noopener noreferrer" className="text-brand-600 hover:text-brand-700">打开素材链接</a>
+                )}
+              </div>
+            )}
+            {product.aliases.length > 0 && (
+              <div>
+                <div className="text-xs text-slate-500">SKU Alias</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {product.aliases.map((alias) => (
+                    <span key={alias.id} className="rounded-md border border-slate-200 px-2 py-0.5 font-mono text-xs text-slate-700">
+                      {alias.aliasSku}
+                    </span>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
-        </div>
+        ) : (
+          <div className="text-sm text-slate-500">暂无补充资料</div>
+        )}
       </Section>
     </div>
   )

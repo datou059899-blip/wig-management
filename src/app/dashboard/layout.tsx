@@ -22,11 +22,11 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="min-h-screen bg-[#fdfcfb] relative">
+    <div className="dashboard-shell min-h-screen bg-[#f7f8fa] text-sm text-gray-900 relative">
       <Sidebar />
       <ToastProvider>
         <main className="lg:ml-[200px] min-h-screen pt-14 lg:pt-0 relative">
-          <div className="p-4 lg:p-6">
+          <div className="p-4 lg:p-6 xl:p-8">
             <PageGuard>{children}</PageGuard>
           </div>
         </main>

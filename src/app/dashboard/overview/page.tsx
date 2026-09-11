@@ -30,12 +30,12 @@ export default async function OverviewPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">只读概览</h1>
-        <p className="text-gray-600">产品概况、达人合作进度、脚本训练情况（仅查看）</p>
+        <h1 className="text-2xl font-semibold text-gray-900">概览</h1>
+        <p className="mt-1 text-sm text-gray-500">产品、达人合作与内容训练概况</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm">
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
           <h2 className="text-sm font-medium text-gray-500">产品概况</h2>
           <div className="mt-2 text-2xl font-bold text-gray-900">{productCount}</div>
           <div className="mt-1 text-sm text-gray-500">产品总数</div>
@@ -47,7 +47,7 @@ export default async function OverviewPage() {
           )}
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm">
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
           <h2 className="text-sm font-medium text-gray-500">脚本训练情况</h2>
           <div className="mt-2 text-2xl font-bold text-gray-900">{scriptCount}</div>
           <div className="mt-1 text-sm text-gray-500">爆款脚本数</div>
@@ -64,7 +64,7 @@ export default async function OverviewPage() {
           )}
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm">
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
           <h2 className="text-sm font-medium text-gray-500">达人合作进度</h2>
           <div className="mt-2 text-sm text-gray-600">合作与建联数据汇总（只读）</div>
           <div className="mt-3 text-sm text-gray-500">可在「达人建联」模块查看详情</div>

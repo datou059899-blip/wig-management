@@ -9,7 +9,7 @@ type PageHeaderProps = {
 
 export function PageHeader({ title, description, actions, breadcrumbs }: PageHeaderProps) {
   return (
-    <div className="mb-6">
+    <div className="mb-5">
       {/* 面包屑导航（可选） */}
       {breadcrumbs && (
         <div className="mb-3">
@@ -20,9 +20,9 @@ export function PageHeader({ title, description, actions, breadcrumbs }: PageHea
       {/* 标题区 */}
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="flex-1">
-          <h1 className="text-xl font-semibold text-gray-900 tracking-tight">{title}</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">{title}</h1>
           {description && (
-            <p className="mt-1.5 text-sm text-gray-500 max-w-2xl">{description}</p>
+            <p className="mt-1 text-sm text-gray-500 max-w-3xl">{description}</p>
           )}
         </div>
         {actions && (

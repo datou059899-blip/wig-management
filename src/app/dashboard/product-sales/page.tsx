@@ -3046,13 +3046,13 @@ export default function ProductSalesPage() {
 
   return (
     <PageGuard>
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6 lg:p-8">
+      <div>
         <div className="max-w-7xl mx-auto">
-          <div className="mb-8">
+          <div className="mb-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <h1 className="text-3xl font-bold text-slate-900">产品销售库存</h1>
-                <p className="text-slate-600 mt-2">查看产品销售趋势和库存现状</p>
+                <h1 className="text-2xl font-semibold text-slate-900">销售分析</h1>
+                <p className="mt-1 text-sm text-slate-500">查看商品销量、可售天数与库存风险</p>
               </div>
               <div className="flex flex-col items-start gap-2 lg:items-end">
                 <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
@@ -3073,7 +3073,7 @@ export default function ProductSalesPage() {
                   <button
                     type="button"
                     onClick={() => setAdvancedToolsOpen((value) => !value)}
-                    className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
+                    className="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
                     aria-expanded={advancedToolsOpen}
                   >
                     管理员维护
@@ -3083,7 +3083,7 @@ export default function ProductSalesPage() {
                   正式库存导入已迁移至 库存与订货 → 库存导入
                 </div>
                 {advancedToolsOpen && (
-                  <div className="flex max-w-3xl flex-wrap justify-start gap-2 rounded-xl border border-slate-200 bg-white/80 p-3 shadow-sm lg:justify-end">
+                  <div className="flex max-w-3xl flex-wrap justify-start gap-2 rounded-lg border border-slate-200 bg-white p-3 lg:justify-end">
                     <button
                       onClick={openStockBaselineModal}
                       className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
@@ -3228,28 +3228,28 @@ export default function ProductSalesPage() {
                 </div>
               )}
               {hasSampleStats(ordersImportResult) && (
-                <div className="mt-4 rounded-xl border-2 border-violet-300 bg-gradient-to-br from-violet-50 to-fuchsia-50 p-4 shadow-sm">
+                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <div className="text-base font-semibold text-violet-950">样品单统计</div>
-                      <div className="mt-1 text-sm text-violet-900/80">
+                      <div className="text-base font-semibold text-slate-900">样品单统计</div>
+                      <div className="mt-1 text-sm text-slate-600">
                         样品单不计入销量与退款金额，但会单独统计寄样数量，并继续参与库存消耗计算。
                       </div>
                     </div>
-                    <div className="rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-violet-700 ring-1 ring-violet-200">
+                    <div className="rounded-md border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600">
                       样品销量已从毛销量与净销量中排除
                     </div>
                   </div>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                    <div className="rounded-lg border border-violet-200 bg-white px-4 py-3">
+                    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
                       <div className="text-xs text-slate-500">样品订单行数</div>
                       <div className="mt-1 text-2xl font-semibold text-slate-900">{ordersImportResult.sampleRows || 0}</div>
                     </div>
-                    <div className="rounded-lg border border-violet-200 bg-white px-4 py-3">
+                    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
                       <div className="text-xs text-slate-500">样品总数量</div>
                       <div className="mt-1 text-2xl font-semibold text-slate-900">{ordersImportResult.sampleQty || 0}</div>
                     </div>
-                    <div className="rounded-lg border border-violet-200 bg-white px-4 py-3">
+                    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
                       <div className="text-xs text-slate-500">样品 SKU 数</div>
                       <div className="mt-1 text-2xl font-semibold text-slate-900">{ordersImportResult.sampleSkuCount || 0}</div>
                     </div>
@@ -3639,8 +3639,9 @@ export default function ProductSalesPage() {
                     <div className="mt-2 text-2xl font-bold text-slate-900">{summary?.monthSales ?? 0}</div>
                   </div>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-xs text-slate-500">日均销量</div>
+                    <div className="text-xs text-slate-500">参考日均销量</div>
                     <div className="mt-2 text-2xl font-bold text-slate-900">{dashboardDailySales.toFixed(2)}</div>
+                    <div className="mt-1 text-[11px] text-slate-400">7D / 30D 日均取高</div>
                   </div>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                     <div className="text-xs text-slate-500">较上一周期变化</div>
@@ -5231,56 +5232,51 @@ export default function ProductSalesPage() {
 
               {summary && (
                 <>
-                  <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-indigo-500">
+                  <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+                    <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-slate-600 text-sm font-medium">当前可用总库存</p>
-                          <p className="mt-2 text-3xl font-bold text-slate-900">
+                          <p className="mt-1 text-2xl font-semibold text-slate-900">
                             {summary.currentAvailableTotalStock ?? summary.platformCurrentStock ?? summary.totalStock}
                           </p>
                         </div>
-                        <div className="text-4xl text-indigo-500 opacity-20">📦</div>
                       </div>
                     </div>
 
-                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-yellow-500">
+                    <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-slate-600 text-sm font-medium">低库存产品数</p>
-                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.lowStockCount}</p>
+                          <p className="mt-1 text-2xl font-semibold text-amber-700">{summary.lowStockCount}</p>
                         </div>
-                        <div className="text-4xl text-yellow-500 opacity-20">⚠️</div>
                       </div>
                     </div>
 
-                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-red-500">
+                    <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-slate-600 text-sm font-medium">断货产品数</p>
-                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.outOfStockCount}</p>
+                          <p className="mt-1 text-2xl font-semibold text-red-700">{summary.outOfStockCount}</p>
                         </div>
-                        <div className="text-4xl text-red-500 opacity-20">❌</div>
                       </div>
                     </div>
 
-                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-sky-500">
+                    <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-slate-600 text-sm font-medium">库存未同步 SKU</p>
-                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.staleSnapshotCount}</p>
+                          <p className="mt-1 text-2xl font-semibold text-slate-900">{summary.staleSnapshotCount}</p>
                         </div>
-                        <div className="text-4xl text-sky-500 opacity-20">🛰️</div>
                       </div>
                     </div>
 
-                    <div className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-rose-500">
+                    <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-slate-600 text-sm font-medium">库存差异异常 SKU</p>
-                          <p className="text-3xl font-bold text-slate-900 mt-2">{summary.inventoryDiffAbnormalCount}</p>
+                          <p className="mt-1 text-2xl font-semibold text-rose-700">{summary.inventoryDiffAbnormalCount}</p>
                         </div>
-                        <div className="text-4xl text-rose-500 opacity-20">📏</div>
                       </div>
                     </div>
                   </div>
@@ -5298,12 +5294,12 @@ export default function ProductSalesPage() {
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-3 text-sm">
-                        <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">系统预计库存 {summary.estimatedTotalStock}</span>
+                        <span className="rounded-md bg-slate-100 px-3 py-1 text-slate-700">系统预计库存（有基线 SKU） {summary.estimatedTotalStock}</span>
                         <span className="rounded-full bg-indigo-50 px-3 py-1 text-indigo-700">
-                          当前可用库存 {summary.currentAvailableTotalStock ?? summary.platformCurrentStock ?? summary.totalStock}
+                          当前可用库存（ACTIVE SKU） {summary.currentAvailableTotalStock ?? summary.platformCurrentStock ?? summary.totalStock}
                         </span>
                         <span className={`rounded-full px-3 py-1 ${summary.inventoryDiff === 0 ? 'bg-slate-100 text-slate-700' : summary.inventoryDiff > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
-                          差异 {formatSignedNumber(summary.inventoryDiff)}
+                          有基线 SKU 库存差异 {formatSignedNumber(summary.inventoryDiff)}
                         </span>
                         <span className="text-xs font-medium text-slate-500">
                           {inventoryReconciliationOpen ? '收起' : '展开查看'}
@@ -5320,9 +5316,9 @@ export default function ProductSalesPage() {
                             <thead>
                               <tr className="border-b border-slate-200 bg-slate-50">
                                 <th className="px-6 py-3 text-left font-semibold text-slate-900">SKU</th>
-                                <th className="px-6 py-3 text-center font-semibold text-slate-900">系统预计库存</th>
-                                <th className="px-6 py-3 text-center font-semibold text-slate-900">当前可用库存</th>
-                                <th className="px-6 py-3 text-center font-semibold text-slate-900">库存差异</th>
+                                <th className="px-6 py-3 text-center font-semibold text-slate-900">系统预计库存（有基线 SKU）</th>
+                                <th className="px-6 py-3 text-center font-semibold text-slate-900">当前可用库存（ACTIVE SKU）</th>
+                                <th className="px-6 py-3 text-center font-semibold text-slate-900">有基线 SKU 库存差异</th>
                                 <th className="px-6 py-3 text-center font-semibold text-slate-900">平台快照库存</th>
                                 <th className="px-6 py-3 text-center font-semibold text-slate-900">快照后补货/调整</th>
                                 <th className="px-6 py-3 text-center font-semibold text-slate-900">快照后订单/样品消耗</th>
@@ -5370,7 +5366,7 @@ export default function ProductSalesPage() {
                             type="button"
                             onClick={() => setActionSkuFilter('all')}
                             className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                              actionSkuFilter === 'all' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                              actionSkuFilter === 'all' ? 'bg-brand-50 text-brand-700' : 'text-slate-700 hover:bg-slate-100'
                             }`}
                           >
                             全部 SKU
@@ -5379,7 +5375,7 @@ export default function ProductSalesPage() {
                             type="button"
                             onClick={() => setActionSkuFilter('needsAction')}
                             className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-                              actionSkuFilter === 'needsAction' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                              actionSkuFilter === 'needsAction' ? 'bg-brand-50 text-brand-700' : 'text-slate-700 hover:bg-slate-100'
                             }`}
                           >
                             需要处理 {needsActionCount}
@@ -5428,7 +5424,7 @@ export default function ProductSalesPage() {
                                 onClick={() => handleSort('avgDailySales')}
                                 className="flex items-center gap-2 font-semibold text-slate-900 hover:text-pink-600 justify-center w-full"
                               >
-                                日均销量 <SortIcon columnKey="avgDailySales" />
+                                <span title="7D / 30D 日均取高">参考日均销量</span> <SortIcon columnKey="avgDailySales" />
                               </button>
                             </th>
                             <th className="sticky top-0 z-20 min-w-[120px] bg-slate-50 px-6 py-3 text-center">

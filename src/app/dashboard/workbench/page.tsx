@@ -979,11 +979,11 @@ export default function WorkbenchPage() {
   ]
 
   return (
-    <div className="relative z-10 flex min-h-screen flex-col gap-6 bg-[#fdfcfb]">
+    <div className="relative z-10 flex min-h-screen flex-col gap-6">
       {/* 页面标题 */}
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">
+          <h1 className="text-2xl font-semibold text-gray-900">
             今日工作台
           </h1>
           <p className="mt-1 text-sm text-gray-500">
@@ -998,7 +998,7 @@ export default function WorkbenchPage() {
               onClick={() => setTeamView(!teamView)}
               className={`btn ${teamView ? 'btn-primary' : 'btn-secondary'}`}
             >
-              {teamView ? '👁️ 我的任务' : '👥 团队任务'}
+              {teamView ? '我的任务' : '团队任务'}
             </button>
           )}
           {canCreateTask && (

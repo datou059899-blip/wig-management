@@ -484,13 +484,13 @@ export default function MaterialsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6 lg:p-8">
+    <div>
       <div className="mx-auto max-w-7xl">
-        <div className="mb-8">
+        <div className="mb-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-slate-900">耗材管理</h1>
-              <p className="mt-2 text-slate-600">管理耗材库存、消耗、补充和调整记录。</p>
+              <h1 className="text-2xl font-semibold text-slate-900">耗材管理</h1>
+              <p className="mt-1 text-sm text-slate-500">管理耗材库存、消耗、补充和调整记录</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
@@ -502,7 +502,7 @@ export default function MaterialsPage() {
               </button>
               <button
                 onClick={openCreateModal}
-                className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                className="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
               >
                 新增耗材
               </button>
@@ -561,26 +561,26 @@ export default function MaterialsPage() {
         )}
 
         {summary && (
-          <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <div className="rounded-lg bg-white p-6 shadow-sm border-l-4 border-slate-900">
-              <p className="text-sm font-medium text-slate-600">耗材总数</p>
-              <p className="mt-2 text-3xl font-bold text-slate-900">{summary.totalCount}</p>
+          <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
+              <p className="text-xs font-medium text-slate-500">耗材总数</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{summary.totalCount}</p>
             </div>
-            <div className="rounded-lg bg-white p-6 shadow-sm border-l-4 border-amber-500">
-              <p className="text-sm font-medium text-slate-600">低库存数量</p>
-              <p className="mt-2 text-3xl font-bold text-slate-900">{summary.lowStockCount}</p>
+            <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
+              <p className="text-xs font-medium text-slate-500">低库存数量</p>
+              <p className="mt-1 text-2xl font-semibold text-amber-700">{summary.lowStockCount}</p>
             </div>
-            <div className="rounded-lg bg-white p-6 shadow-sm border-l-4 border-indigo-500">
-              <p className="text-sm font-medium text-slate-600">当前总库存项</p>
-              <p className="mt-2 text-3xl font-bold text-slate-900">{formatQty(summary.totalCurrentQty)}</p>
+            <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
+              <p className="text-xs font-medium text-slate-500">当前总库存项</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{formatQty(summary.totalCurrentQty)}</p>
             </div>
-            <div className="rounded-lg bg-white p-6 shadow-sm border-l-4 border-rose-500">
-              <p className="text-sm font-medium text-slate-600">本月消耗次数</p>
-              <p className="mt-2 text-3xl font-bold text-slate-900">{summary.monthlyConsumeCount}</p>
+            <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
+              <p className="text-xs font-medium text-slate-500">本月消耗次数</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{summary.monthlyConsumeCount}</p>
             </div>
-            <div className="rounded-lg bg-white p-6 shadow-sm border-l-4 border-emerald-500">
-              <p className="text-sm font-medium text-slate-600">本月补充次数</p>
-              <p className="mt-2 text-3xl font-bold text-slate-900">{summary.monthlyReplenishCount}</p>
+            <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
+              <p className="text-xs font-medium text-slate-500">本月补充次数</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{summary.monthlyReplenishCount}</p>
             </div>
           </div>
         )}

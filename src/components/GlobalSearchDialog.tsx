@@ -120,10 +120,10 @@ export default function GlobalSearchDialog() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-3 flex w-full items-center justify-between rounded-lg border border-slate-700/70 bg-slate-900/70 px-3 py-2 text-left text-xs text-slate-300 hover:border-slate-600 hover:bg-slate-800"
+        className="mt-3 flex w-full items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs text-gray-600 hover:border-gray-300 hover:bg-white"
       >
         <span>全局搜索</span>
-        <span className="rounded border border-slate-600 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">⌘K</span>
+        <span className="rounded border border-gray-300 bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-500">⌘K</span>
       </button>
 
       {open && (
