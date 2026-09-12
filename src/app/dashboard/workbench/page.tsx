@@ -12,6 +12,7 @@ import {
 } from '@/lib/permissions'
 import { isNeedsActionProduct, parseProductSalesProducts } from '@/lib/productSalesNeedsAction'
 import { useToast } from '@/components/ToastProvider'
+import { CompactEmptyState, useDelayedVisibility } from '@/components/dashboard/FunctionalPremium'
 
 type WorkTask = {
   id: string
@@ -217,6 +218,11 @@ export default function WorkbenchPage() {
   const role = (session?.user as any)?.role as string | undefined
   const currentUserId = (session?.user as any)?.id || ''
   const currentUserName = (session?.user as any)?.name || (session?.user as any)?.email || ''
+  const sessionDisplayName = String((session?.user as any)?.name || '').trim()
+  const sessionEmail = String((session?.user as any)?.email || '').trim()
+  const greetingName = sessionDisplayName && sessionDisplayName !== sessionEmail && !sessionDisplayName.includes('@')
+    ? sessionDisplayName
+    : ''
   
   const canCreateTask = canCreateOwnWorkTask(role)
   const canViewTeamTasks = canViewTeamWorkTasks(role)
@@ -237,6 +243,12 @@ export default function WorkbenchPage() {
 
   const dayKey = useMemo(() => toLocalDateKey(new Date()), [])
   const now = new Date()
+  const todayLabel = useMemo(() => new Intl.DateTimeFormat('zh-CN', {
+    month: 'long',
+    day: 'numeric',
+    weekday: 'long',
+  }).format(new Date()), [])
+  const showBusinessTodosSkeleton = useDelayedVisibility(businessTodosLoadState === 'loading')
 
   const fetchTasks = async () => {
     try {
@@ -925,9 +937,7 @@ export default function WorkbenchPage() {
   ]
 
   const activeBusinessTodoItems = businessTodoItems.filter((item) => item.count > 0)
-  const resolvedBusinessTodoTitles = businessTodoItems
-    .filter((item) => item.count === 0)
-    .map((item) => item.title)
+  const secondaryBusinessTodoItems = businessTodoItems.slice(1).filter((item) => item.count > 0)
 
   const shortcuts = [
     { title: '导入订单', href: '/dashboard/product-sales' },
@@ -976,14 +986,18 @@ export default function WorkbenchPage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">
-            {new Date().getHours() < 12 ? '早上好' : new Date().getHours() < 18 ? '下午好' : '晚上好'}{currentUserName ? `，${currentUserName}` : ''}
+            {new Date().getHours() < 12 ? '早上好' : new Date().getHours() < 18 ? '下午好' : '晚上好'}{greetingName ? `，${greetingName}` : ''}
           </h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-gray-500">
+            <span>{todayLabel}</span>
+            <span aria-hidden="true" className="text-gray-300">·</span>
+            <span>
             {businessTodosLoadState === 'success'
-              ? `今天有 ${activeBusinessTodoItems.reduce((total, item) => total + item.count, 0)} 个事项需要关注。`
+              ? `今天有 ${activeBusinessTodoItems.reduce((total, item) => total + item.count, 0).toLocaleString('zh-CN')} 个事项需要关注`
               : businessTodosLoadState === 'error'
-                ? '经营事项暂时无法加载，任务功能仍可正常使用。'
-                : '正在整理今天需要关注的事项。'}
+                ? '经营事项暂时无法加载，任务功能仍可正常使用'
+                : '正在整理今天需要关注的事项'}
+            </span>
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1028,16 +1042,23 @@ export default function WorkbenchPage() {
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,65fr)_minmax(320px,35fr)]">
         <div className="space-y-5">
-      {/* 今日需要处理 */}
+      {/* 优先处理 */}
       <section className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-        <div className="border-b border-gray-100 px-5 py-4">
-          <h2 className="text-base font-semibold text-gray-900">今日需要处理</h2>
-          <p className="mt-1 text-xs text-gray-500">按正式业务口径列出需要人工跟进的对象。</p>
+        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">优先处理</h2>
+            <p className="mt-0.5 text-xs text-gray-500">ACTIVE 商品中需要立即跟进的库存风险。</p>
+          </div>
+          {businessTodosLoadState === 'success' ? (
+            <span className="text-2xl font-semibold tabular-nums text-gray-950">{businessTodos.inventoryRiskCount.toLocaleString('zh-CN')}</span>
+          ) : null}
         </div>
         {businessTodosLoadState === 'loading' ? (
-          <div className="px-5 py-5 text-sm text-gray-500">
-            正在加载经营异常…
-          </div>
+          showBusinessTodosSkeleton ? (
+            <div className="space-y-2 px-5 py-4" aria-label="正在加载经营异常">
+              {[0, 1, 2].map((item) => <div key={item} className="h-10 animate-pulse rounded-md bg-gray-100" />)}
+            </div>
+          ) : <div className="h-14" aria-busy="true" />
         ) : businessTodosLoadState === 'error' ? (
           <div className="flex flex-wrap items-center justify-between gap-3 bg-rose-50/40 px-5 py-4">
             <div className="text-sm text-rose-700">经营异常数据加载失败，请刷新后重试</div>
@@ -1049,52 +1070,58 @@ export default function WorkbenchPage() {
               重新加载
             </button>
           </div>
-        ) : activeBusinessTodoItems.length === 0 ? (
-          <div className="px-5 py-4 text-sm text-gray-500">
-            当前暂无经营异常
-          </div>
+        ) : businessTodos.inventoryRiskCount === 0 ? (
+          <CompactEmptyState>当前暂无经营异常</CompactEmptyState>
         ) : (
           <div className="divide-y divide-gray-100">
-            {activeBusinessTodoItems.map((item) => (
+            {businessTodos.inventoryRiskItems.map((product: any) => (
+              <button
+                key={product.id || product.sku}
+                type="button"
+                onClick={() => router.push('/dashboard/product-sales')}
+                className="group grid w-full items-center gap-3 px-5 py-3 text-left transition-colors duration-150 hover:bg-gray-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500 md:grid-cols-[minmax(0,1.6fr)_100px_100px_100px_56px]"
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-rose-400" aria-hidden="true" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-gray-900">{product.sku || '—'}</span>
+                    <span className="block truncate text-xs text-gray-500">{product.name || '—'}</span>
+                  </span>
+                </span>
+                <span className="text-sm font-medium text-rose-700">{product.inventoryRisk || '—'}</span>
+                <span className="text-right text-sm tabular-nums text-gray-700">{product.currentAvailableStock == null ? '—' : Number(product.currentAvailableStock).toLocaleString('zh-CN')}</span>
+                <span className="text-right text-sm tabular-nums text-gray-700">{product.currentSellableDays == null ? '—' : `${product.currentSellableDays}天`}</span>
+                <span className="text-right text-sm font-medium text-brand-600 opacity-60 transition-opacity duration-150 group-hover:opacity-100">查看</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {businessTodosLoadState === 'success' && secondaryBusinessTodoItems.length > 0 && (
+        <section className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+          <div className="border-b border-gray-100 px-5 py-3">
+            <h2 className="text-sm font-semibold text-gray-900">其他经营事项</h2>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {secondaryBusinessTodoItems.map((item) => (
               <button
                 key={item.title}
                 type="button"
                 onClick={() => router.push(item.href)}
-                className="group grid w-full gap-3 px-5 py-4 text-left transition-colors duration-150 hover:bg-gray-50/70 md:grid-cols-[150px_minmax(0,1fr)_auto]"
+                className="group flex w-full items-center justify-between gap-4 px-5 py-3 text-left transition-colors duration-150 hover:bg-gray-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
               >
-                <span className="flex items-baseline gap-2">
-                  <span className="text-sm font-semibold text-gray-900">{item.title}</span>
-                  <span className="text-xl font-semibold tabular-nums text-gray-900">{item.count}</span>
+                <span className="min-w-0">
+                  <span className="text-sm font-medium text-gray-800">{item.title}</span>
+                  <span className="ml-2 text-sm tabular-nums text-gray-500">{item.count.toLocaleString('zh-CN')}</span>
+                  <span className="ml-3 hidden text-xs text-gray-400 md:inline">{item.description}</span>
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm text-gray-500">{item.description}</span>
-                  {item.details.length > 0 && (
-                    <span className="mt-2 block divide-y divide-gray-100 border-t border-gray-100">
-                      {item.details.map((detail: any) => (
-                        <span key={`${item.title}-${detail.title}-${detail.meta}`} className="grid gap-1 py-2 sm:grid-cols-[minmax(150px,0.8fr)_minmax(0,1.2fr)] sm:gap-4">
-                          <span className="block truncate text-sm font-medium text-gray-800" title={detail.title}>{detail.title}</span>
-                          <span className="block text-xs text-gray-500 sm:text-right">{detail.meta}</span>
-                        </span>
-                      ))}
-                      {item.count > item.details.length && (
-                        <span className="block text-xs text-gray-400">还有 {item.count - item.details.length} 个</span>
-                      )}
-                    </span>
-                  )}
-                </span>
-                <span className="shrink-0 self-center text-sm font-medium text-brand-600 group-hover:text-brand-700">
-                  {item.action} →
-                </span>
+                <span className="shrink-0 text-xs font-medium text-brand-600 opacity-60 transition-opacity duration-150 group-hover:opacity-100">{item.action} →</span>
               </button>
             ))}
-            {resolvedBusinessTodoTitles.length > 0 && (
-              <div className="px-5 py-3 text-xs text-gray-400">
-                {resolvedBusinessTodoTitles.join('、')}正常
-              </div>
-            )}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
       <section className="rounded-lg border border-gray-200 bg-white p-5">
         <div className="flex items-start justify-between gap-3">

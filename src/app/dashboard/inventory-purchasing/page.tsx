@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react'
 import { mapOldRole } from '@/lib/pagePermissions'
 import { useToast } from '@/components/ToastProvider'
 import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react'
+import { FilterChip, InteractiveMetric, StickyToolbar, useDelayedVisibility } from '@/components/dashboard/FunctionalPremium'
 
 type SummaryItem = {
   productId: string
@@ -82,6 +83,7 @@ type ProductBusinessSummary = {
 type BusinessFilter = 'all' | 'missingCost' | 'missingPrice' | 'missingSupplier' | 'inStock' | 'hasSales30d'
 type BusinessSortKey = 'sku' | 'currentInventory' | 'sales7d' | 'sales30d'
 type SortDirection = 'asc' | 'desc'
+type SummaryMetricFilter = 'snapshot' | 'changed' | null
 type PurchaseOrderStatus = 'DRAFT' | 'ORDERED' | 'PRODUCING' | 'IN_TRANSIT' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED'
 type PurchasePaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'AMOUNT_INCOMPLETE'
 type PurchaseItemLinkStatus = 'NEW_PRODUCT' | 'DIFFERENT_CRAFT' | 'SKU_PENDING' | 'DO_NOT_LINK'
@@ -188,7 +190,21 @@ type UnmatchedRow = {
 
 function formatDateTime(value: string | null) {
   if (!value) return '—'
-  return new Date(value).toLocaleString('zh-CN', { hour12: false })
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
+}
+
+function formatFullDateTime(value: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { hour12: false })
 }
 
 function formatDateOnly(value: string | null) {
@@ -333,6 +349,8 @@ export default function InventoryPurchasingPage() {
     key: 'sku',
     direction: 'asc',
   })
+  const [summarySearch, setSummarySearch] = useState('')
+  const [summaryMetricFilter, setSummaryMetricFilter] = useState<SummaryMetricFilter>(null)
   const [summary, setSummary] = useState({ skuCount: 0, currentTotalStock: 0, changedSkuCount: 0, snapshotBackedSkuCount: 0 })
   const [batches, setBatches] = useState<ImportBatch[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -401,8 +419,10 @@ export default function InventoryPurchasingPage() {
   const [note, setNote] = useState('')
   const [showConfirmImportModal, setShowConfirmImportModal] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [initialLoading, setInitialLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const showInitialSkeleton = useDelayedVisibility(initialLoading)
 
   useEffect(() => {
     if (!message) return
@@ -417,7 +437,15 @@ export default function InventoryPurchasingPage() {
   }, [error, toast])
 
   const sortedSummaryItems = useMemo(() => {
-    return [...summaryItems].sort((a, b) => {
+    const keyword = summarySearch.trim().toLowerCase()
+    const filtered = summaryItems.filter((item) => {
+      if (keyword && !item.sku.toLowerCase().includes(keyword) && !item.productName.toLowerCase().includes(keyword)) return false
+      if (summaryMetricFilter === 'snapshot') return item.source === 'snapshot'
+      if (summaryMetricFilter === 'changed') return item.changeQty !== null && item.changeQty !== 0
+      return true
+    })
+
+    return filtered.sort((a, b) => {
       if (summarySort.key === 'sku') {
         return a.sku.localeCompare(b.sku) * (summarySort.direction === 'asc' ? 1 : -1)
       }
@@ -430,7 +458,7 @@ export default function InventoryPurchasingPage() {
       const stockDiff = summarySort.direction === 'asc' ? aStock - bStock : bStock - aStock
       return stockDiff || a.sku.localeCompare(b.sku)
     })
-  }, [summaryItems, summarySort])
+  }, [summaryItems, summaryMetricFilter, summarySearch, summarySort])
 
   function handleSummarySort(key: 'sku' | 'currentTotalStock') {
     setSummarySort((current) => ({
@@ -563,6 +591,8 @@ export default function InventoryPurchasingPage() {
       await Promise.all([loadSummary(), loadBatches(), loadSuppliers(showInactiveSuppliers), loadProductBusiness(), loadPurchaseOrders()])
     } catch (err) {
       setError(err instanceof Error ? err.message : '页面数据加载失败')
+    } finally {
+      setInitialLoading(false)
     }
   }
 
@@ -1140,6 +1170,13 @@ export default function InventoryPurchasingPage() {
               <h1 className="text-2xl font-semibold text-slate-900">库存与订货</h1>
               <p className="mt-1 text-sm text-slate-500">管理实时库存、采购、供应商及在途情况</p>
             </div>
+            {canManageInventory && activeTab === 'import' ? (
+              <button type="button" onClick={() => document.getElementById('inventory-import-file')?.click()} className="btn-primary">导入库存</button>
+            ) : canManageInventory && activeTab === 'suppliers' ? (
+              <button type="button" onClick={() => document.getElementById('new-supplier-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' })} className="btn-primary">新增供应商</button>
+            ) : canManageInventory && activeTab === 'ordering' ? (
+              <button type="button" onClick={startCreatePurchaseOrder} className="btn-primary">新建采购</button>
+            ) : null}
           </div>
           <div className="overflow-x-auto border-b border-slate-200">
             <div className="flex min-w-max gap-6 text-sm">
@@ -1169,30 +1206,74 @@ export default function InventoryPurchasingPage() {
 
         {activeTab === 'overview' && (
           <section className="space-y-5">
-            <div className="grid overflow-hidden rounded-lg border border-slate-200 bg-white sm:grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-slate-100">
-              <div className="border-b border-slate-100 px-5 py-3.5 sm:border-r lg:border-b-0 lg:border-r-0">
-                <p className="text-xs font-medium text-slate-500">SKU</p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{summary.skuCount}</p>
+            {initialLoading ? (
+              showInitialSkeleton ? (
+                <div className="grid overflow-hidden rounded-lg border border-slate-200 bg-white sm:grid-cols-2 lg:grid-cols-4" aria-label="正在加载库存概览">
+                  {[0, 1, 2, 3].map((item) => <div key={item} className="h-[82px] animate-pulse border-r border-slate-100 bg-slate-50" />)}
+                </div>
+              ) : <div className="h-[82px]" aria-busy="true" />
+            ) : (
+              <div className="grid overflow-hidden rounded-lg border border-slate-200 bg-white sm:grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-slate-100">
+                <InteractiveMetric
+                  label="SKU"
+                  value={summary.skuCount.toLocaleString('zh-CN')}
+                  active={summaryMetricFilter === null && summarySearch === ''}
+                  onPress={() => {
+                    setSummaryMetricFilter(null)
+                    setSummarySearch('')
+                    setSummarySort({ key: 'sku', direction: 'asc' })
+                  }}
+                  className="border-b border-slate-100 sm:border-r lg:border-b-0 lg:border-r-0"
+                />
+                <InteractiveMetric
+                  label="当前库存"
+                  value={summary.currentTotalStock.toLocaleString('zh-CN')}
+                  description={summarySort.key === 'currentTotalStock' ? (summarySort.direction === 'asc' ? '从低到高' : '从高到低') : '点击排序'}
+                  active={summarySort.key === 'currentTotalStock'}
+                  onPress={() => handleSummarySort('currentTotalStock')}
+                  className="border-b border-slate-100 lg:border-b-0"
+                />
+                <InteractiveMetric
+                  label="有效快照"
+                  value={summary.snapshotBackedSkuCount.toLocaleString('zh-CN')}
+                  active={summaryMetricFilter === 'snapshot'}
+                  onPress={() => setSummaryMetricFilter((current) => current === 'snapshot' ? null : 'snapshot')}
+                  className="border-b border-slate-100 sm:border-r lg:border-b-0 lg:border-r-0"
+                />
+                <InteractiveMetric
+                  label="库存变化"
+                  value={summary.changedSkuCount.toLocaleString('zh-CN')}
+                  active={summaryMetricFilter === 'changed'}
+                  onPress={() => setSummaryMetricFilter((current) => current === 'changed' ? null : 'changed')}
+                />
               </div>
-              <div className="border-b border-slate-100 px-5 py-3.5 lg:border-b-0">
-                <p className="text-xs font-medium text-slate-500">当前库存</p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{summary.currentTotalStock}</p>
-              </div>
-              <div className="border-b border-slate-100 px-5 py-3.5 sm:border-r lg:border-b-0 lg:border-r-0">
-                <p className="text-xs font-medium text-slate-500">有效快照</p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{summary.snapshotBackedSkuCount}</p>
-              </div>
-              <div className="px-5 py-3.5">
-                <p className="text-xs font-medium text-slate-500">库存变化</p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{summary.changedSkuCount}</p>
-              </div>
-            </div>
+            )}
 
-            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <div className="rounded-lg border border-slate-200 bg-white">
               <div className="border-b border-slate-100 px-5 py-3.5">
                 <h2 className="text-base font-semibold text-slate-900">SKU 实时库存校准</h2>
                 <p className="mt-1 text-sm text-slate-500">只展示快照口径库存；没有有效快照时显示无数据。</p>
               </div>
+              <StickyToolbar>
+                <input
+                  type="search"
+                  value={summarySearch}
+                  onChange={(event) => setSummarySearch(event.target.value)}
+                  placeholder="搜索 SKU / 产品"
+                  className="h-8 min-w-[220px] flex-1 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition-colors duration-150 placeholder:text-slate-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 sm:max-w-sm"
+                />
+                {summaryMetricFilter === 'snapshot' ? <FilterChip label="有效快照" onRemove={() => setSummaryMetricFilter(null)} /> : null}
+                {summaryMetricFilter === 'changed' ? <FilterChip label="库存发生变化" onRemove={() => setSummaryMetricFilter(null)} /> : null}
+                {(summarySearch || summaryMetricFilter) ? (
+                  <button
+                    type="button"
+                    onClick={() => { setSummarySearch(''); setSummaryMetricFilter(null) }}
+                    className="ml-auto text-xs font-medium text-slate-500 hover:text-slate-900"
+                  >
+                    清除筛选
+                  </button>
+                ) : <span className="ml-auto text-xs tabular-nums text-slate-400">{sortedSummaryItems.length.toLocaleString('zh-CN')} 个 SKU</span>}
+              </StickyToolbar>
               <div className="max-h-[calc(100vh-250px)] overflow-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-sm">
                   <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs font-medium text-slate-500">
@@ -1216,16 +1297,19 @@ export default function InventoryPurchasingPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {sortedSummaryItems.map((item) => (
-                      <tr key={item.productId} className="hover:bg-slate-50">
+                      <tr key={item.productId} className="transition-colors duration-150 hover:bg-slate-50">
                         <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">{item.sku}</td>
                         <td className="max-w-[320px] px-4 py-3 text-slate-700"><span className="line-clamp-2" title={item.productName}>{item.productName}</span></td>
                         <td className="px-4 py-3 text-right font-medium tabular-nums text-slate-900">{formatQty(item.currentTotalStock)}</td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-600">{formatQty(item.previousTotalStock)}</td>
                         <td className={`px-4 py-3 text-right font-medium tabular-nums ${item.changeQty && item.changeQty < 0 ? 'text-red-600' : item.changeQty && item.changeQty > 0 ? 'text-emerald-700' : 'text-slate-500'}`}>{formatChange(item.changeQty)}</td>
-                        <td className="px-4 py-3 text-slate-600">{formatDateTime(item.latestSnapshotAt)}</td>
-                        <td className="px-4 py-3 text-slate-500"><span className="inline-flex rounded-md bg-slate-100 px-2 py-1 text-xs">{item.source === 'snapshot' ? '有效快照' : '无数据'}</span></td>
+                        <td className="whitespace-nowrap px-4 py-3 text-slate-600" title={formatFullDateTime(item.latestSnapshotAt)}>{formatDateTime(item.latestSnapshotAt)}</td>
+                        <td className="px-4 py-3 text-xs text-slate-500">{item.source === 'snapshot' ? '有效快照' : '无数据'}</td>
                       </tr>
                     ))}
+                    {sortedSummaryItems.length === 0 && (
+                      <tr><td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500">没有符合当前筛选的 SKU</td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1564,6 +1648,7 @@ export default function InventoryPurchasingPage() {
                   <label className="block">
                     <span className="text-sm font-medium text-slate-700">库存文件</span>
                     <input
+                      id="inventory-import-file"
                       type="file"
                       accept=".xlsx,.xls,.csv"
                       disabled={!canManageInventory}
@@ -1938,7 +2023,7 @@ export default function InventoryPurchasingPage() {
 
             <aside className="space-y-6">
               {canManageInventory ? (
-                <form onSubmit={handleCreateSupplier} className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <form id="new-supplier-form" onSubmit={handleCreateSupplier} className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
                   <h2 className="text-lg font-semibold text-slate-900">新增供应商</h2>
                   <p className="mt-1 text-sm text-slate-500">仅填写名称和备注；isActive 默认启用。</p>
                   <label className="mt-5 block">
@@ -2081,15 +2166,6 @@ export default function InventoryPurchasingPage() {
                   >
                     刷新
                   </button>
-                  {canManageInventory && (
-                    <button
-                      type="button"
-                      onClick={startCreatePurchaseOrder}
-                      className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700"
-                    >
-                      + 新增采购单
-                    </button>
-                  )}
                 </div>
               </div>
               <div className="overflow-x-auto">

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
+import { OverflowMenu, useDelayedVisibility } from '@/components/dashboard/FunctionalPremium'
 
 type ProductDetailResponse = {
   product: {
@@ -117,6 +118,7 @@ export default function ProductDetailPage() {
   const [data, setData] = useState<ProductDetailResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const showLoadingSkeleton = useDelayedVisibility(loading)
 
   useEffect(() => {
     if (!productId) return
@@ -144,7 +146,13 @@ export default function ProductDetailPage() {
   const recentPurchases = useMemo(() => (data?.purchases || []).slice(0, 5), [data?.purchases])
 
   if (loading) {
-    return <div className="min-h-screen bg-slate-50 p-6 text-sm text-slate-500">加载商品详情...</div>
+    return showLoadingSkeleton ? (
+      <div className="space-y-4" aria-label="正在加载商品详情">
+        <div className="h-9 w-28 animate-pulse rounded-md bg-slate-100" />
+        <div className="h-32 animate-pulse rounded-lg border border-slate-200 bg-slate-100/70" />
+        <div className="h-24 animate-pulse rounded-lg border border-slate-200 bg-slate-100/70" />
+      </div>
+    ) : <div className="h-24" aria-busy="true" />
   }
 
   if (error || !data) {
@@ -160,26 +168,27 @@ export default function ProductDetailPage() {
   const hasSupplementalData = Boolean(
     product.description?.trim()
     || product.notes?.trim()
-    || product.material?.trim()
     || product.productUrl
     || product.materialUrl
     || product.aliases.length,
   )
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <Link href="/dashboard/products" className="text-sm font-medium text-blue-600 hover:text-blue-700">← 返回产品库</Link>
-        <div className="flex flex-wrap items-center gap-4 text-sm">
-          <Link href="/dashboard/inventory-purchasing" className="text-slate-500 hover:text-slate-900">商品经营</Link>
-          <Link href="/dashboard/product-sales" className="text-slate-500 hover:text-slate-900">销售分析</Link>
-          <Link href="/dashboard/products" className="rounded-md bg-brand-600 px-3.5 py-2 font-medium text-white hover:bg-brand-700">编辑基础资料</Link>
+        <div className="flex items-center gap-2">
+          <Link href="/dashboard/products" className="rounded-md bg-brand-600 px-3.5 py-2 text-sm font-medium text-white transition-colors duration-150 hover:bg-brand-700">编辑基础资料</Link>
+          <OverflowMenu items={[
+            { label: '商品经营', href: '/dashboard/inventory-purchasing' },
+            { label: '销售分析', href: '/dashboard/product-sales' },
+          ]} />
         </div>
       </div>
 
-      <div className="rounded-lg border border-slate-200 bg-white px-5 py-4">
+      <header className="rounded-lg border border-slate-200 bg-white px-5 py-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-center">
-          <div className="h-20 w-20 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
+          <div className="h-24 w-24 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
             {product.image ? (
               <img src={product.image} alt={product.name} className="h-full w-full object-cover" />
             ) : (
@@ -187,63 +196,63 @@ export default function ProductDetailPage() {
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-semibold text-slate-900">{product.name}</h1>
-            <div className="mt-1 font-mono text-sm text-slate-500">{product.sku || '无 SKU'}</div>
-            <div className="mt-2 flex flex-wrap gap-2 text-xs">
-              <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">
-                {businessStatusLabel[product.businessStatus] || product.businessStatus}
-              </span>
-              {!product.isActive && (
-                <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-500">已停用</span>
-              )}
+            <h1 className="text-2xl font-semibold text-slate-950">{product.name}</h1>
+            <div className="mt-1 font-mono text-sm text-slate-500">{product.sku || '—'}</div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              <span className="rounded-md bg-slate-100 px-2 py-1 font-medium text-slate-700">{businessStatusLabel[product.businessStatus] || product.businessStatus}</span>
+              {!product.isActive && <span className="text-slate-500">已停用</span>}
             </div>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
-        <div className="grid lg:grid-cols-3 lg:divide-x lg:divide-slate-100">
-          <Section title="商品信息">
-            <dl>
-            <Field label="默认 Supplier" value={product.defaultSupplier?.name || '未绑定默认供应商'} />
-            <Field label="当前售价" value={formatUsd(business?.currentSellingPriceUsd)} />
-            <Field label="拿货价" value={formatRmb(business?.costCny ?? product.costCny)} />
-            <Field label="颜色" value={product.color} />
-            <Field label="长度" value={product.length} />
-            <Field label="款式/工艺" value={product.style} />
-            <Field label="材质" value={product.material} />
-            {product.laceSize && <Field label="Lace Size" value={product.laceSize} />}
-            </dl>
-          </Section>
+      <section className="grid overflow-hidden rounded-lg border border-slate-200 bg-white sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 xl:divide-x xl:divide-slate-100">
+        {[
+          { label: '当前库存', value: formatNumber(business?.currentInventory) },
+          { label: '30天销量', value: formatNumber(sales?.monthSales) },
+          { label: '可售天数', value: sales?.currentSellableDays == null ? '—' : `${formatNumber(sales.currentSellableDays)}天` },
+          { label: '库存成本', value: formatRmb(business?.inventoryCostRmb) },
+          { label: '在途', value: formatNumber(business?.inTransitQty) },
+          { label: '库存风险', value: sales?.inventoryRisk || '—' },
+        ].map((metric) => (
+          <div key={metric.label} className="border-b border-slate-100 px-4 py-3.5 last:border-b-0 sm:border-r lg:border-b-0 xl:border-r-0">
+            <div className="text-2xl font-semibold tabular-nums text-slate-950">{metric.value}</div>
+            <div className="mt-1 text-xs text-slate-500">{metric.label}</div>
+          </div>
+        ))}
+      </section>
 
-          <Section title="库存">
-            {business ? (
-              <dl>
-              <Field label="当前库存" value={formatNumber(business.currentInventory)} />
-              <Field label="订货中" value={formatNumber(business.orderedOpenQty)} />
-              <Field label="在途" value={formatNumber(business.inTransitQty)} />
-              <Field label="未来库存" value={formatNumber(business.futureInventory)} />
-              <Field label="库存成本" value={formatRmb(business.inventoryCostRmb)} />
-              <Field label="零售货值" value={formatUsd(business.retailInventoryValueUsd)} />
-              </dl>
-            ) : (
-              <div className="py-2 text-sm text-slate-500">暂无经营数据</div>
-            )}
-            <Link href="/dashboard/inventory-purchasing" className="mt-3 inline-block text-sm font-medium text-brand-600 hover:text-brand-700">查看库存与订货 →</Link>
-          </Section>
-
-          <Section title="销售">
-            <dl>
-            <Field label="7天销量" value={formatNumber(sales?.sevenDaySales ?? 0)} />
-            <Field label="30天销量" value={formatNumber(sales?.monthSales ?? 0)} />
-            <Field label="参考日均" value={formatNumber(sales?.avgDailySales)} />
-            <Field label="可售天数" value={sales?.currentSellableDays === null ? '—' : formatNumber(sales?.currentSellableDays)} />
-            <Field label="库存风险" value={sales?.inventoryRisk || '—'} />
-            <Field label="动销等级" value={sales?.salesRank || '—'} />
-            </dl>
-            <Link href="/dashboard/product-sales" className="mt-3 inline-block text-sm font-medium text-brand-600 hover:text-brand-700">查看销售分析 →</Link>
-          </Section>
+      <details className="rounded-lg border border-slate-200 bg-white min-[1400px]:hidden">
+        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-slate-800 [&::-webkit-details-marker]:hidden">商品档案与操作</summary>
+        <dl className="border-t border-slate-100 px-4 py-2">
+          <Field label="状态" value={businessStatusLabel[product.businessStatus] || product.businessStatus} />
+          <Field label="Canonical SKU" value={product.sku} />
+          <Field label="默认 Supplier" value={product.defaultSupplier?.name} />
+        </dl>
+        <div className="flex items-center gap-4 border-t border-slate-100 px-4 py-3 text-sm">
+          <Link href="/dashboard/products" className="font-medium text-brand-600 hover:text-brand-700">编辑基础资料</Link>
+          <Link href="/dashboard/inventory-purchasing" className="text-slate-500 hover:text-slate-900">商品经营</Link>
         </div>
+      </details>
+
+      <div className="grid gap-4 min-[1400px]:grid-cols-[minmax(0,1fr)_272px]">
+        <main className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <Section title="商品信息">
+            <dl className="grid gap-x-8 md:grid-cols-2">
+              <Field label="默认 Supplier" value={product.defaultSupplier?.name} />
+              <Field label="当前售价" value={formatUsd(business?.currentSellingPriceUsd)} />
+              <Field label="拿货价" value={formatRmb(business?.costCny ?? product.costCny)} />
+              <Field label="颜色" value={product.color} />
+              <Field label="长度" value={product.length} />
+              <Field label="款式/工艺" value={product.style} />
+              <Field label="材质" value={product.material} />
+              {product.laceSize && <Field label="Lace Size" value={product.laceSize} />}
+            </dl>
+            <div className="mt-3 flex flex-wrap gap-4 text-sm">
+              <Link href="/dashboard/inventory-purchasing" className="font-medium text-brand-600 hover:text-brand-700">查看库存与订货 →</Link>
+              <Link href="/dashboard/product-sales" className="font-medium text-brand-600 hover:text-brand-700">查看销售分析 →</Link>
+            </div>
+          </Section>
 
         <Section title="最近采购">
           {recentPurchases.length ? (
@@ -301,7 +310,6 @@ export default function ProductDetailPage() {
                 <div className="mt-1 whitespace-pre-wrap text-slate-800">{product.notes}</div>
               </div>
             )}
-            {product.material?.trim() && <Field label="Material" value={product.material} />}
             {(product.productUrl || product.materialUrl) && (
               <div className="flex flex-wrap gap-3">
                 {product.productUrl && (
@@ -329,6 +337,28 @@ export default function ProductDetailPage() {
             <div className="py-1 text-sm text-slate-500">暂无补充资料</div>
           )}
         </Section>
+        </main>
+
+        <aside className="hidden min-[1400px]:block" aria-label="商品档案 Inspector">
+          <div className="sticky top-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <div className="border-b border-slate-100 px-4 py-3">
+              <h2 className="text-sm font-semibold text-slate-900">商品档案</h2>
+              <p className="mt-0.5 text-xs text-slate-500">关键身份与 owner 操作</p>
+            </div>
+            <dl className="px-4 py-2">
+              <Field label="状态" value={businessStatusLabel[product.businessStatus] || product.businessStatus} />
+              <Field label="Canonical SKU" value={product.sku} />
+              <Field label="默认 Supplier" value={product.defaultSupplier?.name} />
+            </dl>
+            <div className="border-t border-slate-100 p-3">
+              <Link href="/dashboard/products" className="flex h-9 w-full items-center justify-center rounded-md bg-brand-600 px-3 text-sm font-medium text-white transition-colors duration-150 hover:bg-brand-700">编辑基础资料</Link>
+              <div className="mt-3 flex items-center justify-between text-sm">
+                <Link href="/dashboard/inventory-purchasing" className="text-slate-500 hover:text-slate-900">商品经营</Link>
+                <Link href="/dashboard/product-sales" className="text-slate-500 hover:text-slate-900">销售分析</Link>
+              </div>
+            </div>
+          </div>
+        </aside>
       </div>
     </div>
   )
