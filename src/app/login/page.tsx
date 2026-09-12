@@ -104,14 +104,11 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-[100svh] flex-col bg-[#f5f5f7] text-gray-900">
-      <header className="border-b border-black/[0.05] bg-[#f5f5f7]">
-        <div className="mx-auto flex h-20 w-full max-w-7xl items-center px-5 sm:px-8 lg:px-10">
-          <div className="flex items-center gap-2.5" aria-label="Sunnymay Operations">
-            <img src="/logo.png" alt="Sunnymay" className="h-8 w-8 object-contain" />
-            <div className="leading-none">
-              <div className="text-[16px] font-semibold text-gray-900">Sunnymay</div>
-              <div className="mt-1 text-[11px] text-gray-500">Operations</div>
-            </div>
+      <header className="bg-[#f5f5f7]">
+        <div className="flex h-16 w-full items-center px-7 sm:px-8">
+          <div className="flex items-baseline gap-2.5" aria-label="Sunnymay Operations">
+            <span className="text-[17px] font-semibold text-gray-900">Sunnymay</span>
+            <span className="text-[12px] font-normal text-gray-500">Operations</span>
           </div>
         </div>
       </header>
@@ -120,9 +117,9 @@ export default function LoginPage() {
         <div className="w-full max-w-[420px]">
           <div className="mb-7 text-center">
             <h1 className="text-[30px] font-semibold leading-tight text-gray-950 sm:text-[32px]">
-              Sunnymay Operations
+              欢迎回来
             </h1>
-            <p className="mt-2 text-[17px] font-medium text-gray-700">运营管理后台</p>
+            <p className="mt-2 text-[17px] font-medium text-gray-700">登录 Sunnymay 运营后台</p>
             <p className="mt-2 text-[14px] leading-6 text-gray-500">
               商品、库存、采购、销售与内容运营统一管理。
             </p>
