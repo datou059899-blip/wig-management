@@ -100,12 +100,12 @@ const priorityOrder = (p: string) => {
   return 4
 }
 
-const moduleIcons: Record<string, string> = {
-  '产品': '📦',
-  '达人建联': '🤝',
-  '脚本拆解': '✂️',
-  '经营数据': '📈',
-  '自定义': '📝',
+const moduleLabels: Record<string, string> = {
+  '产品': '产品',
+  '达人建联': '达人',
+  '脚本拆解': '脚本',
+  '经营数据': '经营',
+  '自定义': '自定义',
 }
 
 const taskTypeLabels: Record<string, string> = {
@@ -929,14 +929,6 @@ export default function WorkbenchPage() {
     .filter((item) => item.count === 0)
     .map((item) => item.title)
 
-  const todoToneClasses: Record<string, string> = {
-    rose: 'border-rose-200 bg-rose-50/40 text-rose-700',
-    amber: 'border-amber-200 bg-amber-50/40 text-amber-700',
-    orange: 'border-orange-200 bg-orange-50/40 text-orange-700',
-    blue: 'border-blue-200 bg-blue-50/40 text-blue-700',
-    slate: 'border-slate-200 bg-slate-50 text-slate-400',
-  }
-
   const shortcuts = [
     { title: '导入订单', href: '/dashboard/product-sales' },
     { title: '库存导入', href: '/dashboard/inventory-purchasing?tab=import' },
@@ -979,15 +971,19 @@ export default function WorkbenchPage() {
   ]
 
   return (
-    <div className="relative z-10 flex min-h-screen flex-col gap-6">
+    <div className="relative z-10 flex min-h-screen flex-col gap-5">
       {/* 页面标题 */}
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">
-            今日工作台
+            {new Date().getHours() < 12 ? '早上好' : new Date().getHours() < 18 ? '下午好' : '晚上好'}{currentUserName ? `，${currentUserName}` : ''}
           </h1>
           <p className="mt-1 text-sm text-gray-500">
-            先看今天需要处理的经营事项，再处理个人和团队任务。
+            {businessTodosLoadState === 'success'
+              ? `今天有 ${activeBusinessTodoItems.reduce((total, item) => total + item.count, 0)} 个事项需要关注。`
+              : businessTodosLoadState === 'error'
+                ? '经营事项暂时无法加载，任务功能仍可正常使用。'
+                : '正在整理今天需要关注的事项。'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1030,20 +1026,20 @@ export default function WorkbenchPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,65fr)_minmax(320px,35fr)]">
-        <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,65fr)_minmax(320px,35fr)]">
+        <div className="space-y-5">
       {/* 今日需要处理 */}
-      <section className="card p-5">
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">今日需要处理</h2>
-          <p className="mt-1 text-sm text-gray-500">优先显示具体对象，复用正式业务页面口径。</p>
+      <section className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+        <div className="border-b border-gray-100 px-5 py-4">
+          <h2 className="text-base font-semibold text-gray-900">今日需要处理</h2>
+          <p className="mt-1 text-xs text-gray-500">按正式业务口径列出需要人工跟进的对象。</p>
         </div>
         {businessTodosLoadState === 'loading' ? (
-          <div className="rounded-xl border border-gray-100 bg-gray-50/60 px-4 py-3 text-sm text-gray-500">
+          <div className="px-5 py-5 text-sm text-gray-500">
             正在加载经营异常…
           </div>
         ) : businessTodosLoadState === 'error' ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-100 bg-rose-50/40 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-rose-50/40 px-5 py-4">
             <div className="text-sm text-rose-700">经营异常数据加载失败，请刷新后重试</div>
             <button
               type="button"
@@ -1054,36 +1050,30 @@ export default function WorkbenchPage() {
             </button>
           </div>
         ) : activeBusinessTodoItems.length === 0 ? (
-          <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 px-4 py-3">
-            <div className="text-sm font-semibold text-emerald-700">✓ 当前暂无经营异常</div>
-            <div className="mt-1 text-sm text-emerald-700/80">
-              库存、采购、商品资料、新品开发暂时没有需要处理的事项。
-            </div>
+          <div className="px-5 py-4 text-sm text-gray-500">
+            当前暂无经营异常
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="divide-y divide-gray-100">
             {activeBusinessTodoItems.map((item) => (
               <button
                 key={item.title}
                 type="button"
                 onClick={() => router.push(item.href)}
-                className="group flex w-full items-center gap-4 rounded-xl border border-gray-100 bg-white p-4 text-left transition hover:border-brand-200 hover:shadow-sm"
+                className="group grid w-full gap-3 px-5 py-4 text-left transition-colors duration-150 hover:bg-gray-50/70 md:grid-cols-[150px_minmax(0,1fr)_auto]"
               >
-                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-sm font-semibold ${todoToneClasses[item.tone]}`}>
-                  {item.icon}
+                <span className="flex items-baseline gap-2">
+                  <span className="text-sm font-semibold text-gray-900">{item.title}</span>
+                  <span className="text-xl font-semibold tabular-nums text-gray-900">{item.count}</span>
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                    <span className="font-semibold text-gray-900">{item.title}</span>
-                    <span className="text-lg font-bold text-gray-900">{item.count}</span>
-                  </span>
-                  <span className="mt-1 block text-sm text-gray-500">{item.description}</span>
+                  <span className="block text-sm text-gray-500">{item.description}</span>
                   {item.details.length > 0 && (
-                    <span className="mt-3 block space-y-1.5">
+                    <span className="mt-2 block divide-y divide-gray-100 border-t border-gray-100">
                       {item.details.map((detail: any) => (
-                        <span key={`${item.title}-${detail.title}-${detail.meta}`} className="block rounded-lg bg-gray-50 px-3 py-2">
-                          <span className="block text-sm font-medium text-gray-800">{detail.title}</span>
-                          <span className="block text-xs text-gray-500">{detail.meta}</span>
+                        <span key={`${item.title}-${detail.title}-${detail.meta}`} className="grid gap-1 py-2 sm:grid-cols-[minmax(150px,0.8fr)_minmax(0,1.2fr)] sm:gap-4">
+                          <span className="block truncate text-sm font-medium text-gray-800" title={detail.title}>{detail.title}</span>
+                          <span className="block text-xs text-gray-500 sm:text-right">{detail.meta}</span>
                         </span>
                       ))}
                       {item.count > item.details.length && (
@@ -1092,24 +1082,24 @@ export default function WorkbenchPage() {
                     </span>
                   )}
                 </span>
-                <span className="shrink-0 text-sm font-medium text-primary-600 group-hover:text-primary-700">
+                <span className="shrink-0 self-center text-sm font-medium text-brand-600 group-hover:text-brand-700">
                   {item.action} →
                 </span>
               </button>
             ))}
             {resolvedBusinessTodoTitles.length > 0 && (
-              <div className="px-1 text-xs text-gray-400">
-                ✓ {resolvedBusinessTodoTitles.join('、')}正常
+              <div className="px-5 py-3 text-xs text-gray-400">
+                {resolvedBusinessTodoTitles.join('、')}正常
               </div>
             )}
           </div>
         )}
       </section>
 
-      <section className="card p-5">
+      <section className="rounded-lg border border-gray-200 bg-white p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">{teamView && canViewTeamTasks ? '团队任务' : '我的任务'}</h2>
+            <h2 className="text-base font-semibold text-gray-900">{teamView && canViewTeamTasks ? '团队任务' : '我的任务'}</h2>
             <p className="mt-1 text-sm text-gray-500">
               {teamView && canViewTeamTasks
                 ? '查看全员任务进度，管理排期与优先级。'
@@ -1126,14 +1116,14 @@ export default function WorkbenchPage() {
       )}
 
       {/* 任务概览摘要 */}
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+      <div className="mt-4 grid overflow-hidden rounded-lg border border-gray-100 sm:grid-cols-5 sm:divide-x sm:divide-gray-100">
         {taskSummaryItems.map((item) => (
-          <div key={item.label} className="rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-2">
+          <div key={item.label} className="border-b border-gray-100 px-3 py-2.5 last:border-b-0 sm:border-b-0">
             <div className="flex items-center gap-2 text-xs text-gray-500">
               <span className={`h-2 w-2 rounded-full ${item.color}`} />
               {item.label}
             </div>
-            <div className="mt-1 text-xl font-semibold text-gray-900">{item.value}</div>
+            <div className="mt-1 text-xl font-semibold tabular-nums text-gray-900">{item.value}</div>
           </div>
         ))}
       </div>
@@ -1232,7 +1222,7 @@ export default function WorkbenchPage() {
                     group.completed ? (
                       <div key={t.id} className="flex items-center justify-between gap-3 rounded-lg bg-gray-50 px-3 py-2 text-sm">
                         <div className="flex min-w-0 items-center gap-2">
-                          <span className="text-gray-400">{moduleIcons[t.sourceModule] || '📋'}</span>
+                          <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">{moduleLabels[t.sourceModule] || t.sourceModule}</span>
                           <span className="truncate text-gray-500 line-through">{t.title}</span>
                           {teamView && <span className="text-xs text-gray-400">@{t.assigneeName}</span>}
                         </div>
@@ -1255,10 +1245,10 @@ export default function WorkbenchPage() {
 
         </div>
 
-        <aside className="space-y-6">
-          <section className="card p-5">
+        <aside className="space-y-5">
+          <section className="rounded-lg border border-gray-200 bg-white p-5">
             <div className="mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">未来 7 天</h2>
+              <h2 className="text-base font-semibold text-gray-900">未来 7 天</h2>
               <p className="mt-1 text-sm text-gray-500">只放有明确日期的到货和任务。</p>
             </div>
 
@@ -1269,15 +1259,15 @@ export default function WorkbenchPage() {
                   <span className="text-xs text-gray-400">{businessTodos.upcomingArrivals.length} 项</span>
                 </div>
                 {businessTodos.upcomingArrivals.length === 0 ? (
-                  <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-400">未来 7 天暂无预计到货。</div>
+                  <div className="border-t border-gray-100 py-3 text-sm text-gray-400">未来 7 天暂无预计到货。</div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="divide-y divide-gray-100 border-t border-gray-100">
                     {businessTodos.upcomingArrivals.map((order: any) => (
                       <button
                         key={order.id}
                         type="button"
                         onClick={() => router.push('/dashboard/inventory-purchasing?tab=orders')}
-                        className="w-full rounded-lg border border-gray-100 bg-white px-3 py-2 text-left transition hover:border-brand-200 hover:bg-gray-50"
+                        className="w-full px-1 py-3 text-left transition-colors duration-150 hover:bg-gray-50"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-semibold text-gray-900">{formatMonthDay(order.expectedArrivalDate)}</span>
@@ -1287,7 +1277,7 @@ export default function WorkbenchPage() {
                         <div className="mt-0.5 text-xs text-gray-500">{order.orderNo || '-'}</div>
                         {order.unfinishedItemCount > 0 && (
                           <div className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700">
-                            ⚠ 其中 {order.unfinishedItemCount} 个新品尚未完成正式建档
+                            其中 {order.unfinishedItemCount} 个新品尚未完成正式建档
                           </div>
                         )}
                       </button>
@@ -1302,11 +1292,11 @@ export default function WorkbenchPage() {
                   <span className="text-xs text-gray-400">{businessTodos.upcomingTasks.length} 项</span>
                 </div>
                 {businessTodos.upcomingTasks.length === 0 ? (
-                  <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-400">未来 7 天暂无即将到期任务。</div>
+                  <div className="border-t border-gray-100 py-3 text-sm text-gray-400">未来 7 天暂无即将到期任务。</div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="divide-y divide-gray-100 border-t border-gray-100">
                     {businessTodos.upcomingTasks.map((task) => (
-                      <div key={task.id} className="rounded-lg border border-gray-100 bg-white px-3 py-2">
+                      <div key={task.id} className="px-1 py-3">
                         <div className="flex items-center justify-between gap-2">
                           <span className="truncate text-sm font-medium text-gray-900">{task.title}</span>
                           <span className="shrink-0 text-xs text-gray-400">{formatMonthDay(task.dueDate)}</span>
@@ -1326,7 +1316,7 @@ export default function WorkbenchPage() {
       </div>
 
       {/* 快捷操作 */}
-      <section className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+      <section className="border-y border-gray-200 py-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 text-sm font-semibold text-gray-700">快捷操作</span>
           {shortcuts.map((shortcut) => (
@@ -1334,7 +1324,7 @@ export default function WorkbenchPage() {
               key={shortcut.title}
               type="button"
               onClick={() => router.push(shortcut.href)}
-              className="rounded-full border border-gray-200 px-3 py-1.5 text-sm text-gray-700 transition hover:border-brand-200 hover:bg-gray-50 hover:text-primary-700"
+              className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 transition-colors duration-150 hover:border-brand-200 hover:text-brand-700"
             >
               {shortcut.title}
             </button>
@@ -1352,7 +1342,7 @@ export default function WorkbenchPage() {
             {categorized.completed.slice(0, 3).map((t) => (
               <div key={t.id} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-sm">
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className="text-gray-400">{moduleIcons[t.sourceModule] || '📋'}</span>
+                  <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">{moduleLabels[t.sourceModule] || t.sourceModule}</span>
                   <span className="truncate text-gray-500 line-through">{t.title}</span>
                   {teamView && <span className="text-xs text-gray-400">@{t.assigneeName}</span>}
                 </div>
@@ -1878,7 +1868,7 @@ function TaskCard({ task, onUpdate, onEdit, canManage, canComplete, showAssignee
   }
 
   return (
-    <div className={`rounded-lg border p-3 hover:shadow-md transition-all ${
+    <div className={`rounded-lg border p-3 transition-colors duration-150 hover:bg-gray-50 ${
       task.status === '已延期' ? 'border-red-100 bg-red-50/50' : 
       task.isTodayMustDo ? 'border-green-100 bg-green-50/50' :
       'border-gray-100 bg-white'
@@ -1889,7 +1879,7 @@ function TaskCard({ task, onUpdate, onEdit, canManage, canComplete, showAssignee
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium text-gray-900 leading-snug truncate">{task.title}</div>
           <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs">{moduleIcons[task.sourceModule] || '📋'}</span>
+            <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">{moduleLabels[task.sourceModule] || task.sourceModule}</span>
             <span className={`badge ${taskTypeColors[task.taskType]}`}>{taskTypeLabels[task.taskType]}</span>
             <span className={`badge ${priorityColors[task.priority]}`}>{task.priority}</span>
           </div>

@@ -1133,23 +1133,25 @@ export default function InventoryPurchasingPage() {
 
   return (
     <div>
-      <div className="mx-auto max-w-7xl space-y-6">
-        <header>
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+      <div className="mx-auto max-w-7xl space-y-5">
+        <header className="space-y-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
               <h1 className="text-2xl font-semibold text-slate-900">库存与订货</h1>
               <p className="mt-1 text-sm text-slate-500">管理实时库存、采购、供应商及在途情况</p>
             </div>
-            <div className="inline-flex w-fit flex-wrap rounded-lg border border-slate-200 bg-white p-1 text-sm">
+          </div>
+          <div className="overflow-x-auto border-b border-slate-200">
+            <div className="flex min-w-max gap-6 text-sm">
               {(['overview', 'business', 'import', 'suppliers', 'ordering'] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
                   onClick={() => setActiveTab(tab)}
-                  className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+                  className={`border-b-2 px-0 pb-2.5 font-medium transition-colors ${
                     activeTab === tab
-                      ? 'bg-brand-50 text-brand-700'
-                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                      ? 'border-brand-600 text-brand-700'
+                      : 'border-transparent text-slate-500 hover:text-slate-900'
                   }`}
                 >
                   {tab === 'overview' ? '库存概览' : tab === 'business' ? '商品经营' : tab === 'import' ? '库存导入' : tab === 'suppliers' ? '供应商管理' : '订货/在途'}
@@ -1166,34 +1168,34 @@ export default function InventoryPurchasingPage() {
         )}
 
         {activeTab === 'overview' && (
-          <section className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-4">
-              <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
-                <p className="text-xs font-medium text-slate-500">SKU 数</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{summary.skuCount}</p>
+          <section className="space-y-5">
+            <div className="grid overflow-hidden rounded-lg border border-slate-200 bg-white sm:grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-slate-100">
+              <div className="border-b border-slate-100 px-5 py-3.5 sm:border-r lg:border-b-0 lg:border-r-0">
+                <p className="text-xs font-medium text-slate-500">SKU</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{summary.skuCount}</p>
               </div>
-              <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
-                <p className="text-xs font-medium text-slate-500">当前总库存</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{summary.currentTotalStock}</p>
+              <div className="border-b border-slate-100 px-5 py-3.5 lg:border-b-0">
+                <p className="text-xs font-medium text-slate-500">当前库存</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{summary.currentTotalStock}</p>
               </div>
-              <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
-                <p className="text-xs font-medium text-slate-500">有快照支撑 SKU</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{summary.snapshotBackedSkuCount}</p>
+              <div className="border-b border-slate-100 px-5 py-3.5 sm:border-r lg:border-b-0 lg:border-r-0">
+                <p className="text-xs font-medium text-slate-500">有效快照</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{summary.snapshotBackedSkuCount}</p>
               </div>
-              <div className="min-h-20 rounded-lg border border-slate-200 bg-white p-4">
-                <p className="text-xs font-medium text-slate-500">较上次快照变化 SKU</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{summary.changedSkuCount}</p>
+              <div className="px-5 py-3.5">
+                <p className="text-xs font-medium text-slate-500">库存变化</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{summary.changedSkuCount}</p>
               </div>
             </div>
 
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-              <div className="border-b border-slate-200 px-5 py-4">
-                <h2 className="text-lg font-semibold text-slate-900">SKU 实时库存校准</h2>
+              <div className="border-b border-slate-100 px-5 py-3.5">
+                <h2 className="text-base font-semibold text-slate-900">SKU 实时库存校准</h2>
                 <p className="mt-1 text-sm text-slate-500">只展示快照口径库存；没有有效快照时显示无数据。</p>
               </div>
-              <div className="overflow-x-auto">
+              <div className="max-h-[calc(100vh-250px)] overflow-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-sm">
-                  <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs font-medium text-slate-500">
                     <tr>
                       <th className="px-4 py-3">
                         <button type="button" onClick={() => handleSummarySort('sku')} className="flex items-center gap-1.5 hover:text-slate-900">
@@ -1206,8 +1208,8 @@ export default function InventoryPurchasingPage() {
                           当前总库存 <SummarySortIcon column="currentTotalStock" />
                         </button>
                       </th>
-                      <th className="px-4 py-3">上次快照库存</th>
-                      <th className="px-4 py-3">变化</th>
+                      <th className="px-4 py-3 text-right">上次快照库存</th>
+                      <th className="px-4 py-3 text-right">变化</th>
                       <th className="px-4 py-3">最新快照时间</th>
                       <th className="px-4 py-3">来源</th>
                     </tr>
@@ -1216,12 +1218,12 @@ export default function InventoryPurchasingPage() {
                     {sortedSummaryItems.map((item) => (
                       <tr key={item.productId} className="hover:bg-slate-50">
                         <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">{item.sku}</td>
-                        <td className="px-4 py-3 text-slate-700">{item.productName}</td>
+                        <td className="max-w-[320px] px-4 py-3 text-slate-700"><span className="line-clamp-2" title={item.productName}>{item.productName}</span></td>
                         <td className="px-4 py-3 text-right font-medium tabular-nums text-slate-900">{formatQty(item.currentTotalStock)}</td>
                         <td className="px-4 py-3 text-right tabular-nums text-slate-600">{formatQty(item.previousTotalStock)}</td>
-                        <td className={`px-4 py-3 text-right font-medium tabular-nums ${item.changeQty && item.changeQty < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{formatChange(item.changeQty)}</td>
+                        <td className={`px-4 py-3 text-right font-medium tabular-nums ${item.changeQty && item.changeQty < 0 ? 'text-red-600' : item.changeQty && item.changeQty > 0 ? 'text-emerald-700' : 'text-slate-500'}`}>{formatChange(item.changeQty)}</td>
                         <td className="px-4 py-3 text-slate-600">{formatDateTime(item.latestSnapshotAt)}</td>
-                        <td className="px-4 py-3 text-slate-500">{item.source === 'snapshot' ? '有效快照' : '无数据'}</td>
+                        <td className="px-4 py-3 text-slate-500"><span className="inline-flex rounded-md bg-slate-100 px-2 py-1 text-xs">{item.source === 'snapshot' ? '有效快照' : '无数据'}</span></td>
                       </tr>
                     ))}
                   </tbody>
@@ -1233,30 +1235,30 @@ export default function InventoryPurchasingPage() {
 
         {activeTab === 'business' && (
           <section className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-4">
-              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <div className="grid overflow-hidden rounded-lg border border-slate-200 bg-white sm:grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-slate-100">
+              <div className="border-b border-slate-100 px-5 py-3.5 sm:border-r lg:border-b-0 lg:border-r-0">
                 <p className="text-xs font-medium text-slate-500">SKU 数</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{businessSummary.productCount}</p>
-                <p className="mt-1 text-xs text-slate-500">active Product</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{businessSummary.productCount}</p>
+                <p className="mt-0.5 text-xs text-slate-400">active Product</p>
               </div>
-              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+              <div className="border-b border-slate-100 px-5 py-3.5 lg:border-b-0">
                 <p className="text-xs font-medium text-slate-500">当前总库存</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{businessSummary.currentInventory.toLocaleString('zh-CN')}</p>
-                <p className="mt-1 text-xs text-slate-500">来自实时库存口径</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{businessSummary.currentInventory.toLocaleString('zh-CN')}</p>
+                <p className="mt-0.5 text-xs text-slate-400">实时库存口径</p>
               </div>
-              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+              <div className="border-b border-slate-100 px-5 py-3.5 sm:border-r lg:border-b-0 lg:border-r-0">
                 <p className="text-xs font-medium text-slate-500">库存成本 RMB</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{formatRmb(businessSummary.inventoryCostRmb)}</p>
-                <p className="mt-1 text-xs text-slate-500">在售成本已维护：{businessSummary.costMaintainedCount} / {businessSummary.activeBusinessProductCount} SKU</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{formatRmb(businessSummary.inventoryCostRmb)}</p>
+                <p className="mt-0.5 text-xs text-slate-400">已维护 {businessSummary.costMaintainedCount} / {businessSummary.activeBusinessProductCount} SKU</p>
               </div>
-              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+              <div className="px-5 py-3.5">
                 <p className="text-xs font-medium text-slate-500">库存零售货值 USD</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{formatUsd(businessSummary.retailInventoryValueUsd)}</p>
-                <p className="mt-1 text-xs text-slate-500">在售售价已维护：{businessSummary.priceMaintainedCount} / {businessSummary.activeBusinessProductCount} SKU</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{formatUsd(businessSummary.retailInventoryValueUsd)}</p>
+                <p className="mt-0.5 text-xs text-slate-400">已维护 {businessSummary.priceMaintainedCount} / {businessSummary.activeBusinessProductCount} SKU</p>
               </div>
             </div>
 
-            <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
               <div className="space-y-4 border-b border-slate-200 px-5 py-4">
                 <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
                   <div>
