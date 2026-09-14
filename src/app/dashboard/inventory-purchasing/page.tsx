@@ -5,7 +5,18 @@ import { useSession } from 'next-auth/react'
 import { mapOldRole } from '@/lib/pagePermissions'
 import { useToast } from '@/components/ToastProvider'
 import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react'
-import { FilterChip, InteractiveMetric, StickyToolbar, useDelayedVisibility } from '@/components/dashboard/FunctionalPremium'
+import {
+  FilterChip,
+  FunctionalPremiumScope,
+  InteractiveMetric,
+  OverflowMenu,
+  StatusBadge,
+  StickyToolbar,
+  ghostActionClassName,
+  primaryActionClassName,
+  secondaryActionClassName,
+  useDelayedVisibility,
+} from '@/components/dashboard/FunctionalPremium'
 
 type SummaryItem = {
   productId: string
@@ -238,6 +249,11 @@ function formatRmb(value: number | null) {
   return `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+function formatRmbSummary(value: number | null) {
+  if (value === null || value === undefined) return '—'
+  return `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+}
+
 function paymentStatusLabel(status: PurchasePaymentStatus) {
   if (status === 'AMOUNT_INCOMPLETE') return '金额待完善'
   if (status === 'PAID') return '已付清'
@@ -404,6 +420,7 @@ export default function InventoryPurchasingPage() {
   const [businessSupplierId, setBusinessSupplierId] = useState('')
   const [businessStatusInput, setBusinessStatusInput] = useState<ProductBusinessStatus>('ACTIVE')
   const [showInactiveSuppliers, setShowInactiveSuppliers] = useState(false)
+  const [showCreateSupplier, setShowCreateSupplier] = useState(false)
   const [supplierName, setSupplierName] = useState('')
   const [supplierNotes, setSupplierNotes] = useState('')
   const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null)
@@ -418,6 +435,7 @@ export default function InventoryPurchasingPage() {
   const [stockCapturedAt, setStockCapturedAt] = useState(getDefaultCapturedAt)
   const [note, setNote] = useState('')
   const [showConfirmImportModal, setShowConfirmImportModal] = useState(false)
+  const [purchaseRulesOpen, setPurchaseRulesOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
   const [message, setMessage] = useState('')
@@ -636,6 +654,7 @@ export default function InventoryPurchasingPage() {
       if (!response.ok) throw new Error(getSupplierErrorMessage(response.status, data.error || '创建供应商失败'))
       setSupplierName('')
       setSupplierNotes('')
+      setShowCreateSupplier(false)
       setMessage(`供应商“${data.supplier?.name || name}”已创建。`)
       await loadSuppliers(showInactiveSuppliers)
     } catch (err) {
@@ -1162,7 +1181,7 @@ export default function InventoryPurchasingPage() {
   }
 
   return (
-    <div>
+    <FunctionalPremiumScope>
       <div className="mx-auto max-w-7xl space-y-5">
         <header className="space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -1170,12 +1189,10 @@ export default function InventoryPurchasingPage() {
               <h1 className="text-2xl font-semibold text-slate-900">库存与订货</h1>
               <p className="mt-1 text-sm text-slate-500">管理实时库存、采购、供应商及在途情况</p>
             </div>
-            {canManageInventory && activeTab === 'import' ? (
-              <button type="button" onClick={() => document.getElementById('inventory-import-file')?.click()} className="btn-primary">导入库存</button>
-            ) : canManageInventory && activeTab === 'suppliers' ? (
-              <button type="button" onClick={() => document.getElementById('new-supplier-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' })} className="btn-primary">新增供应商</button>
+            {canManageInventory && activeTab === 'suppliers' ? (
+              <button type="button" onClick={() => setShowCreateSupplier(true)} className={primaryActionClassName}>新增供应商</button>
             ) : canManageInventory && activeTab === 'ordering' ? (
-              <button type="button" onClick={startCreatePurchaseOrder} className="btn-primary">新建采购</button>
+              <button type="button" onClick={startCreatePurchaseOrder} className={primaryActionClassName}>新建采购</button>
             ) : null}
           </div>
           <div className="overflow-x-auto border-b border-slate-200">
@@ -1185,6 +1202,7 @@ export default function InventoryPurchasingPage() {
                   key={tab}
                   type="button"
                   onClick={() => setActiveTab(tab)}
+                  aria-current={activeTab === tab ? 'page' : undefined}
                   className={`border-b-2 px-0 pb-2.5 font-medium transition-colors ${
                     activeTab === tab
                       ? 'border-brand-600 text-brand-700'
@@ -1318,57 +1336,35 @@ export default function InventoryPurchasingPage() {
         )}
 
         {activeTab === 'business' && (
-          <section className="space-y-6">
+          <section className="space-y-5">
             <div className="grid overflow-hidden rounded-lg border border-slate-200 bg-white sm:grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-slate-100">
-              <div className="border-b border-slate-100 px-5 py-3.5 sm:border-r lg:border-b-0 lg:border-r-0">
-                <p className="text-xs font-medium text-slate-500">SKU 数</p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{businessSummary.productCount}</p>
-                <p className="mt-0.5 text-xs text-slate-400">active Product</p>
-              </div>
-              <div className="border-b border-slate-100 px-5 py-3.5 lg:border-b-0">
-                <p className="text-xs font-medium text-slate-500">当前总库存</p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{businessSummary.currentInventory.toLocaleString('zh-CN')}</p>
-                <p className="mt-0.5 text-xs text-slate-400">实时库存口径</p>
-              </div>
-              <div className="border-b border-slate-100 px-5 py-3.5 sm:border-r lg:border-b-0 lg:border-r-0">
-                <p className="text-xs font-medium text-slate-500">库存成本 RMB</p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{formatRmb(businessSummary.inventoryCostRmb)}</p>
-                <p className="mt-0.5 text-xs text-slate-400">已维护 {businessSummary.costMaintainedCount} / {businessSummary.activeBusinessProductCount} SKU</p>
-              </div>
-              <div className="px-5 py-3.5">
-                <p className="text-xs font-medium text-slate-500">库存零售货值 USD</p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{formatUsd(businessSummary.retailInventoryValueUsd)}</p>
-                <p className="mt-0.5 text-xs text-slate-400">已维护 {businessSummary.priceMaintainedCount} / {businessSummary.activeBusinessProductCount} SKU</p>
-              </div>
+              <InteractiveMetric label="SKU 数" value={businessSummary.productCount.toLocaleString('zh-CN')} description="active Product" className="border-b border-slate-100 sm:border-r lg:border-b-0 lg:border-r-0" />
+              <InteractiveMetric label="当前总库存" value={businessSummary.currentInventory.toLocaleString('zh-CN')} description="实时库存口径" className="border-b border-slate-100 lg:border-b-0" />
+              <InteractiveMetric label="库存成本 RMB" value={formatRmbSummary(businessSummary.inventoryCostRmb)} description={`已维护 ${businessSummary.costMaintainedCount} / ${businessSummary.activeBusinessProductCount} SKU`} className="border-b border-slate-100 sm:border-r lg:border-b-0 lg:border-r-0" />
+              <InteractiveMetric label="库存零售货值 USD" value={formatUsd(businessSummary.retailInventoryValueUsd)} description={`已维护 ${businessSummary.priceMaintainedCount} / ${businessSummary.activeBusinessProductCount} SKU`} />
             </div>
 
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-              <div className="space-y-4 border-b border-slate-200 px-5 py-4">
-                <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-                  <div>
-                    <h2 className="text-lg font-semibold text-slate-900">商品经营</h2>
-                    <p className="mt-1 text-sm text-slate-500">
-                      库存、销量、价格和货值均来自正式经营 API；不会读取 Excel 暂存数据。
-                    </p>
-                  </div>
-                  <p className="text-xs text-slate-500">销售字段为净销量；库存消耗趋势继续使用 stockConsumedQty。</p>
-                </div>
-                <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_220px_180px_160px]">
+              <div className="border-b border-slate-100 px-5 py-3.5">
+                <h2 className="text-base font-semibold text-slate-900">商品经营</h2>
+                <p className="mt-1 text-sm text-slate-500">库存、销量、价格和货值均来自正式经营 API。</p>
+              </div>
+              <StickyToolbar className="lg:flex-nowrap">
                   <label className="block">
                     <span className="sr-only">搜索 SKU 或产品名</span>
                     <input
                       value={businessSearch}
                       onChange={(event) => setBusinessSearch(event.target.value)}
                       placeholder="搜索 SKU / 产品名"
-                      className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      className="h-8 w-full min-w-[220px] rounded-md border border-slate-200 bg-white px-3 text-sm"
                     />
                   </label>
-                  <label className="block">
+                  <label className="block shrink-0">
                     <span className="sr-only">筛选商品经营状态</span>
                     <select
                       value={businessFilter}
                       onChange={(event) => setBusinessFilter(event.target.value as BusinessFilter)}
-                      className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      className="h-8 rounded-md border border-slate-200 bg-white px-3 text-sm"
                     >
                       <option value="all">全部</option>
                       <option value="missingCost">未维护成本</option>
@@ -1378,23 +1374,20 @@ export default function InventoryPurchasingPage() {
                       <option value="hasSales30d">有30天销量</option>
                     </select>
                   </label>
-                  <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                    当前显示 {filteredBusinessItems.length} / {businessSummary.productCount} SKU
-                  </div>
-                  <label className="block">
+                  <span className="ml-auto whitespace-nowrap text-xs tabular-nums text-slate-500">当前显示 {filteredBusinessItems.length.toLocaleString('zh-CN')} / {businessSummary.productCount.toLocaleString('zh-CN')} SKU</span>
+                  <label className="block shrink-0">
                     <span className="sr-only">每页条数</span>
                     <select
                       value={businessPageSize}
                       onChange={(event) => setBusinessPageSize(Number(event.target.value))}
-                      className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      className="h-8 rounded-md border border-slate-200 bg-white px-3 text-sm"
                     >
                       <option value={15}>每页 15 条</option>
                       <option value={30}>每页 30 条</option>
                       <option value={50}>每页 50 条</option>
                     </select>
                   </label>
-                </div>
-              </div>
+              </StickyToolbar>
 
               <div className="max-h-[calc(100vh-260px)] overflow-auto">
                 <table className="min-w-[1220px] divide-y divide-slate-200 text-sm">
@@ -1475,12 +1468,15 @@ export default function InventoryPurchasingPage() {
                           <td className="px-3 py-2 text-right text-slate-700">{formatRmb(item.inventoryCostRmb)}</td>
                           <td className="px-3 py-2 text-right text-slate-700">{formatUsd(item.retailInventoryValueUsd)}</td>
                           <td className="px-3 py-2">
-                            <div className="flex max-w-[150px] flex-wrap gap-1">
+                            <div className="flex max-w-[180px] items-center gap-1.5" title={statusWarnings.join('、')}>
                               {statusWarnings.length === 0 ? (
-                                <span className="whitespace-nowrap rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">正常</span>
-                              ) : statusWarnings.map((warning) => (
-                                <span key={warning} className="whitespace-nowrap rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">{warning}</span>
-                              ))}
+                                <StatusBadge tone="success">正常</StatusBadge>
+                              ) : (
+                                <>
+                                  <StatusBadge tone={item.businessStatus === 'ACTIVE' ? 'warning' : 'danger'}>{statusWarnings[0]}</StatusBadge>
+                                  {statusWarnings.length > 1 && <span className="whitespace-nowrap text-xs text-slate-500">另有 {statusWarnings.length - 1} 项</span>}
+                                </>
+                              )}
                             </div>
                           </td>
                           {canManageInventory && (
@@ -1489,7 +1485,7 @@ export default function InventoryPurchasingPage() {
                                 type="button"
                                 onClick={() => startEditBusiness(item)}
                                 disabled={loading}
-                                className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                className={ghostActionClassName}
                               >
                                 编辑
                               </button>
@@ -1627,7 +1623,7 @@ export default function InventoryPurchasingPage() {
                     <button
                       type="submit"
                       disabled={loading}
-                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      className={primaryActionClassName}
                     >
                       {loading ? '保存中...' : '保存经营数据'}
                     </button>
@@ -1639,10 +1635,10 @@ export default function InventoryPurchasingPage() {
         )}
 
         {activeTab === 'import' && (
-          <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-            <div className="space-y-6">
-              <form onSubmit={handlePreview} className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                <h2 className="text-lg font-semibold text-slate-900">上传库存文件生成预览</h2>
+          <section className="space-y-5">
+            <div className="space-y-5">
+              <form onSubmit={handlePreview} className="rounded-lg border border-slate-200 bg-white p-5">
+                <h2 className="text-base font-semibold text-slate-900">库存导入</h2>
                 <p className="mt-1 text-sm text-slate-500">支持含“商家 SKU”和“总库存”的 Excel/CSV；只做严格 SKU 匹配。</p>
                 <div className="mt-5 grid gap-4 md:grid-cols-2">
                   <label className="block">
@@ -1680,14 +1676,14 @@ export default function InventoryPurchasingPage() {
                 <button
                   type="submit"
                   disabled={loading || !canManageInventory}
-                  className="mt-5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className={`mt-5 ${primaryActionClassName}`}
                 >
                   {!canManageInventory ? '仅管理员/老板可上传' : loading ? '处理中...' : '生成导入预览'}
                 </button>
               </form>
 
               {previewBatch && (
-                <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <div className="rounded-lg border border-slate-200 bg-white p-5">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
                       <h2 className="text-lg font-semibold text-slate-900">导入预览</h2>
@@ -1775,7 +1771,7 @@ export default function InventoryPurchasingPage() {
                                 type="button"
                                 onClick={() => handleApproveDuplicateMerge(group.canonicalSku)}
                                 disabled={!canManageInventory || loading || previewBatch.status !== 'PREVIEW'}
-                                className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                className={primaryActionClassName}
                               >
                                 {canManageInventory ? '确认合并为同一 SKU' : '仅管理员/老板可合并'}
                               </button>
@@ -1817,47 +1813,48 @@ export default function InventoryPurchasingPage() {
               )}
             </div>
 
-            <aside className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-              <h2 className="text-lg font-semibold text-slate-900">导入批次历史</h2>
-              <div className="mt-4 space-y-3">
-                {batches.map((batch) => (
-                  <div key={batch.id} className="rounded-xl border border-slate-200 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p title={batch.fileName} className="line-clamp-2 break-all font-medium leading-snug text-slate-900">{batch.fileName}</p>
-                        <p className="mt-1 text-xs text-slate-500">{formatDateTime(batch.stockCapturedAt)}</p>
-                      </div>
-                      <span className={`rounded-full px-2 py-1 text-xs font-semibold ${
-                        batch.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-700' :
-                        batch.status === 'ROLLED_BACK' ? 'bg-slate-100 text-slate-500' :
-                        'bg-amber-100 text-amber-700'
-                      }`}>
-                        {batch.status}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-xs text-slate-600">
-                      匹配 {batch.matchedCount}｜未匹配 {batch.unmatchedCount}｜总行 {batch.rowCount}
-                    </p>
-                    <div className="mt-3 flex gap-2">
-                      <button type="button" onClick={() => handleViewBatch(batch.id)} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-200">
-                        查看详情
-                      </button>
-                      {batch.status === 'CONFIRMED' && (
-                        <button
-                          type="button"
-                          onClick={() => handleRollback(batch.id)}
-                          disabled={!canManageInventory}
-                          className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {canManageInventory ? '回滚' : '仅管理员/老板可回滚'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {batches.length === 0 && <p className="text-sm text-slate-500">暂无导入批次。</p>}
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+              <div className="border-b border-slate-100 px-5 py-3.5">
+                <h2 className="text-base font-semibold text-slate-900">导入历史</h2>
+                <p className="mt-1 text-sm text-slate-500">库存快照批次及其当前状态。</p>
               </div>
-            </aside>
+              <div className="overflow-x-auto">
+                <table className="min-w-[880px] w-full text-sm">
+                  <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-medium text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3">文件名</th>
+                      <th className="px-4 py-3">状态</th>
+                      <th className="px-4 py-3 text-right">匹配</th>
+                      <th className="px-4 py-3 text-right">未匹配</th>
+                      <th className="px-4 py-3 text-right">总行数</th>
+                      <th className="px-4 py-3">库存截点</th>
+                      <th className="px-4 py-3 text-right">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {batches.map((batch) => (
+                      <tr key={batch.id} className="transition-colors duration-150 hover:bg-slate-50/70">
+                        <td className="max-w-[320px] px-4 py-3 font-medium text-slate-900"><span className="line-clamp-1 break-all" title={batch.fileName}>{batch.fileName}</span></td>
+                        <td className="px-4 py-3"><StatusBadge tone={batch.status === 'CONFIRMED' ? 'success' : batch.status === 'ROLLED_BACK' ? 'neutral' : 'warning'}>{batch.status}</StatusBadge></td>
+                        <td className="px-4 py-3 text-right tabular-nums text-slate-700">{batch.matchedCount.toLocaleString('zh-CN')}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-slate-700">{batch.unmatchedCount.toLocaleString('zh-CN')}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-slate-700">{batch.rowCount.toLocaleString('zh-CN')}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-slate-600" title={formatFullDateTime(batch.stockCapturedAt)}>{formatDateTime(batch.stockCapturedAt)}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-1">
+                            <button type="button" onClick={() => handleViewBatch(batch.id)} className={ghostActionClassName}>查看详情</button>
+                            {batch.status === 'CONFIRMED' && (
+                              <OverflowMenu items={[{ label: canManageInventory ? '回滚批次' : '仅管理员/老板可回滚', onSelect: () => void handleRollback(batch.id), danger: true, disabled: !canManageInventory }]} />
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {batches.length === 0 && <tr><td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500">暂无导入批次</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
 
             {showConfirmImportModal && previewBatch && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
@@ -1941,11 +1938,14 @@ export default function InventoryPurchasingPage() {
         )}
 
         {activeTab === 'suppliers' && (
-          <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-            <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+          <section className="space-y-5">
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
               <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">供应商管理</h2>
+                  <div className="flex items-baseline gap-2">
+                    <h2 className="text-base font-semibold text-slate-900">供应商管理</h2>
+                    <span className="text-sm tabular-nums text-slate-500">{suppliers.length.toLocaleString('zh-CN')} 个</span>
+                  </div>
                   <p className="mt-1 text-sm text-slate-500">只维护供应商主数据；不会修改 Product 经营字段，也不会创建采购单。</p>
                 </div>
                 <label className="flex items-center gap-2 text-sm text-slate-600">
@@ -1976,34 +1976,23 @@ export default function InventoryPurchasingPage() {
                       <tr key={supplier.id} className="hover:bg-slate-50">
                         <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">{supplier.name}</td>
                         <td className="px-4 py-3">
-                          <span className={`rounded-full px-2 py-1 text-xs font-semibold ${supplier.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                            {supplier.isActive ? '启用' : '已停用'}
-                          </span>
+                          <StatusBadge tone={supplier.isActive ? 'success' : 'neutral'}>{supplier.isActive ? '启用' : '已停用'}</StatusBadge>
                         </td>
                         <td className="px-4 py-3 text-slate-600">{supplier.notes || '—'}</td>
                         <td className="px-4 py-3 text-slate-600">{formatDateTime(supplier.createdAt)}</td>
                         <td className="px-4 py-3 text-slate-600">{formatDateTime(supplier.updatedAt)}</td>
                         {canManageInventory && (
                           <td className="whitespace-nowrap px-4 py-3">
-                            <div className="flex gap-2">
+                            <div className="flex items-center gap-1">
                               <button
                                 type="button"
                                 onClick={() => startEditSupplier(supplier)}
                                 disabled={loading}
-                                className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                                className={ghostActionClassName}
                               >
                                 编辑
                               </button>
-                              {supplier.isActive && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeactivateSupplier(supplier)}
-                                  disabled={loading}
-                                  className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  停用
-                                </button>
-                              )}
+                              {supplier.isActive && <OverflowMenu items={[{ label: '停用供应商', onSelect: () => void handleDeactivateSupplier(supplier), danger: true, disabled: loading }]} />}
                             </div>
                           </td>
                         )}
@@ -2012,7 +2001,7 @@ export default function InventoryPurchasingPage() {
                     {suppliers.length === 0 && (
                       <tr>
                         <td colSpan={canManageInventory ? 6 : 5} className="px-4 py-8 text-center text-slate-500">
-                          暂无供应商。管理员/老板可以在右侧新增供应商。
+                          暂无供应商。管理员/老板可以使用右上角新增供应商。
                         </td>
                       </tr>
                     )}
@@ -2021,11 +2010,16 @@ export default function InventoryPurchasingPage() {
               </div>
             </div>
 
-            <aside className="space-y-6">
-              {canManageInventory ? (
-                <form id="new-supplier-form" onSubmit={handleCreateSupplier} className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                  <h2 className="text-lg font-semibold text-slate-900">新增供应商</h2>
-                  <p className="mt-1 text-sm text-slate-500">仅填写名称和备注；isActive 默认启用。</p>
+            {canManageInventory && showCreateSupplier && (
+              <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 px-4 py-6 sm:items-center">
+                <form onSubmit={handleCreateSupplier} className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">新增供应商</h2>
+                      <p className="mt-1 text-sm text-slate-500">仅填写名称和备注；默认启用。</p>
+                    </div>
+                    <button type="button" onClick={() => setShowCreateSupplier(false)} className={ghostActionClassName}>关闭</button>
+                  </div>
                   <label className="mt-5 block">
                     <span className="text-sm font-medium text-slate-700">供应商名称</span>
                     <input
@@ -2045,23 +2039,21 @@ export default function InventoryPurchasingPage() {
                       className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                     />
                   </label>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="mt-5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {loading ? '处理中...' : '创建供应商'}
-                  </button>
+                  <div className="mt-5 flex justify-end gap-2">
+                    <button type="button" onClick={() => setShowCreateSupplier(false)} disabled={loading} className={secondaryActionClassName}>取消</button>
+                    <button type="submit" disabled={loading} className={primaryActionClassName}>{loading ? '处理中...' : '创建供应商'}</button>
+                  </div>
                 </form>
-              ) : (
-                <div className="rounded-2xl bg-white p-5 text-sm text-slate-600 shadow-sm ring-1 ring-slate-200">
-                  仅管理员/老板可管理供应商；当前账号只能查看供应商列表。
-                </div>
-              )}
+              </div>
+            )}
 
-              {canManageInventory && editingSupplierId && (
-                <form onSubmit={handleUpdateSupplier} className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                  <h2 className="text-lg font-semibold text-slate-900">编辑供应商</h2>
+            {canManageInventory && editingSupplierId && (
+              <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 px-4 py-6 sm:items-center">
+                <form onSubmit={handleUpdateSupplier} className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+                  <div className="flex items-start justify-between gap-4">
+                    <h2 className="text-lg font-semibold text-slate-900">编辑供应商</h2>
+                    <button type="button" onClick={cancelEditSupplier} className={ghostActionClassName}>关闭</button>
+                  </div>
                   <label className="mt-5 block">
                     <span className="text-sm font-medium text-slate-700">供应商名称</span>
                     <input
@@ -2088,11 +2080,11 @@ export default function InventoryPurchasingPage() {
                     />
                     启用该供应商
                   </label>
-                  <div className="mt-5 flex gap-2">
+                  <div className="mt-5 flex justify-end gap-2">
                     <button
                       type="submit"
                       disabled={loading}
-                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      className={primaryActionClassName}
                     >
                       保存修改
                     </button>
@@ -2100,59 +2092,37 @@ export default function InventoryPurchasingPage() {
                       type="button"
                       onClick={cancelEditSupplier}
                       disabled={loading}
-                      className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      className={secondaryActionClassName}
                     >
                       取消
                     </button>
                   </div>
                 </form>
-              )}
-            </aside>
+              </div>
+            )}
           </section>
         )}
 
         {activeTab === 'ordering' && (
-          <section className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                <p className="text-xs font-medium text-slate-500">待到货总数</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{purchaseSummary.openPurchaseQty.toLocaleString('zh-CN')}</p>
-                <p className="mt-1 text-xs text-slate-500">已下单/生产/在途/部分到货</p>
-              </div>
-              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                <p className="text-xs font-medium text-slate-500">在途数量</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{purchaseSummary.inTransitQty.toLocaleString('zh-CN')}</p>
-                <p className="mt-1 text-xs text-slate-500">仅运输中/部分到货</p>
-              </div>
-              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                <p className="text-xs font-medium text-slate-500">采购金额</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{formatRmb(purchaseSummary.calculablePurchaseAmountRmb)}</p>
-                <p className={`mt-1 text-xs ${purchaseSummary.amountComplete ? 'text-slate-500' : 'text-amber-700'}`}>
-                  {purchaseSummary.amountComplete ? '按明细数量 × 单价计算' : `${purchaseSummary.missingUnitCostItemCount}条明细未维护单价，当前仅统计已维护单价商品`}
-                </p>
-              </div>
-              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                <p className="text-xs font-medium text-slate-500">已付款</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{formatRmb(purchaseSummary.paidAmountRmb)}</p>
-                <p className="mt-1 text-xs text-slate-500">累计已向供应商支付</p>
-              </div>
-              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                <p className="text-xs font-medium text-slate-500">待付款</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{formatRmb(purchaseSummary.remainingPaymentRmb)}</p>
-                <p className="mt-1 text-xs text-slate-500">订单金额 - 已付款</p>
-              </div>
-              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                <p className="text-xs font-medium text-slate-500">供应商数</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{purchaseSummary.supplierCount.toLocaleString('zh-CN')}</p>
-                <p className="mt-1 text-xs text-slate-500">当前采购单关联供应商</p>
-              </div>
+          <section className="space-y-5">
+            <div className="grid overflow-hidden rounded-lg border border-slate-200 bg-white md:grid-cols-3 xl:grid-cols-6 xl:divide-x xl:divide-slate-100">
+              <InteractiveMetric label="待到货总数" value={purchaseSummary.openPurchaseQty.toLocaleString('zh-CN')} description="未完成采购" className="border-b border-slate-100 md:border-r xl:border-b-0 xl:border-r-0" />
+              <InteractiveMetric label="在途数量" value={purchaseSummary.inTransitQty.toLocaleString('zh-CN')} description="运输中/部分到货" className="border-b border-slate-100 md:border-r xl:border-b-0 xl:border-r-0" />
+              <InteractiveMetric label="采购金额" value={formatRmbSummary(purchaseSummary.calculablePurchaseAmountRmb)} description={purchaseSummary.amountComplete ? '按明细计算' : `${purchaseSummary.missingUnitCostItemCount} 条缺单价`} className="border-b border-slate-100 xl:border-b-0" />
+              <InteractiveMetric label="已付款" value={formatRmbSummary(purchaseSummary.paidAmountRmb)} description="累计支付" className="border-b border-slate-100 md:border-r xl:border-b-0 xl:border-r-0" />
+              <InteractiveMetric label="待付款" value={formatRmbSummary(purchaseSummary.remainingPaymentRmb)} description="订单金额 - 已付款" className="border-b border-slate-100 md:border-r xl:border-b-0 xl:border-r-0" />
+              <InteractiveMetric label="供应商数" value={purchaseSummary.supplierCount.toLocaleString('zh-CN')} description="采购单关联" />
             </div>
 
-            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              到货登记只更新采购进度，不会增加可售库存；真正库存增加仍必须走库存 Excel → PREVIEW → CONFIRM → InventorySnapshot。
+            <div className="rounded-lg border border-slate-200 bg-white">
+              <button type="button" onClick={() => setPurchaseRulesOpen((current) => !current)} aria-expanded={purchaseRulesOpen} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium text-slate-700 hover:bg-slate-50">
+                <span>ⓘ 库存入账规则</span>
+                <span className="text-xs text-slate-500">{purchaseRulesOpen ? '收起' : '展开'}</span>
+              </button>
+              {purchaseRulesOpen && <p className="border-t border-slate-100 px-4 py-3 text-sm text-slate-600">到货登记只更新采购进度，不会增加可售库存；真正库存增加仍必须走库存 Excel → PREVIEW → CONFIRM → InventorySnapshot。</p>}
             </div>
 
-            <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
               <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 md:flex-row md:items-center md:justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-slate-900">采购单 / 在途列表</h2>
@@ -2175,12 +2145,12 @@ export default function InventoryPurchasingPage() {
                       <th className="px-3 py-3">供应商</th>
                       <th className="px-3 py-3">批次/原始状态</th>
                       <th className="px-3 py-3">状态</th>
-                      <th className="px-3 py-3">订货</th>
-                      <th className="px-3 py-3">已到</th>
-                      <th className="px-3 py-3">待到</th>
-                      <th className="px-3 py-3">订单金额</th>
-                      <th className="px-3 py-3">已付款</th>
-                      <th className="px-3 py-3">待付款</th>
+                      <th className="px-3 py-3 text-right">订货</th>
+                      <th className="px-3 py-3 text-right">已到</th>
+                      <th className="px-3 py-3 text-right">待到</th>
+                      <th className="px-3 py-3 text-right">订单金额</th>
+                      <th className="px-3 py-3 text-right">已付款</th>
+                      <th className="px-3 py-3 text-right">待付款</th>
                       <th className="px-3 py-3">付款状态</th>
                       <th className="px-3 py-3">预计到货</th>
                       <th className="px-3 py-3">操作</th>
@@ -2197,12 +2167,12 @@ export default function InventoryPurchasingPage() {
                             <div className="mt-1 truncate text-[11px] text-slate-400" title={order.orderNo}>{order.orderNo.replace(/^P1B2-/, '')}</div>
                           </td>
                           <td className="px-3 py-2.5">
-                            <span className="inline-flex whitespace-nowrap rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                            <span className="inline-flex h-6 items-center whitespace-nowrap rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-medium text-slate-700">
                               {purchaseBatchLabel(order)}
                             </span>
                           </td>
                           <td className="px-3 py-2.5">
-                            <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            <span className={`inline-flex h-6 items-center whitespace-nowrap rounded-md border px-2 text-xs font-medium ${
                               order.status === 'CANCELLED' ? 'bg-slate-100 text-slate-500' :
                               order.status === 'RECEIVED' ? 'bg-emerald-100 text-emerald-700' :
                               order.status === 'IN_TRANSIT' || order.status === 'PARTIALLY_RECEIVED' ? 'bg-blue-100 text-blue-700' :
@@ -2212,19 +2182,19 @@ export default function InventoryPurchasingPage() {
                               {order.statusLabel}
                             </span>
                           </td>
-                          <td className="px-3 py-2.5 text-slate-700">{order.orderedQty.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2.5 text-slate-700">{order.receivedQty.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2.5 font-medium text-slate-900">{order.openQty.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2.5 text-slate-700">
+                          <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">{order.orderedQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">{order.receivedQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2.5 text-right font-medium tabular-nums text-slate-900">{order.openQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">
                             {formatRmb(order.calculablePurchaseAmountRmb)}
                             {!order.amountComplete && <div className="mt-0.5 text-xs text-amber-700">部分商品未维护单价</div>}
                           </td>
-                          <td className="px-3 py-2.5 text-slate-700">{formatRmb(order.paidAmountRmb)}</td>
-                          <td className="px-3 py-2.5 font-medium text-slate-900">{formatRmb(order.remainingPaymentRmb)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">{formatRmb(order.paidAmountRmb)}</td>
+                          <td className="px-3 py-2.5 text-right font-medium tabular-nums text-slate-900">{formatRmb(order.remainingPaymentRmb)}</td>
                           <td className="whitespace-nowrap px-3 py-2.5 text-slate-700">{paymentStatusLabel(order.paymentStatus)}</td>
                           <td className="px-3 py-2.5 text-slate-600">
                             <div className="whitespace-nowrap">{formatDateOnly(order.expectedArrivalDate)}</div>
-                            <span className={`mt-1 inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold ${arrivalStatus.className}`}>
+                            <span className={`mt-1 inline-flex h-6 items-center whitespace-nowrap rounded-md border px-2 text-[11px] font-medium ${arrivalStatus.className}`}>
                               {arrivalStatus.label}
                             </span>
                           </td>
@@ -2232,7 +2202,7 @@ export default function InventoryPurchasingPage() {
                             <button
                               type="button"
                               onClick={() => startEditPurchaseOrder(order)}
-                              className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+                              className={ghostActionClassName}
                             >
                               {canManageInventory ? '查看/编辑' : '查看详情'}
                             </button>
@@ -2354,7 +2324,7 @@ export default function InventoryPurchasingPage() {
                         </div>
                       ))}
                     </div>
-                    <button type="submit" disabled={loading} className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60">
+                    <button type="submit" disabled={loading} className={`w-full ${primaryActionClassName}`}>
                       {loading ? '保存中...' : '创建采购单'}
                     </button>
                   </div>
@@ -2520,7 +2490,7 @@ export default function InventoryPurchasingPage() {
                       </div>
                       <div className="flex justify-between gap-3">
                         <button type="button" onClick={addPurchaseItem} className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200">添加明细</button>
-                        <button type="submit" disabled={loading} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60">
+                        <button type="submit" disabled={loading} className={primaryActionClassName}>
                           保存采购单
                         </button>
                       </div>
@@ -2626,6 +2596,6 @@ export default function InventoryPurchasingPage() {
           </section>
         )}
       </div>
-    </div>
+    </FunctionalPremiumScope>
   )
 }

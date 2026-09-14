@@ -17,7 +17,14 @@ import {
 } from 'recharts'
 import { PageGuard } from '@/components/PageGuard'
 import { isNeedsActionProduct } from '@/lib/productSalesNeedsAction'
-import { FilterChip, InteractiveMetric, useDelayedVisibility } from '@/components/dashboard/FunctionalPremium'
+import {
+  FilterChip,
+  FunctionalPremiumScope,
+  InteractiveMetric,
+  OverflowMenu,
+  primaryActionClassName,
+  useDelayedVisibility,
+} from '@/components/dashboard/FunctionalPremium'
 
 interface SummaryData {
   todaySales: number
@@ -3059,7 +3066,7 @@ export default function ProductSalesPage() {
 
   return (
     <PageGuard>
-      <div>
+      <FunctionalPremiumScope>
         <div className="mx-auto max-w-[1600px]">
           <div className="mb-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -3068,29 +3075,18 @@ export default function ProductSalesPage() {
                 <p className="mt-1 text-sm text-slate-500">销售、库存与动销风险</p>
               </div>
               <div className="flex flex-col items-start gap-2 lg:items-end">
-                <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+                <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
                   <button
                     onClick={() => handleImportOrders('import')}
-                    className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
+                    className={primaryActionClassName}
                     disabled={importingOrders || importingInventory || loading}
                   >
-                    {importingOrders ? '正在导入订单表...' : '导入订单表'}
+                    {importingOrders ? '正在导入订单...' : '导入订单'}
                   </button>
-                  <button
-                    onClick={openRankSettingsModal}
-                    className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-sm font-medium hover:bg-slate-50 disabled:opacity-60"
-                    disabled={loading || savingRankSettings}
-                  >
-                    等级设置
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAdvancedToolsOpen((value) => !value)}
-                    className="inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
-                    aria-expanded={advancedToolsOpen}
-                  >
-                    管理员维护
-                  </button>
+                  <OverflowMenu items={[
+                    { label: '等级设置', onSelect: openRankSettingsModal, disabled: loading || savingRankSettings },
+                    { label: advancedToolsOpen ? '收起管理员维护' : '管理员维护', onSelect: () => setAdvancedToolsOpen((value) => !value) },
+                  ]} />
                 </div>
                 <div className="text-xs text-slate-500">
                   正式库存导入已迁移至 库存与订货 → 库存导入
@@ -3701,44 +3697,42 @@ export default function ProductSalesPage() {
                 </div>
               </div>
 
-              <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4">
+              <div className="mb-4 rounded-lg border border-slate-200 bg-white px-4 py-3">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
-                    <h2 className="text-base font-semibold text-slate-900">完整周销售消耗对比</h2>
-                    <p className="mt-1 text-sm text-slate-600">
-                      作为销售趋势的补充口径，默认收起最近 8 个完整自然周明细。
-                    </p>
+                    <div className="text-xs font-medium text-slate-400">更多分析</div>
+                    <h2 className="mt-0.5 text-sm font-semibold text-slate-900">完整周销售消耗</h2>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <button
+                    {weeklyConsumptionExpanded && <button
                       onClick={() => setWeeklyMethodOpen((value) => !value)}
-                      className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                      className="inline-flex h-8 items-center justify-center rounded-md px-2.5 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-800"
                     >
                       查看口径
-                    </button>
+                    </button>}
                     <button
                       onClick={() => setWeeklyConsumptionExpanded((value) => !value)}
-                      className="inline-flex items-center justify-center rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      className="inline-flex h-8 items-center justify-center rounded-md px-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                     >
-                      {weeklyConsumptionExpanded ? '收起' : '展开'}
+                      {weeklyConsumptionExpanded ? '收起' : '展开 ›'}
                     </button>
                   </div>
                 </div>
 
-                {weeklyMethodOpen && (
+                {weeklyConsumptionExpanded && weeklyMethodOpen && (
                   <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                     分子只统计普通真实销售订单的 ProductOrderItem.stockConsumedQty；样品不进入销售分子，但会作为真实库存消耗参与下一期周初库存重建。
                     消耗率只在周初库存可重建且大于 0 时计算；退货退款第一版不使用 netQty 抵消。
                   </div>
                 )}
 
-                {weeklyConsumptionError && (
+                {weeklyConsumptionExpanded && weeklyConsumptionError && (
                   <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                     {weeklyConsumptionError}
                   </div>
                 )}
 
-                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {weeklyConsumptionExpanded && <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <div className="text-sm text-slate-500">上一个完整周真实销售消耗</div>
                     <div className="mt-1 text-xl font-bold text-slate-900">
@@ -3773,9 +3767,9 @@ export default function ProductSalesPage() {
                     </div>
                     <div className="mt-1 text-xs text-slate-500">周初库存可重建且大于 0</div>
                   </div>
-                </div>
+                </div>}
 
-                {weeklyConsumption?.currentWeekRange && (
+                {weeklyConsumptionExpanded && weeklyConsumption?.currentWeekRange && (
                   <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3">
                     <div className="flex flex-col gap-2 text-sm md:flex-row md:items-center md:justify-between">
                       <div className="font-medium text-slate-900">
@@ -4061,11 +4055,11 @@ export default function ProductSalesPage() {
                 )}
               </div>
 
-              <div className="mb-8 rounded-lg border border-violet-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 rounded-lg border border-slate-200 bg-white px-4 py-3">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div className="flex flex-wrap items-center gap-3">
-                    <div className="text-base font-semibold text-slate-900">样品统计</div>
-                    <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 ring-1 ring-violet-200">
+                    <div className="text-sm font-semibold text-slate-900">样品统计</div>
+                    <span className="whitespace-nowrap text-xs text-slate-500">
                       {formatTrendRangeLabel(sampleStatsRange, sampleStatsStartDate, sampleStatsEndDate)}
                     </span>
                     <span className="text-sm text-slate-600">样品 {sampleStats?.totalSampleQty || 0} 件</span>
@@ -4073,9 +4067,9 @@ export default function ProductSalesPage() {
                   </div>
                   <button
                     onClick={() => setSampleStatsExpanded((value) => !value)}
-                    className="inline-flex items-center justify-center rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    className="inline-flex h-8 items-center justify-center rounded-md px-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                   >
-                    {sampleStatsExpanded ? '收起' : '展开'}
+                    {sampleStatsExpanded ? '收起' : '展开 ›'}
                   </button>
                 </div>
 
@@ -5680,7 +5674,7 @@ export default function ProductSalesPage() {
             </>
           )}
         </div>
-      </div>
+      </FunctionalPremiumScope>
     </PageGuard>
   )
 }

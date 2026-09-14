@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { OverflowMenu, useDelayedVisibility } from '@/components/dashboard/FunctionalPremium'
+import { FunctionalPremiumScope, OverflowMenu, StatusBadge, primaryActionClassName, useDelayedVisibility } from '@/components/dashboard/FunctionalPremium'
 
 type ProductDetailResponse = {
   product: {
@@ -174,11 +174,11 @@ export default function ProductDetailPage() {
   )
 
   return (
-    <div className="space-y-4">
+    <FunctionalPremiumScope className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link href="/dashboard/products" className="text-sm font-medium text-blue-600 hover:text-blue-700">← 返回产品库</Link>
         <div className="flex items-center gap-2">
-          <Link href="/dashboard/products" className="rounded-md bg-brand-600 px-3.5 py-2 text-sm font-medium text-white transition-colors duration-150 hover:bg-brand-700">编辑基础资料</Link>
+          <Link href="/dashboard/products" className={primaryActionClassName}>编辑基础资料</Link>
           <OverflowMenu items={[
             { label: '商品经营', href: '/dashboard/inventory-purchasing' },
             { label: '销售分析', href: '/dashboard/product-sales' },
@@ -199,7 +199,7 @@ export default function ProductDetailPage() {
             <h1 className="text-2xl font-semibold text-slate-950">{product.name}</h1>
             <div className="mt-1 font-mono text-sm text-slate-500">{product.sku || '—'}</div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-              <span className="rounded-md bg-slate-100 px-2 py-1 font-medium text-slate-700">{businessStatusLabel[product.businessStatus] || product.businessStatus}</span>
+              <StatusBadge tone={product.businessStatus === 'ACTIVE' ? 'success' : product.businessStatus === 'DISCONTINUED' ? 'neutral' : 'danger'}>{businessStatusLabel[product.businessStatus] || product.businessStatus}</StatusBadge>
               {!product.isActive && <span className="text-slate-500">已停用</span>}
             </div>
           </div>
@@ -223,15 +223,15 @@ export default function ProductDetailPage() {
       </section>
 
       <details className="rounded-lg border border-slate-200 bg-white min-[1400px]:hidden">
-        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-slate-800 [&::-webkit-details-marker]:hidden">商品档案与操作</summary>
+        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-slate-800 [&::-webkit-details-marker]:hidden">商品档案</summary>
         <dl className="border-t border-slate-100 px-4 py-2">
           <Field label="状态" value={businessStatusLabel[product.businessStatus] || product.businessStatus} />
           <Field label="Canonical SKU" value={product.sku} />
           <Field label="默认 Supplier" value={product.defaultSupplier?.name} />
         </dl>
         <div className="flex items-center gap-4 border-t border-slate-100 px-4 py-3 text-sm">
-          <Link href="/dashboard/products" className="font-medium text-brand-600 hover:text-brand-700">编辑基础资料</Link>
           <Link href="/dashboard/inventory-purchasing" className="text-slate-500 hover:text-slate-900">商品经营</Link>
+          <Link href="/dashboard/product-sales" className="text-slate-500 hover:text-slate-900">销售分析</Link>
         </div>
       </details>
 
@@ -343,7 +343,7 @@ export default function ProductDetailPage() {
           <div className="sticky top-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
             <div className="border-b border-slate-100 px-4 py-3">
               <h2 className="text-sm font-semibold text-slate-900">商品档案</h2>
-              <p className="mt-0.5 text-xs text-slate-500">关键身份与 owner 操作</p>
+              <p className="mt-0.5 text-xs text-slate-500">关键身份信息</p>
             </div>
             <dl className="px-4 py-2">
               <Field label="状态" value={businessStatusLabel[product.businessStatus] || product.businessStatus} />
@@ -351,8 +351,7 @@ export default function ProductDetailPage() {
               <Field label="默认 Supplier" value={product.defaultSupplier?.name} />
             </dl>
             <div className="border-t border-slate-100 p-3">
-              <Link href="/dashboard/products" className="flex h-9 w-full items-center justify-center rounded-md bg-brand-600 px-3 text-sm font-medium text-white transition-colors duration-150 hover:bg-brand-700">编辑基础资料</Link>
-              <div className="mt-3 flex items-center justify-between text-sm">
+              <div className="flex items-center justify-between text-sm">
                 <Link href="/dashboard/inventory-purchasing" className="text-slate-500 hover:text-slate-900">商品经营</Link>
                 <Link href="/dashboard/product-sales" className="text-slate-500 hover:text-slate-900">销售分析</Link>
               </div>
@@ -360,6 +359,6 @@ export default function ProductDetailPage() {
           </div>
         </aside>
       </div>
-    </div>
+    </FunctionalPremiumScope>
   )
 }

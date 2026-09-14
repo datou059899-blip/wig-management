@@ -12,7 +12,7 @@ import {
 } from '@/lib/permissions'
 import { isNeedsActionProduct, parseProductSalesProducts } from '@/lib/productSalesNeedsAction'
 import { useToast } from '@/components/ToastProvider'
-import { CompactEmptyState, useDelayedVisibility } from '@/components/dashboard/FunctionalPremium'
+import { CompactEmptyState, FunctionalPremiumScope, useDelayedVisibility } from '@/components/dashboard/FunctionalPremium'
 
 type WorkTask = {
   id: string
@@ -981,7 +981,7 @@ export default function WorkbenchPage() {
   ]
 
   return (
-    <div className="relative z-10 flex min-h-screen flex-col gap-5">
+    <FunctionalPremiumScope className="relative z-10 flex min-h-screen flex-col gap-5">
       {/* 页面标题 */}
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -1156,10 +1156,11 @@ export default function WorkbenchPage() {
       </div>
 
       {!loading && !hasAnyTask && (
-        <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 px-4 py-3">
-          <div className="text-sm font-semibold text-emerald-700">✓ 今天暂无待处理任务</div>
-          <div className="mt-1 text-sm text-emerald-700/80">
-            当前没有需要处理的人工任务。
+        <div className="flex items-start gap-2 py-3">
+          <span className="text-sm font-semibold text-emerald-700" aria-hidden="true">✓</span>
+          <div>
+            <div className="text-sm font-medium text-slate-700">今天没有待处理任务</div>
+            <div className="mt-0.5 text-xs text-slate-500">当前没有需要处理的人工任务。</div>
           </div>
         </div>
       )}
@@ -1875,7 +1876,7 @@ export default function WorkbenchPage() {
           </div>
         </div>
       )}
-    </div>
+    </FunctionalPremiumScope>
   )
 }
 
