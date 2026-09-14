@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
+import { ChevronDown } from 'lucide-react'
 import { FunctionalPremiumScope, OverflowMenu, StatusBadge, primaryActionClassName, useDelayedVisibility } from '@/components/dashboard/FunctionalPremium'
 
 type ProductDetailResponse = {
@@ -222,8 +223,11 @@ export default function ProductDetailPage() {
         ))}
       </section>
 
-      <details className="rounded-lg border border-slate-200 bg-white min-[1400px]:hidden">
-        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-slate-800 [&::-webkit-details-marker]:hidden">商品档案</summary>
+      <details className="group rounded-lg border border-slate-200 bg-white min-[1400px]:hidden">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-slate-800 [&::-webkit-details-marker]:hidden">
+          <span>商品档案</span>
+          <ChevronDown className="h-4 w-4 text-slate-400 transition-transform duration-150 group-open:rotate-180" aria-hidden="true" />
+        </summary>
         <dl className="border-t border-slate-100 px-4 py-2">
           <Field label="状态" value={businessStatusLabel[product.businessStatus] || product.businessStatus} />
           <Field label="Canonical SKU" value={product.sku} />

@@ -10,7 +10,7 @@ export const ghostActionClassName = 'inline-flex h-8 items-center justify-center
 
 export function FunctionalPremiumScope({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`[&_a]:focus-visible:outline-none [&_a]:focus-visible:ring-2 [&_a]:focus-visible:ring-brand-500/70 [&_a]:focus-visible:ring-offset-2 [&_button]:focus-visible:outline-none [&_button]:focus-visible:ring-2 [&_button]:focus-visible:ring-brand-500/70 [&_button]:focus-visible:ring-offset-2 [&_input]:focus-visible:outline-none [&_input]:focus-visible:ring-2 [&_input]:focus-visible:ring-brand-500/70 [&_input]:focus-visible:ring-offset-1 [&_select]:focus-visible:outline-none [&_select]:focus-visible:ring-2 [&_select]:focus-visible:ring-brand-500/70 [&_select]:focus-visible:ring-offset-1 [&_summary]:focus-visible:outline-none [&_summary]:focus-visible:ring-2 [&_summary]:focus-visible:ring-brand-500/70 [&_summary]:focus-visible:ring-offset-2 [&_textarea]:focus-visible:outline-none [&_textarea]:focus-visible:ring-2 [&_textarea]:focus-visible:ring-brand-500/70 [&_textarea]:focus-visible:ring-offset-1 ${className}`}>
+    <div className={`functional-premium-scope ${className}`}>
       {children}
     </div>
   )

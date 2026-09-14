@@ -16,6 +16,20 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+.functional-premium-scope :is(a, button, input, select, summary, textarea):focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.functional-premium-scope :is(a, button, input, select, summary, textarea):focus-visible {
+  outline: 2px solid rgb(var(--brand-pink));
+  outline-offset: 2px;
+}
+
+.functional-premium-scope :is(input, select, textarea):focus-visible {
+  outline-offset: 1px;
+}
+
 /* 页面容器 */
 .page-container {
   @apply min-h-screen;

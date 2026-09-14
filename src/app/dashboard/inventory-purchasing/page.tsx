@@ -1390,39 +1390,39 @@ export default function InventoryPurchasingPage() {
               </StickyToolbar>
 
               <div className="max-h-[calc(100vh-260px)] overflow-auto">
-                <table className="min-w-[1220px] divide-y divide-slate-200 text-sm">
+                <table className="w-max min-w-[1440px] divide-y divide-slate-200 text-sm">
                   <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs font-semibold text-slate-500 shadow-sm">
                     <tr>
-                      <th className="whitespace-nowrap px-3 py-2">
+                      <th className="w-[240px] min-w-[240px] max-w-[240px] whitespace-nowrap px-3 py-2">
                         <button type="button" onClick={() => toggleBusinessSort('sku')} className="font-semibold hover:text-slate-900">
                           SKU / 商品{getBusinessSortLabel('sku')}
                         </button>
                       </th>
-                      <th className="whitespace-nowrap px-3 py-2 text-right">
+                      <th className="w-[96px] whitespace-nowrap px-3 py-2 text-right">
                         <button type="button" onClick={() => toggleBusinessSort('currentInventory')} className="font-semibold hover:text-slate-900">
                           当前库存{getBusinessSortLabel('currentInventory')}
                         </button>
                       </th>
-                      <th className="whitespace-nowrap px-3 py-2 text-right">订货中</th>
-                      <th className="whitespace-nowrap px-3 py-2 text-right">在途</th>
-                      <th className="whitespace-nowrap px-3 py-2 text-right">未来库存</th>
-                      <th className="whitespace-nowrap px-3 py-2 text-right">
+                      <th className="w-[80px] whitespace-nowrap px-3 py-2 text-right">订货中</th>
+                      <th className="w-[72px] whitespace-nowrap px-3 py-2 text-right">在途</th>
+                      <th className="w-[96px] whitespace-nowrap px-3 py-2 text-right">未来库存</th>
+                      <th className="w-[84px] whitespace-nowrap px-3 py-2 text-right">
                         <button type="button" onClick={() => toggleBusinessSort('sales7d')} className="font-semibold hover:text-slate-900">
                           7天销量{getBusinessSortLabel('sales7d')}
                         </button>
                       </th>
-                      <th className="whitespace-nowrap px-3 py-2 text-right">
+                      <th className="w-[92px] whitespace-nowrap px-3 py-2 text-right">
                         <button type="button" onClick={() => toggleBusinessSort('sales30d')} className="font-semibold hover:text-slate-900">
                           30天销量{getBusinessSortLabel('sales30d')}
                         </button>
                       </th>
-                      <th className="whitespace-nowrap px-3 py-2 text-right">实际售价</th>
-                      <th className="whitespace-nowrap px-3 py-2 text-right">拿货价</th>
-                      <th className="whitespace-nowrap px-3 py-2">默认供应商</th>
-                      <th className="whitespace-nowrap px-3 py-2 text-right">库存成本</th>
-                      <th className="whitespace-nowrap px-3 py-2 text-right">零售货值</th>
-                      <th className="whitespace-nowrap px-3 py-2">状态</th>
-                      {canManageInventory && <th className="whitespace-nowrap px-3 py-2">操作</th>}
+                      <th className="w-[112px] whitespace-nowrap px-3 py-2 text-right">实际售价</th>
+                      <th className="w-[96px] whitespace-nowrap px-3 py-2 text-right">拿货价</th>
+                      <th className="w-[150px] whitespace-nowrap px-3 py-2">默认供应商</th>
+                      <th className="w-[112px] whitespace-nowrap px-3 py-2 text-right">库存成本</th>
+                      <th className="w-[112px] whitespace-nowrap px-3 py-2 text-right">零售货值</th>
+                      <th className="w-[180px] whitespace-nowrap px-3 py-2">状态</th>
+                      {canManageInventory && <th className="sticky right-0 z-20 w-[76px] min-w-[76px] whitespace-nowrap border-l border-slate-200 bg-slate-50 px-3 py-2">操作</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1441,22 +1441,22 @@ export default function InventoryPurchasingPage() {
                       ].filter(Boolean)
                       const supplierDisplay = item.defaultSupplier ? splitSupplierDisplayName(item.defaultSupplier.name) : null
                       return (
-                        <tr key={item.productId} className="hover:bg-slate-50">
-                          <td className="max-w-[300px] px-3 py-2">
-                            <div className="font-semibold text-slate-900">{item.sku}</div>
-                            <div className="mt-0.5 line-clamp-2 text-xs leading-snug text-slate-500">{item.name}</div>
+                        <tr key={item.productId} className="group hover:bg-slate-50">
+                          <td className="w-[240px] min-w-[240px] max-w-[240px] px-3 py-2">
+                            <div className="truncate font-semibold text-slate-900" title={item.sku}>{item.sku}</div>
+                            <div className="mt-0.5 line-clamp-2 break-words text-xs leading-snug text-slate-500" title={item.name}>{item.name}</div>
                           </td>
-                          <td className="px-3 py-2 text-right font-medium text-slate-900">{item.currentInventory.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2 text-right text-slate-700">{item.orderedOpenQty.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2 text-right text-slate-700">{item.inTransitQty.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2 text-right font-medium text-slate-900">{item.futureInventory.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2 text-right text-slate-700">{item.sales7d.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2 text-right text-slate-700">{item.sales30d.toLocaleString('zh-CN')}</td>
-                          <td className="px-3 py-2 text-right">
+                          <td className="px-3 py-2 text-right font-medium tabular-nums text-slate-900">{item.currentInventory.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-700">{item.orderedOpenQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-700">{item.inTransitQty.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2 text-right font-medium tabular-nums text-slate-900">{item.futureInventory.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-700">{item.sales7d.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-700">{item.sales30d.toLocaleString('zh-CN')}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">
                             <div className="font-medium text-slate-900">{formatUsd(item.currentSellingPriceUsd)}</div>
                             <div className="mt-0.5 text-xs text-slate-500">{item.priceSource}</div>
                           </td>
-                          <td className="px-3 py-2 text-right text-slate-700">{item.costCny > 0 ? formatRmb(item.costCny) : '未维护'}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-700">{item.costCny > 0 ? formatRmb(item.costCny) : '未维护'}</td>
                           <td className="min-w-[130px] px-3 py-2 text-slate-700">
                             {supplierDisplay ? (
                               <div>
@@ -1465,8 +1465,8 @@ export default function InventoryPurchasingPage() {
                               </div>
                             ) : '未绑定'}
                           </td>
-                          <td className="px-3 py-2 text-right text-slate-700">{formatRmb(item.inventoryCostRmb)}</td>
-                          <td className="px-3 py-2 text-right text-slate-700">{formatUsd(item.retailInventoryValueUsd)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-700">{formatRmb(item.inventoryCostRmb)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-700">{formatUsd(item.retailInventoryValueUsd)}</td>
                           <td className="px-3 py-2">
                             <div className="flex max-w-[180px] items-center gap-1.5" title={statusWarnings.join('、')}>
                               {statusWarnings.length === 0 ? (
@@ -1480,7 +1480,7 @@ export default function InventoryPurchasingPage() {
                             </div>
                           </td>
                           {canManageInventory && (
-                            <td className="whitespace-nowrap px-3 py-2">
+                            <td className="sticky right-0 z-10 w-[76px] min-w-[76px] whitespace-nowrap border-l border-slate-100 bg-white px-3 py-2 group-hover:bg-slate-50">
                               <button
                                 type="button"
                                 onClick={() => startEditBusiness(item)}
