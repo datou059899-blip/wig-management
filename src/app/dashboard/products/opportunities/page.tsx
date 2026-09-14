@@ -6,6 +6,18 @@ import { canManageProductOpportunities } from '@/lib/permissions'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { EmptyStatePresets } from '@/components/EmptyState'
 import { useToast } from '@/components/ToastProvider'
+import {
+  CompactEmptyState,
+  FilterChip,
+  FunctionalPremiumScope,
+  InteractiveMetric,
+  OverflowMenu,
+  StatusBadge as PremiumStatusBadge,
+  StickyToolbar,
+  primaryActionClassName,
+  secondaryActionClassName,
+  useDelayedVisibility,
+} from '@/components/dashboard/FunctionalPremium'
 
 type Opportunity = {
   id: string
@@ -153,6 +165,7 @@ export default function ProductOpportunitiesPage() {
   const [purchaseDevelopmentItems, setPurchaseDevelopmentItems] = useState<PurchaseDevelopmentItem[]>([])
   const [completedDevelopmentItems, setCompletedDevelopmentItems] = useState<CompletedDevelopmentItem[]>([])
   const [loading, setLoading] = useState(true)
+  const showLoading = useDelayedVisibility(loading)
   const [viewMode, setViewMode] = useState<'pending' | 'completed'>('pending')
   const [statusFilter, setStatusFilter] = useState('all')
   const [priorityFilter, setPriorityFilter] = useState('all')
@@ -465,13 +478,13 @@ export default function ProductOpportunitiesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <FunctionalPremiumScope className="space-y-4">
       <PageHeader
         title="新品开发池"
         description="用于管理采购中的新品、同名不同工艺款和待确认 SKU，完成正式商品建档前的整理。"
         actions={
           canEdit && (
-            <button onClick={openCreate} className="btn-primary">
+            <button onClick={openCreate} className={primaryActionClassName}>
               + 新增独立新品
             </button>
           )
@@ -483,7 +496,7 @@ export default function ProductOpportunitiesPage() {
           type="button"
           onClick={() => setViewMode('pending')}
           className={`rounded-md px-4 py-2 text-sm font-medium ${
-            viewMode === 'pending' ? 'bg-orange-50 text-orange-700' : 'text-gray-500 hover:text-gray-900'
+            viewMode === 'pending' ? 'bg-brand-50 text-gray-900' : 'text-gray-500 hover:text-gray-900'
           }`}
         >
           待处理
@@ -492,7 +505,7 @@ export default function ProductOpportunitiesPage() {
           type="button"
           onClick={() => setViewMode('completed')}
           className={`rounded-md px-4 py-2 text-sm font-medium ${
-            viewMode === 'completed' ? 'bg-orange-50 text-orange-700' : 'text-gray-500 hover:text-gray-900'
+            viewMode === 'completed' ? 'bg-brand-50 text-gray-900' : 'text-gray-500 hover:text-gray-900'
           }`}
         >
           已完成
@@ -501,39 +514,15 @@ export default function ProductOpportunitiesPage() {
 
       {viewMode === 'pending' && (
         <>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <button
-          onClick={() => setStatusFilter('all')}
-          className={`card p-4 text-left transition-all ${statusFilter === 'all' ? 'ring-2 ring-orange-300 border-orange-200' : ''}`}
-        >
-          <div className="text-xs text-gray-500">待处理总数</div>
-          <div className="text-2xl font-bold text-gray-900 mt-1">{developmentTotalCount}</div>
-        </button>
-        <button
-          onClick={() => setStatusFilter('NEW_PRODUCT')}
-          className={`card p-4 text-left border-l-4 border-l-emerald-500 transition-all ${statusFilter === 'NEW_PRODUCT' ? 'ring-2 ring-emerald-300' : ''}`}
-        >
-          <div className="text-xs text-gray-500">新品待建档</div>
-          <div className="text-2xl font-bold text-emerald-600 mt-1">{newProductCount}</div>
-        </button>
-        <button
-          onClick={() => setStatusFilter('DIFFERENT_CRAFT')}
-          className={`card p-4 text-left border-l-4 border-l-amber-500 transition-all ${statusFilter === 'DIFFERENT_CRAFT' ? 'ring-2 ring-amber-300' : ''}`}
-        >
-          <div className="text-xs text-gray-500">同名不同工艺</div>
-          <div className="text-2xl font-bold text-amber-600 mt-1">{differentCraftCount}</div>
-        </button>
-        <button
-          onClick={() => setStatusFilter('SKU_PENDING')}
-          className={`card p-4 text-left border-l-4 border-l-sky-500 transition-all ${statusFilter === 'SKU_PENDING' ? 'ring-2 ring-sky-300' : ''}`}
-        >
-          <div className="text-xs text-gray-500">待确认SKU</div>
-          <div className="text-2xl font-bold text-sky-600 mt-1">{skuPendingCount}</div>
-        </button>
+      <div className="grid overflow-hidden rounded-lg border border-gray-200 bg-white md:grid-cols-4 md:divide-x md:divide-gray-100">
+        <InteractiveMetric label="待处理总数" value={developmentTotalCount.toLocaleString('zh-CN')} active={statusFilter === 'all'} onPress={() => setStatusFilter('all')} />
+        <InteractiveMetric label="新品待建档" value={newProductCount.toLocaleString('zh-CN')} active={statusFilter === 'NEW_PRODUCT'} onPress={() => setStatusFilter('NEW_PRODUCT')} />
+        <InteractiveMetric label="同名不同工艺" value={differentCraftCount.toLocaleString('zh-CN')} active={statusFilter === 'DIFFERENT_CRAFT'} onPress={() => setStatusFilter('DIFFERENT_CRAFT')} />
+        <InteractiveMetric label="待确认 SKU" value={skuPendingCount.toLocaleString('zh-CN')} active={statusFilter === 'SKU_PENDING'} onPress={() => setStatusFilter('SKU_PENDING')} />
       </div>
 
       {/* 筛选工具条 */}
-      <div className="filter-bar">
+      <StickyToolbar>
         <div className="flex-1 min-w-[200px]">
           <input
             type="text"
@@ -555,18 +544,18 @@ export default function ProductOpportunitiesPage() {
             <option key={supplier} value={supplier}>{supplier}</option>
           ))}
         </select>
-        <button onClick={fetchOpportunities} className="btn-primary">
+        <button onClick={fetchOpportunities} className={secondaryActionClassName}>
           搜索
         </button>
-      </div>
+        {statusFilter !== 'all' ? <FilterChip label={statusOptions.find((option) => option.value === statusFilter)?.label || statusFilter} onRemove={() => setStatusFilter('all')} /> : null}
+        {supplierFilter !== 'all' ? <FilterChip label={`Supplier：${supplierFilter}`} onRemove={() => setSupplierFilter('all')} /> : null}
+      </StickyToolbar>
+
+      {loading ? (showLoading ? <div className="h-44 animate-pulse rounded-lg border border-gray-200 bg-gray-100/70" /> : <div className="h-44" />) : null}
 
       {/* 空状态 */}
       {!loading && developmentTotalCount === 0 && purchaseDevelopmentItems.length === 0 && (
-        <div className="card p-8">
-          <div className="text-center text-gray-500">
-            当前没有来自采购明细的新品待建档记录。
-          </div>
-        </div>
+        <div className="rounded-lg border border-gray-200 bg-white"><CompactEmptyState>当前没有来自采购明细的新品待建档记录。</CompactEmptyState></div>
       )}
 
       {/* 筛选结果为空 */}
@@ -605,9 +594,7 @@ export default function ProductOpportunitiesPage() {
                     <div className="font-medium text-gray-900">{item.productNameSnapshot}</div>
                   </td>
                   <td>
-                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getDevelopmentStatusClass(item.linkStatus)}`}>
-                      {item.linkStatusLabel}
-                    </span>
+                    <PremiumStatusBadge tone={item.linkStatus === 'NEW_PRODUCT' ? 'success' : item.linkStatus === 'DIFFERENT_CRAFT' ? 'warning' : 'neutral'}>{item.linkStatusLabel}</PremiumStatusBadge>
                   </td>
                   <td className="text-gray-700">{item.supplierName}</td>
                   <td className="text-gray-700">{item.orderedQty.toLocaleString('zh-CN')}</td>
@@ -616,27 +603,25 @@ export default function ProductOpportunitiesPage() {
                   <td className="text-gray-600">{formatDate(item.expectedArrivalDate)}</td>
                   <td className="text-gray-600">{item.orderNo}</td>
                   <td>
-                    <span className="badge badge-gray">{item.productStatus}</span>
+                    <PremiumStatusBadge>{item.productStatus}</PremiumStatusBadge>
                   </td>
                   <td>
-                    <span className={`badge ${item.opportunityExists ? 'badge-success' : 'badge-warning'}`}>
+                    <PremiumStatusBadge tone={item.opportunityExists ? 'success' : 'warning'}>
                       {item.opportunityExists ? '已建档' : '未建档'}
-                    </span>
+                    </PremiumStatusBadge>
                     {item.opportunity?.name && (
                       <div className="mt-1 text-xs text-gray-500">{item.opportunity.name}</div>
                     )}
                   </td>
                   {canEdit && (
                     <td>
-                      <div className="flex flex-col gap-1">
-                        <button onClick={() => openDevelopmentForm(item)} className="text-blue-600 hover:text-blue-800 text-xs">
-                          {item.opportunityExists ? '编辑资料' : '完善资料'}
-                        </button>
+                      <div className="flex items-center gap-2">
                         {item.opportunity && !item.opportunity.productId && (
-                          <button onClick={() => openConvert(item.opportunity!, item)} className="text-emerald-600 hover:text-emerald-800 text-xs">
+                          <button onClick={() => openConvert(item.opportunity!, item)} className="text-xs font-medium text-brand-700 hover:text-brand-800">
                             转为正式商品
                           </button>
                         )}
+                        <OverflowMenu items={[{ label: item.opportunityExists ? '编辑资料' : '完善资料', onSelect: () => openDevelopmentForm(item) }]} />
                       </div>
                     </td>
                   )}
@@ -647,18 +632,13 @@ export default function ProductOpportunitiesPage() {
         </div>
       )}
 
-      <div className="card p-4 bg-gradient-to-r from-orange-50 to-amber-50 border-orange-100">
-        <div className="flex items-start gap-3">
-          <div className="text-xl">💡</div>
-          <div>
-            <div className="text-sm font-medium text-orange-800">新品开发池规则</div>
-            <div className="text-xs text-orange-700 mt-1">
+      <details className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+        <summary className="cursor-pointer text-sm font-medium text-gray-700">新品开发池规则</summary>
+            <div className="mt-2 text-xs text-gray-500">
               这里只汇总未关联 Product 且已人工标记为「新品待建档 / 同名不同工艺 / 待确认SKU」的采购明细。
               不按名称自动匹配，不自动创建 Product，也不合并同名款。
             </div>
-          </div>
-        </div>
-      </div>
+      </details>
 
       <div className="card p-4">
         <button
@@ -715,14 +695,13 @@ export default function ProductOpportunitiesPage() {
                         <td className="text-gray-400 text-xs">{new Date(item.updatedAt).toLocaleString('zh-CN').slice(0, 16)}</td>
                         {canEdit && (
                           <td>
-                            <div className="flex gap-2">
-                              <button onClick={() => openEdit(item)} className="text-blue-600 hover:text-blue-800 text-xs">编辑</button>
+                            <div className="flex items-center gap-2">
                               {item.productId ? (
-                                <a href={`/dashboard/products?search=${encodeURIComponent(item.product?.sku || item.product?.name || '')}`} className="text-emerald-600 hover:text-emerald-800 text-xs">查看商品</a>
+                                <a href={`/dashboard/products?search=${encodeURIComponent(item.product?.sku || item.product?.name || '')}`} className="text-xs font-medium text-brand-700 hover:text-brand-800">查看商品</a>
                               ) : (
-                                <button onClick={() => openConvert(item)} className="text-emerald-600 hover:text-emerald-800 text-xs">转为正式商品</button>
+                                <button onClick={() => openConvert(item)} className="text-xs font-medium text-brand-700 hover:text-brand-800">转为正式商品</button>
                               )}
-                              <button onClick={() => handleDelete(item.id)} className="text-red-600 hover:text-red-800 text-xs">删除</button>
+                              <OverflowMenu items={[{ label: '编辑', onSelect: () => openEdit(item) }, { label: '删除', onSelect: () => handleDelete(item.id), danger: true }]} />
                             </div>
                           </td>
                         )}
@@ -740,7 +719,7 @@ export default function ProductOpportunitiesPage() {
 
       {viewMode === 'completed' && (
         <div className="space-y-4">
-          <div className="filter-bar">
+          <StickyToolbar>
             <div className="flex-1 min-w-[220px]">
               <input
                 type="text"
@@ -750,12 +729,11 @@ export default function ProductOpportunitiesPage() {
                 className="input"
               />
             </div>
-          </div>
+            {completedSearch ? <FilterChip label={`搜索：${completedSearch}`} onRemove={() => setCompletedSearch('')} /> : null}
+          </StickyToolbar>
 
           {filteredCompletedDevelopmentItems.length === 0 ? (
-            <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-500">
-              暂无已完成新品
-            </div>
+            <div className="rounded-lg border border-gray-200 bg-white"><CompactEmptyState>暂无已完成新品。</CompactEmptyState></div>
           ) : (
             <div className="table-container">
               <table className="table">
@@ -1103,6 +1081,6 @@ export default function ProductOpportunitiesPage() {
           </div>
         </div>
       )}
-    </div>
+    </FunctionalPremiumScope>
   )
 }

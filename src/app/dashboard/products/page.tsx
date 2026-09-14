@@ -14,8 +14,18 @@ import {
 } from '@/lib/permissions'
 import { canAccessPageForUser } from '@/lib/pagePermissions'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { EmptyState } from '@/components/EmptyState'
 import { useToast } from '@/components/ToastProvider'
+import {
+  CompactEmptyState,
+  FilterChip,
+  FunctionalPremiumScope,
+  OverflowMenu,
+  StatusBadge,
+  StickyToolbar,
+  primaryActionClassName,
+  secondaryActionClassName,
+  useDelayedVisibility,
+} from '@/components/dashboard/FunctionalPremium'
 
 interface Product {
   id: string
@@ -112,6 +122,7 @@ export default function ProductsPage() {
 
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
@@ -134,6 +145,7 @@ export default function ProductsPage() {
   const [bulkUpdateAllowOverwrite, setBulkUpdateAllowOverwrite] = useState(false)
   const [bulkUpdateLoading, setBulkUpdateLoading] = useState(false)
   const [bulkUpdateResult, setBulkUpdateResult] = useState<ProductBulkUpdateResult | null>(null)
+  const showLoading = useDelayedVisibility(loading)
   
   // 图片预览状态
   const [previewProduct, setPreviewProduct] = useState<Product | null>(null)
@@ -167,6 +179,7 @@ export default function ProductsPage() {
   const fetchProducts = async () => {
     try {
       setLoading(true)
+      setLoadError('')
       const res = await fetch(`/api/products?page=${page}&pageSize=${pageSize}`)
       if (!res.ok) throw new Error('加载失败')
       const data = await res.json()
@@ -175,6 +188,7 @@ export default function ProductsPage() {
       setTotalPages(data.totalPages || 1)
     } catch (error) {
       console.error('获取产品列表失败:', error)
+      setLoadError('产品数据加载失败，请稍后重试。')
     } finally {
       setLoading(false)
     }
@@ -461,24 +475,24 @@ export default function ProductsPage() {
   if (!canAccess) return null
 
   return (
-    <div>
+    <FunctionalPremiumScope className="space-y-4">
       <PageHeader
         title="产品库"
         description="通过图片、SKU、产品名、假发属性快速确认产品"
+        actions={canCreateProduct ? <button onClick={handleAdd} className={primaryActionClassName}>新增产品</button> : undefined}
       />
 
-      {/* 搜索栏和新增按钮 */}
-      <div className="mb-6 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <div className="relative max-w-2xl flex-1">
+      <StickyToolbar>
+        <div className="relative min-w-[260px] max-w-2xl flex-1">
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜索 SKU / 产品名 / 颜色 / 长度 / 款式..."
-            className="w-full rounded-md border border-gray-300 px-4 py-2.5 pl-11 text-sm focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+            className="input h-9 pl-10 pr-9"
           />
           <svg
-            className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"
+            className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -488,7 +502,7 @@ export default function ProductsPage() {
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -497,37 +511,17 @@ export default function ProductsPage() {
           )}
         </div>
 
-        {(canBulkEdit || canCreateProduct) && (
-          <div className="flex flex-wrap gap-3">
-            {canBulkEdit && (
-              <button
-                onClick={() => setShowAdminMaintenance((value) => !value)}
-                className="flex items-center gap-2 whitespace-nowrap rounded-md border border-gray-200 bg-white px-4 py-2.5 text-gray-700 transition-colors hover:bg-gray-50"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                管理员维护
-              </button>
-            )}
-            {canCreateProduct && (
-              <button
-                onClick={handleAdd}
-                className="flex items-center gap-2 whitespace-nowrap rounded-md bg-brand-600 px-4 py-2.5 text-white transition-colors hover:bg-brand-700"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                新增产品
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+        <span className="text-xs tabular-nums text-gray-500">共 {total.toLocaleString('zh-CN')} 款</span>
+        <label className="sr-only" htmlFor="products-page-size">每页显示</label>
+        <select id="products-page-size" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1) }} className="input h-9 w-auto py-1.5">
+          <option value={20}>20 / 页</option><option value={50}>50 / 页</option><option value={100}>100 / 页</option>
+        </select>
+        {canBulkEdit ? <OverflowMenu label="产品库更多操作" items={[{ label: showAdminMaintenance ? '收起管理员维护' : '管理员维护', onSelect: () => setShowAdminMaintenance((value) => !value) }]} /> : null}
+        {searchQuery ? <FilterChip label={`搜索：${searchQuery}`} onRemove={() => setSearchQuery('')} /> : null}
+      </StickyToolbar>
 
       {canBulkEdit && showAdminMaintenance && (
-        <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <div className="rounded-lg border border-gray-200 bg-gray-50/70 p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="text-sm font-medium text-gray-900">管理员维护</div>
@@ -537,7 +531,7 @@ export default function ProductsPage() {
             </div>
             <button
               onClick={handleOpenBulkUpdateModal}
-              className="px-4 py-2 border border-blue-200 bg-white text-blue-700 rounded-lg hover:bg-blue-50 transition-colors flex items-center justify-center gap-2 whitespace-nowrap text-sm"
+              className={secondaryActionClassName}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h10" />
@@ -551,69 +545,42 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* 状态栏 */}
-      <div className="mb-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <div className="text-sm text-gray-500">
-          共 {total} 款产品
+      <div className="text-sm text-gray-500">
           {totalPages > 1 && (
-            <span className="ml-2">
+            <span>
               第 {page} 页 / 共 {totalPages} 页
               <span className="ml-1 text-gray-400">
                 ({(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} / {total})
               </span>
             </span>
           )}
-          {searchQuery && <span className="ml-2">(搜索 "{searchQuery}")</span>}
-        </div>
-        
-        {/* 每页数量选择 */}
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-gray-500">每页显示:</span>
-          <select
-            value={pageSize}
-            onChange={(e) => {
-              setPageSize(Number(e.target.value))
-              setPage(1)
-            }}
-            className="px-2 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-          >
-            <option value={20}>20</option>
-            <option value={50}>50</option>
-            <option value={100}>100</option>
-          </select>
-        </div>
       </div>
 
       {/* 产品网格 */}
       {loading ? (
-        <div className="flex justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-        </div>
+        showLoading ? <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">{Array.from({ length: 10 }, (_, index) => <div key={index} className="aspect-[4/5] animate-pulse rounded-lg border border-gray-200 bg-gray-100/70" />)}</div> : <div className="h-64" />
+      ) : loadError ? (
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-rose-200 bg-white px-4 py-4 text-sm text-rose-700"><span>{loadError}</span><button type="button" onClick={() => void fetchProducts()} className={secondaryActionClassName}>重新加载</button></div>
       ) : filteredProducts.length === 0 ? (
-        <EmptyState
-          title="没有找到产品"
-          description={searchQuery ? "请尝试其他搜索关键词" : "暂无产品数据，点击上方按钮新增"}
-        />
+        <div className="rounded-lg border border-gray-200 bg-white"><CompactEmptyState>{searchQuery ? '没有匹配产品，请尝试其他关键词。' : '暂无产品数据。'}</CompactEmptyState></div>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
             {filteredProducts.map((product) => (
               <div
                 key={product.id}
                 className={`group relative overflow-hidden rounded-lg border bg-white transition-colors hover:border-gray-300 ${
                   recentlyUpdated === product.id
-                    ? 'border-green-500 ring-2 ring-green-200 shadow-lg'
+                    ? 'border-emerald-300 ring-2 ring-emerald-100'
                     : 'border-gray-200'
                 }`}
               >
                 {recentlyUpdated === product.id && (
-                  <div className="absolute top-0 left-0 right-0 bg-green-500 text-white text-xs py-1 px-2 text-center z-10">
-                    ✓ 已更新
-                  </div>
+                  <div className="absolute left-2 top-2 z-10"><StatusBadge tone="success">已更新</StatusBadge></div>
                 )}
                 {/* 产品图片 */}
                 <div 
-                  className="relative aspect-square bg-gray-100 cursor-pointer group/image"
+                  className="relative aspect-[4/3] cursor-pointer bg-gray-100 group/image"
                   onClick={() => product.image && setPreviewProduct(product)}
                 >
                   {product.image ? (
@@ -643,54 +610,14 @@ export default function ProductsPage() {
                     </div>
                   )}
 
-                  {/* 操作按钮 */}
-                  {(canEditBase || canDeactivate) && (
-                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {canEditBase && (
-                        <button
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            handleEdit(product)
-                          }}
-                          className="p-1.5 bg-white/90 rounded-md shadow-sm hover:bg-white"
-                          title="编辑"
-                        >
-                          <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                          </svg>
-                        </button>
-                      )}
-                      {canDeactivate && (
-                        <button
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            handleDeleteClick(product)
-                          }}
-                          className="p-1.5 bg-white/90 rounded-md shadow-sm hover:bg-white"
-                          title="停用"
-                        >
-                          <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      )}
+                  {(canEditBase || canDeactivate || product.productUrl) && (
+                    <div className="absolute right-2 top-2" onClick={(event) => event.stopPropagation()}>
+                      <OverflowMenu items={[
+                        ...(canEditBase ? [{ label: '编辑基础资料', onSelect: () => handleEdit(product) }] : []),
+                        ...(product.productUrl ? [{ label: '打开产品链接', onSelect: () => openProductUrl(product.productUrl) }] : []),
+                        ...(canDeactivate ? [{ label: '停用产品', onSelect: () => handleDeleteClick(product), danger: true }] : []),
+                      ]} />
                     </div>
-                  )}
-
-                  {/* 产品链接按钮 */}
-                  {product.productUrl && (
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        openProductUrl(product.productUrl)
-                      }}
-                      className="absolute bottom-2 right-2 p-1.5 bg-blue-600/90 rounded-md shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-600"
-                      title="打开产品链接"
-                    >
-                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                      </svg>
-                    </button>
                   )}
                 </div>
 
@@ -702,21 +629,15 @@ export default function ProductsPage() {
                   <h3 className="font-medium text-gray-900 text-sm mb-2 line-clamp-2 min-h-[2.5rem]">
                     {product.name}
                   </h3>
-                  <div className="flex flex-wrap gap-1 mb-2">
+                  <div className="mb-2 flex min-h-6 flex-wrap gap-1">
                     {product.color && (
-                      <span className="px-1.5 py-0.5 bg-pink-50 text-pink-700 text-xs rounded">
-                        {product.color}
-                      </span>
+                      <StatusBadge>{product.color}</StatusBadge>
                     )}
                     {product.length && (
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                        {product.length}
-                      </span>
+                      <StatusBadge>{product.length}</StatusBadge>
                     )}
                     {product.style && (
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                        {product.style}
-                      </span>
+                      <StatusBadge>{product.style}</StatusBadge>
                     )}
                   </div>
                   {product.productUrl && (
@@ -771,9 +692,9 @@ export default function ProductsPage() {
                     <button
                       key={pageNum}
                       onClick={() => setPage(pageNum)}
-                      className={`w-10 h-10 rounded-lg ${
+                      className={`h-9 w-9 rounded-md ${
                         page === pageNum
-                          ? 'bg-blue-600 text-white'
+                          ? 'bg-brand-600 text-white'
                           : 'border border-gray-300 hover:bg-gray-50'
                       }`}
                     >
@@ -1320,6 +1241,6 @@ export default function ProductsPage() {
           </div>
         </div>
       )}
-    </div>
+    </FunctionalPremiumScope>
   )
 }

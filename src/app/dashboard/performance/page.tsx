@@ -6,6 +6,16 @@ import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { parseTikTokOrderExcel } from '@/lib/parseTikTokOrderExcel'
+import {
+  CompactEmptyState,
+  FilterChip,
+  FunctionalPremiumScope,
+  InteractiveMetric,
+  OverflowMenu,
+  StickyToolbar,
+  primaryActionClassName,
+  useDelayedVisibility,
+} from '@/components/dashboard/FunctionalPremium'
 
 type DayPoint = {
   date: string // YYYY-MM-DD
@@ -57,6 +67,7 @@ export default function PerformancePage() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'normal' | 'watch' | 'pause'>('all')
   const [ownerFilter, setOwnerFilter] = useState<string>('all')
   const [loading, setLoading] = useState(false)
+  const showLoading = useDelayedVisibility(loading)
   const [importingOrders, setImportingOrders] = useState(false)
   const [importingAds, setImportingAds] = useState(false)
   const [lastImportedOrdersPreview, setLastImportedOrdersPreview] = useState<
@@ -321,8 +332,6 @@ export default function PerformancePage() {
   const maxGmv = Math.max(...trend.map((p) => p.gmv), 1)
   const maxAds = Math.max(...trend.map((p) => p.adsCost), 1)
   const maxOrders = Math.max(...trend.map((p) => p.orders), 1)
-  const importOrdersDisabledReason = importingOrders ? '订单导入中' : loading ? '数据加载中' : undefined
-  const importAdsDisabledReason = importingAds ? '广告数据导入中' : loading ? '数据加载中' : undefined
   const refreshDisabledReason = loading ? '数据加载中' : undefined
 
   if (status === 'loading') {
@@ -334,36 +343,24 @@ export default function PerformancePage() {
   }
 
   return (
-    <div className="space-y-4">
+    <FunctionalPremiumScope className="space-y-4">
       <PageHeader
         title="经营数据"
         description="查看每日成交、花费、投产比和产品表现，让运营、投手和老板对生意情况一目了然。"
         actions={
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={handleImportOrders}
-              className="px-3 py-2 text-xs bg-white border border-gray-200 text-gray-800 rounded-lg hover:bg-gray-50 disabled:opacity-60"
-              disabled={importingOrders || loading}
-              title={importOrdersDisabledReason}
-            >
-              {importingOrders ? '正在导入订单...' : '导入订单数据'}
-            </button>
-            <button
-              onClick={handleImportAds}
-              className="px-3 py-2 text-xs bg-white border border-gray-200 text-gray-800 rounded-lg hover:bg-gray-50 disabled:opacity-60"
-              disabled={importingAds || loading}
-              title={importAdsDisabledReason}
-            >
-              {importingAds ? '正在导入广告...' : '导入广告数据'}
-            </button>
+          <div className="flex items-center gap-2">
             <button
               onClick={handleRefresh}
-              className="px-3 py-2 text-xs bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-60"
+              className={primaryActionClassName}
               disabled={loading}
               title={refreshDisabledReason}
             >
               {loading ? '刷新中...' : '刷新数据'}
             </button>
+            <OverflowMenu label="经营数据更多操作" items={[
+              { label: importingOrders ? '正在导入订单...' : '导入订单数据', onSelect: handleImportOrders, disabled: importingOrders || loading },
+              { label: importingAds ? '正在导入广告...' : '导入广告数据', onSelect: handleImportAds, disabled: importingAds || loading },
+            ]} />
           </div>
         }
       />
@@ -449,93 +446,23 @@ export default function PerformancePage() {
         </div>
       )}
 
-      {/* 核心指标卡片 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-3">
-          <div className="text-xs text-gray-500">今日成交额（GMV）</div>
-          <div className="mt-1 text-2xl font-bold text-gray-900">${today.gmv.toFixed(0)}</div>
-          <div className="mt-1 text-xs text-gray-500">
-            昨日：${yesterday.gmv.toFixed(0)}{' '}
-            <span className={delta.gmv >= 0 ? 'text-green-600' : 'text-red-600'}>
-              {delta.gmv >= 0 ? '+' : ''}
-              {delta.gmv.toFixed(0)}
-            </span>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-3">
-          <div className="text-xs text-gray-500">今日订单数</div>
-          <div className="mt-1 text-2xl font-bold text-gray-900">{today.orders}</div>
-          <div className="mt-1 text-xs text-gray-500">
-            昨日：{yesterday.orders}{' '}
-            <span className={delta.orders >= 0 ? 'text-green-600' : 'text-red-600'}>
-              {delta.orders >= 0 ? '+' : ''}
-              {delta.orders}
-            </span>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-3">
-          <div className="text-xs text-gray-500">今日广告花费</div>
-          <div className="mt-1 text-2xl font-bold text-gray-900">${today.adsCost.toFixed(0)}</div>
-          <div className="mt-1 text-xs text-gray-500">
-            昨日：${yesterday.adsCost.toFixed(0)}{' '}
-            <span className={delta.adsCost <= 0 ? 'text-green-600' : 'text-red-600'}>
-              {delta.adsCost >= 0 ? '+' : ''}
-              {delta.adsCost.toFixed(0)}
-            </span>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-3">
-          <div className="text-xs text-gray-500">今日投产比（ROAS）</div>
-          <div className="mt-1 text-2xl font-bold text-gray-900">
-            {todayRoas.toFixed(2)}
-          </div>
-          <div className="mt-1 text-xs text-gray-500">
-            昨日：{yesterdayRoas.toFixed(2)}{' '}
-            <span className={delta.roas >= 0 ? 'text-green-600' : 'text-red-600'}>
-              {delta.roas >= 0 ? '+' : ''}
-              {delta.roas.toFixed(2)}
-            </span>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-3">
-          <div className="text-xs text-gray-500">昨日对比</div>
-          <div className="mt-1 text-sm text-gray-900">
-            GMV{' '}
-            <span className={delta.gmv >= 0 ? 'text-green-600' : 'text-red-600'}>
-              {delta.gmv >= 0 ? '+' : ''}
-              {delta.gmv.toFixed(0)}
-            </span>
-          </div>
-          <div className="mt-1 text-xs text-gray-500">
-            订单{' '}
-            <span className={delta.orders >= 0 ? 'text-green-600' : 'text-red-600'}>
-              {delta.orders >= 0 ? '+' : ''}
-              {delta.orders}
-            </span>{' '}
-            · ROAS{' '}
-            <span className={delta.roas >= 0 ? 'text-green-600' : 'text-red-600'}>
-              {delta.roas >= 0 ? '+' : ''}
-              {delta.roas.toFixed(2)}
-            </span>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-3">
-          <div className="text-xs text-gray-500">近 7 天摘要</div>
-          <div className="mt-1 text-sm text-gray-900">
-            总 GMV ${trend.reduce((s, p) => s + p.gmv, 0).toFixed(0)}
-          </div>
-          <div className="mt-1 text-xs text-gray-500">
-            订单 {trend.reduce((s, p) => s + p.orders, 0)} · ROAS{' '}
-            {(
-              trend.reduce((s, p) => s + p.gmv, 0) /
-              Math.max(trend.reduce((s, p) => s + p.adsCost, 0), 1)
-            ).toFixed(2)}
-          </div>
-        </div>
+      {loading && !hasTrend ? (showLoading ? <div className="h-32 animate-pulse rounded-lg border border-gray-200 bg-gray-100/70" /> : <div className="h-32" />) : null}
+
+      <div className={`${loading && !hasTrend ? 'hidden' : 'grid'} overflow-hidden rounded-lg border border-gray-200 bg-white md:grid-cols-4 md:divide-x md:divide-gray-100`}>
+        <InteractiveMetric label="今日成交额（GMV）" value={`$${today.gmv.toLocaleString('en-US', { maximumFractionDigits: 0 })}`} description={<span>昨日 ${yesterday.gmv.toLocaleString('en-US', { maximumFractionDigits: 0 })} · <span className={delta.gmv >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{delta.gmv >= 0 ? '+' : ''}{delta.gmv.toFixed(0)}</span></span>} />
+        <InteractiveMetric label="今日订单数" value={today.orders.toLocaleString('zh-CN')} description={<span>昨日 {yesterday.orders.toLocaleString('zh-CN')} · <span className={delta.orders >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{delta.orders >= 0 ? '+' : ''}{delta.orders}</span></span>} />
+        <InteractiveMetric label="今日广告花费" value={`$${today.adsCost.toLocaleString('en-US', { maximumFractionDigits: 0 })}`} description={<span>昨日 ${yesterday.adsCost.toLocaleString('en-US', { maximumFractionDigits: 0 })} · <span className={delta.adsCost <= 0 ? 'text-emerald-600' : 'text-rose-600'}>{delta.adsCost >= 0 ? '+' : ''}{delta.adsCost.toFixed(0)}</span></span>} />
+        <InteractiveMetric label="今日投产比（ROAS）" value={todayRoas.toFixed(2)} description={<span>昨日 {yesterdayRoas.toFixed(2)} · <span className={delta.roas >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{delta.roas >= 0 ? '+' : ''}{delta.roas.toFixed(2)}</span></span>} />
+      </div>
+
+      <div className={`${loading && !hasTrend ? 'hidden' : 'flex'} flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs text-gray-500`}>
+        <span>近 7 天 GMV <strong className="font-medium tabular-nums text-gray-800">${trend.reduce((s, p) => s + p.gmv, 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}</strong></span>
+        <span>订单 <strong className="font-medium tabular-nums text-gray-800">{trend.reduce((s, p) => s + p.orders, 0).toLocaleString('zh-CN')}</strong></span>
+        <span>ROAS <strong className="font-medium tabular-nums text-gray-800">{(trend.reduce((s, p) => s + p.gmv, 0) / Math.max(trend.reduce((s, p) => s + p.adsCost, 0), 1)).toFixed(2)}</strong></span>
       </div>
 
       {/* 趋势图（简易 sparkline） */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+      <div className={`${loading && !hasTrend ? 'hidden' : ''} rounded-lg border border-gray-200 bg-white p-4`}>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
           {[
             { label: '成交额趋势', key: 'gmv' as const, max: maxGmv, color: 'bg-green-500' },
@@ -588,8 +515,8 @@ export default function PerformancePage() {
       </div>
 
       {/* 筛选区 */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-        <div className="flex flex-wrap gap-3 items-center text-xs">
+      <StickyToolbar className={loading && !hasTrend ? 'hidden' : ''}>
+        <div className="flex flex-wrap items-center gap-3 text-xs">
           <div className="space-y-1">
             <div className="text-gray-600">日期范围</div>
             <div className="flex gap-1">
@@ -669,10 +596,14 @@ export default function PerformancePage() {
             </select>
           </div>
         </div>
-      </div>
+        {search ? <FilterChip label={`搜索：${search}`} onRemove={() => setSearch('')} /> : null}
+        {productLine !== 'all' ? <FilterChip label={`产品线：${productLine}`} onRemove={() => setProductLine('all')} /> : null}
+        {statusFilter !== 'all' ? <FilterChip label={`状态：${statusFilter}`} onRemove={() => setStatusFilter('all')} /> : null}
+        {ownerFilter !== 'all' ? <FilterChip label={`负责人：${ownerFilter}`} onRemove={() => setOwnerFilter('all')} /> : null}
+      </StickyToolbar>
 
       {/* 产品表现表格 */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
+      <div className={`${loading && !hasTrend ? 'hidden' : ''} overflow-hidden rounded-lg border border-gray-200 bg-white`}>
         <div className="px-4 py-3 border-b flex items-center justify-between">
           <div className="text-sm font-semibold text-gray-900">产品表现</div>
           <div className="text-xs text-gray-500">
@@ -680,9 +611,7 @@ export default function PerformancePage() {
           </div>
         </div>
         {filteredRows.length === 0 ? (
-          <div className="px-4 py-10 text-center text-xs text-gray-500">
-            当前筛选条件下没有产品表现数据。
-          </div>
+          <CompactEmptyState>当前筛选条件下没有产品表现数据。</CompactEmptyState>
         ) : (
           <div className="overflow-auto">
             <table className="min-w-full divide-y divide-gray-200 text-xs">
@@ -814,6 +743,6 @@ export default function PerformancePage() {
           当前数据基于 mock 导入逻辑，仅用于产品形态演示。接入真实订单与广告来源后，可复用相同 UI。
         </div>
       </div>
-    </div>
+    </FunctionalPremiumScope>
   )
 }

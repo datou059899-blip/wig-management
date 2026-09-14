@@ -6,6 +6,16 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { canManageInfluencers } from '@/lib/permissions'
 import { canAccessPageForUser } from '@/lib/pagePermissions'
 import SampleShipments from './SampleShipments'
+import { PageHeader } from '@/components/layout/PageHeader'
+import {
+  CompactEmptyState,
+  FilterChip,
+  FunctionalPremiumScope,
+  OverflowMenu,
+  StickyToolbar,
+  primaryActionClassName,
+  useDelayedVisibility,
+} from '@/components/dashboard/FunctionalPremium'
 // import { TaskSummaryBar } from '@/components/TaskSummaryBar'
 // 跨用户同步：以数据库/API 为唯一真源（不再用 localStorage 作为真源）
 
@@ -511,17 +521,16 @@ function StatCard({
   return (
     <button
       onClick={onClick}
-      className={`text-left w-full rounded-lg border px-3 py-2.5 hover:shadow-md transition-all duration-200 ${
+      className={`w-full border-l-2 px-3 py-3 text-left transition-colors duration-150 ${
         active
-          ? 'border-primary-500 bg-gradient-to-br from-primary-50 to-primary-100 shadow-md ring-1 ring-primary-200'
-          : 'border-gray-200 bg-white hover:bg-gray-50'
+          ? 'border-l-brand-500 bg-brand-50/70'
+          : 'border-l-transparent bg-white hover:bg-gray-50'
       }`}
     >
       <div className="flex items-center gap-1.5">
-        {icon && <span className="text-base">{icon}</span>}
-        <div className={`text-xs font-medium leading-none ${active ? 'text-primary-800' : 'text-gray-600'}`}>{label}</div>
+        <div className={`text-xs font-medium leading-none ${active ? 'text-gray-900' : 'text-gray-500'}`}>{label}</div>
       </div>
-      <div className={`text-2xl font-bold leading-none mt-1.5 ${active ? 'text-primary-700' : 'text-gray-900'}`}>{count}</div>
+      <div className="mt-1.5 text-2xl font-semibold leading-none tabular-nums text-gray-950">{count.toLocaleString('zh-CN')}</div>
     </button>
   )
 }
@@ -817,6 +826,7 @@ export default function InfluencersPage() {
   // 单一状态源：全页所有展示/统计/操作都基于这份 influencers
   const [items, setItems] = useState<Influencer[] | null>(null)
   const [loading, setLoading] = useState(true)
+  const showLoading = useDelayedVisibility(loading)
   const [toasts, setToasts] = useState<Toast[]>([])
   const itemsRef = useRef<Influencer[] | null>(null)
   useEffect(() => {
@@ -1701,78 +1711,35 @@ export default function InfluencersPage() {
   const isDev = process.env.NODE_ENV !== 'production'
 
   return (
-    <div className="flex flex-col gap-3 min-h-screen">
+    <FunctionalPremiumScope className="flex min-h-screen flex-col gap-3">
       <Toasts toasts={toasts} onRemove={removeToast} />
-      {/* 顶部标题区 - 压缩高度 */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-        <div>
-          <h1 className="text-lg font-semibold text-gray-900">达人建联工作台</h1>
-          <p className="text-[11px] text-gray-500">
-            统一管理达人筛选、联系、跟进、寄样和出片进度
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-1.5 items-center">
-          {isDev && (
-            <button
-              onClick={() => setDebugOpen((v) => !v)}
-              className="px-2.5 py-2 text-[11px] rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
-              title="仅开发模式显示"
-              type="button"
-            >
-              Debug
-              <span className="ml-1 opacity-60">{debugOpen ? '▲' : '▼'}</span>
-            </button>
-          )}
+      <PageHeader
+        title="达人建联"
+        description="统一管理达人筛选、联系、跟进、寄样和出片进度"
+        actions={<div className="flex items-center gap-2">
           <button
             onClick={() => {
               if (!canManage) return
               openUpsert()
             }}
-            className="px-3 py-2 text-xs bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
+            className={primaryActionClassName}
             disabled={!canManage}
           >
             新建达人
           </button>
-          <button
-            onClick={() => setImportOpen(true)}
-            className="px-3 py-2 text-xs bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200"
-          >
-            批量导入
-          </button>
-          <button
-            onClick={() => {
+          <OverflowMenu label="达人建联更多操作" items={[
+            { label: '批量导入', onSelect: () => setImportOpen(true) },
+            { label: '新建跟进记录', disabled: !canManage, onSelect: () => {
               if (!canManage) return
-              setFollowUpError('')
-              setFollowUpTargetId('')
-              setFollowUpForm((p) => ({
-                ...p,
-                operator: operatorName as string,
-                summary: '',
-                nextAction: '',
-                nextFollowUpAt: '',
-                type: '其他',
-                channel: '私信',
-                responseStatus: '无回复',
-              }))
+              setFollowUpError(''); setFollowUpTargetId('')
+              setFollowUpForm((p) => ({ ...p, operator: operatorName as string, summary: '', nextAction: '', nextFollowUpAt: '', type: '其他', channel: '私信', responseStatus: '无回复' }))
               setFollowUpOpen(true)
-            }}
-            className="px-3 py-2 text-xs bg-white border border-gray-200 text-gray-800 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-            disabled={!canManage}
-          >
-            新建跟进记录
-          </button>
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={() => setDevToolsOpen((v) => !v)}
-              className="px-3 py-2 text-xs bg-amber-50 border border-amber-200 text-amber-900 rounded-lg hover:bg-amber-100"
-            >
-              开发工具
-              <span className="ml-1 opacity-70">{devToolsOpen ? '▲' : '▼'}</span>
-            </button>
-          )}
-        </div>
-      </div>
+            } },
+            ...(isDev ? [{ label: debugOpen ? '收起 Debug' : 'Debug', onSelect: () => setDebugOpen((value) => !value) }] : []),
+            ...(isAdmin ? [{ label: devToolsOpen ? '收起开发工具' : '开发工具', onSelect: () => setDevToolsOpen((value) => !value) }] : []),
+          ]} />
+        </div>}
+      />
 
       {isAdmin && devToolsOpen && (
         <div className="rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 flex flex-wrap items-center gap-2 text-[11px] text-amber-950">
@@ -1817,7 +1784,7 @@ export default function InfluencersPage() {
       )}
 
       {/* 今日待跟进提醒（3-5 条最急事项） */}
-      <div className="bg-white rounded-lg border border-gray-100 p-2">
+      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
         <div className="flex items-center justify-between mb-1.5">
           <div className="text-xs font-semibold text-gray-900">今日待跟进</div>
           <div className="text-[10px] text-gray-500">自动提示</div>
@@ -2397,7 +2364,7 @@ export default function InfluencersPage() {
       </Modal>
 
       {/* 顶部统计卡片 */}
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+      <div className="grid overflow-hidden rounded-lg border border-gray-200 bg-white grid-cols-3 md:grid-cols-6 md:divide-x md:divide-gray-100">
         <StatCard
           label="待建联"
           count={stats.to_outreach}
@@ -2461,7 +2428,7 @@ export default function InfluencersPage() {
       </div>
 
       {/* 中间筛选区 */}
-      <div className="bg-white rounded-lg border border-gray-100 p-3">
+      <StickyToolbar>
         <div className="flex flex-col lg:flex-row lg:items-center gap-3">
           <div className="flex-1">
             <input
@@ -2565,15 +2532,18 @@ export default function InfluencersPage() {
           </div>
         </div>
 
-        <div className="mt-2 flex items-center justify-between">
-          <div className="text-sm text-gray-600 font-medium">
+        <div className="flex items-center gap-2">
+          <div className="text-sm font-medium tabular-nums text-gray-600">
             共 {filtered.length} 位达人
           </div>
         </div>
-      </div>
+        {search ? <FilterChip label={`搜索：${search}`} onRemove={() => setSearch('')} /> : null}
+        {status !== 'all' ? <FilterChip label={`状态：${statusLabel[status as InfluencerStatus]}`} onRemove={() => setStatus('all')} /> : null}
+        {owner !== 'all' ? <FilterChip label={`负责人：${owner}`} onRemove={() => setOwner('all')} /> : null}
+      </StickyToolbar>
 
       {/* 主列表区域 - 撑满剩余高度 */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col flex-1 min-h-0">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white">
         {/* 列表头部 */}
         <div className="px-4 py-2 border-b flex items-center justify-between shrink-0 bg-gray-50">
           <div className="flex items-center gap-3">
@@ -2618,9 +2588,9 @@ export default function InfluencersPage() {
         </div>
 
         {loading ? (
-          <div className="px-4 py-10 text-center text-sm text-gray-500 flex-1">加载中...</div>
+          showLoading ? <div className="m-4 h-48 flex-1 animate-pulse rounded-lg bg-gray-100/70" /> : <div className="h-48 flex-1" />
         ) : filtered.length === 0 ? (
-          <div className="px-4 py-10 text-center text-sm text-gray-500 flex-1">暂无符合条件的达人。</div>
+          <CompactEmptyState>暂无符合条件的达人。</CompactEmptyState>
         ) : (
           <div className="overflow-auto flex-1">
             <table className="min-w-full divide-y divide-gray-200">
@@ -3443,6 +3413,6 @@ export default function InfluencersPage() {
           </div>
         )}
       </Modal>
-    </div>
+    </FunctionalPremiumScope>
   )
 }
