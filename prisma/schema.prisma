@@ -80,6 +80,8 @@ model Product {
   defaultSupplierId        String?
   businessStatus           String      @default("ACTIVE")
   aliases                  ProductSkuAlias[]
+  externalIdentifiers      ProductExternalIdentifier[]
+  resolvedOrderItems       ProductOrderItem[] @relation("ResolvedProductOrderItems")
   defaultSupplier          Supplier?   @relation(fields: [defaultSupplierId], references: [id], onDelete: SetNull)
   postedAt                 DateTime?
   purchaseOrderItems       PurchaseOrderItem[]
@@ -118,6 +120,7 @@ model PerformanceDaily {
   productLine String?
   owner       String?
   gmv         Float    @default(0)
+  merchandiseAmount Decimal? @db.Decimal(18, 2)
   orders      Int      @default(0)
   grossOrders Int      @default(0)
   returnQty   Int      @default(0)
@@ -154,6 +157,11 @@ model ProductOrderItem {
   buyerNickname          String?
   recipient              String?
   refundAmount           Float    @default(0)
+  skuSubtotalAfterDiscount Decimal? @db.Decimal(18, 2)
+  lineClassification      String?
+  tiktokProductId         String?
+  shopKey                 String?
+  resolvedProductId       String?
   orderStatus            String?
   cancelationReturnType  String?
   productMatched         Boolean  @default(false)
@@ -161,11 +169,13 @@ model ProductOrderItem {
   rawPaidTime            String?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
+  resolvedProduct         Product? @relation("ResolvedProductOrderItems", fields: [resolvedProductId], references: [id], onDelete: Restrict)
 
   @@index([sellerSku])
   @@index([paidDate])
   @@index([orderId])
   @@index([productMatched])
+  @@index([resolvedProductId])
 }
 
 model ProductSkuAlias {
@@ -179,6 +189,40 @@ model ProductSkuAlias {
 
   @@index([productId])
   @@index([aliasSku])
+}
+
+model ProductExternalIdentifier {
+  id              String   @id @default(cuid())
+  platform        String
+  shopKey         String
+  identifierType  String
+  identifierValue String
+  productId       String
+  evidence        String
+  approvedBy      String
+  approvedAt      DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([platform, shopKey, identifierType, identifierValue], map: "ProductExternalIdentifier_platform_shopKey_identifierType_ident")
+  @@index([productId])
+}
+
+model OrderLineClassificationRule {
+  id                String   @id @default(cuid())
+  platform          String
+  shopKey           String
+  identityKey       String
+  classification    String
+  requireZeroAmount Boolean
+  evidence          String
+  approvedBy        String
+  approvedAt        DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([platform, shopKey, identityKey])
 }
 
 model ProductInventorySnapshot {

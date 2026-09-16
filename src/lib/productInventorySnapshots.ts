@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 
 type SnapshotQuantitySource = 'totalQty' | 'availableLocked' | 'none'
@@ -100,8 +101,9 @@ function jsonMatchedRows(value: unknown): MatchedRowProductReference[] {
 
 export async function getCurrentInventoryByProduct(
   products: InventorySnapshotProduct[],
-  options: { endExclusive?: Date } = {},
+  options: { endExclusive?: Date; client?: Prisma.TransactionClient } = {},
 ) {
+  const db = options.client || prisma
   const endExclusive = options.endExclusive || new Date()
   const skuToProductIds = new Map<string, Set<string>>()
   const skuCandidatesByProductId = new Map<string, string[]>()
@@ -120,7 +122,7 @@ export async function getCurrentInventoryByProduct(
 
   const allSkus = Array.from(new Set(Array.from(skuCandidatesByProductId.values()).flat()))
   const snapshots = allSkus.length
-    ? await prisma.productInventorySnapshot.findMany({
+    ? await db.productInventorySnapshot.findMany({
         where: {
           OR: [
             buildEffectiveInventorySnapshotWhere({ sku: { in: allSkus } }),
@@ -176,7 +178,7 @@ export async function getCurrentInventoryByProduct(
   }, null)
 
   const adjustments = allSkus.length && earliestLatestSnapshotDate
-    ? await prisma.productStockAdjustment.findMany({
+    ? await db.productStockAdjustment.findMany({
         where: {
           sku: { in: allSkus },
           adjustmentDate: {
@@ -193,17 +195,21 @@ export async function getCurrentInventoryByProduct(
     : []
 
   const orderItems = allSkus.length && earliestLatestSnapshotDate
-    ? await prisma.productOrderItem.findMany({
+    ? await db.productOrderItem.findMany({
         where: {
           productMatched: true,
           stockConsumedQty: { gt: 0 },
-          sellerSku: { in: allSkus },
           paidDate: {
             gt: earliestLatestSnapshotDate,
             lt: endExclusive,
           },
+          OR: [
+            { resolvedProductId: { in: products.map((product) => product.id) } },
+            { resolvedProductId: null, sellerSku: { in: allSkus } },
+          ],
         },
         select: {
+          resolvedProductId: true,
           sellerSku: true,
           paidDate: true,
           stockConsumedQty: true,
@@ -223,6 +229,13 @@ export async function getCurrentInventoryByProduct(
 
   const orderItemsByProductId = new Map<string, typeof orderItems>()
   orderItems.forEach((item) => {
+    if (item.resolvedProductId) {
+      const bucket = orderItemsByProductId.get(item.resolvedProductId) || []
+      bucket.push(item)
+      orderItemsByProductId.set(item.resolvedProductId, bucket)
+      return
+    }
+
     const productIds = skuToProductIds.get(strictInventorySkuKey(item.sellerSku))
     productIds?.forEach((productId) => {
       const bucket = orderItemsByProductId.get(productId) || []

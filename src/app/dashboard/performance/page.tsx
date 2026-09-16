@@ -5,7 +5,6 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { parseTikTokOrderExcel } from '@/lib/parseTikTokOrderExcel'
 import {
   CompactEmptyState,
   FilterChip,
@@ -68,14 +67,7 @@ export default function PerformancePage() {
   const [ownerFilter, setOwnerFilter] = useState<string>('all')
   const [loading, setLoading] = useState(false)
   const showLoading = useDelayedVisibility(loading)
-  const [importingOrders, setImportingOrders] = useState(false)
   const [importingAds, setImportingAds] = useState(false)
-  const [lastImportedOrdersPreview, setLastImportedOrdersPreview] = useState<
-    { [label: string]: any }[]
-  >([])
-  const [showOrdersPreview, setShowOrdersPreview] = useState(false)
-
-  const ordersInputRef = useRef<HTMLInputElement | null>(null)
   const adsInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
@@ -180,88 +172,12 @@ export default function PerformancePage() {
     }
   }
 
-  const handleImportOrders = () => {
-    if (ordersInputRef.current) {
-      ordersInputRef.current.value = ''
-      ordersInputRef.current.click()
-    }
-  }
+  const handleImportOrders = () => router.push('/dashboard/product-sales')
 
   const handleImportAds = () => {
     if (adsInputRef.current) {
       adsInputRef.current.value = ''
       adsInputRef.current.click()
-    }
-  }
-
-  const handleOrdersFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    setImportingOrders(true)
-    setMessage({ type: '', text: '' })
-
-    try {
-      const parsed = await parseTikTokOrderExcel(file)
-
-      if (!parsed.normalizedRows.length) {
-        setMessage({ type: 'error', text: '订单文件中没有解析到有效数据。' })
-        return
-      }
-
-      const items = parsed.normalizedRows
-        .map((row) => {
-          const dateIso = row.paidAt || row.createdAt
-          const dateStr = dateIso ? dateIso.slice(0, 10) : null
-          const sku = row.sku?.trim() || ''
-          if (!dateStr || !sku) return null
-
-          const gmv = row.gmv ?? 0
-          const quantity = row.quantity ?? 1
-
-          return {
-            date: dateStr,
-            sku,
-            name: row.productName || sku,
-            productLine: '',
-            owner: '',
-            gmv,
-            orders: quantity,
-          }
-        })
-        .filter(Boolean) as {
-        date: string
-        sku: string
-        name: string
-        productLine: string
-        owner: string
-        gmv: number
-        orders: number
-      }[]
-
-      const res = await fetch('/api/performance/import-orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items }),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        throw new Error(json.error || '导入订单数据失败')
-      }
-
-      setLastImportedOrdersPreview(parsed.rawRows)
-      setShowOrdersPreview(true)
-
-      setMessage({
-        type: 'success',
-        text: `已导入 ${parsed.stats.validRows} 条订单数据，跳过 ${parsed.stats.skippedRows} 条无效记录。`,
-      })
-      await loadSummary(dateRange)
-    } catch (error) {
-      console.error(error)
-      setMessage({ type: 'error', text: '导入订单数据失败，请检查文件格式。' })
-    } finally {
-      setImportingOrders(false)
     }
   }
 
@@ -358,8 +274,8 @@ export default function PerformancePage() {
               {loading ? '刷新中...' : '刷新数据'}
             </button>
             <OverflowMenu label="经营数据更多操作" items={[
-              { label: importingOrders ? '正在导入订单...' : '导入订单数据', onSelect: handleImportOrders, disabled: importingOrders || loading },
-              { label: importingAds ? '正在导入广告...' : '导入广告数据', onSelect: handleImportAds, disabled: importingAds || loading },
+              { label: '前往销售分析导入订单', onSelect: handleImportOrders, disabled: loading },
+              { label: '广告导入待审计', onSelect: handleImportAds, disabled: true },
             ]} />
           </div>
         }
@@ -367,72 +283,12 @@ export default function PerformancePage() {
 
       {/* 隐藏的文件选择器 */}
       <input
-        ref={ordersInputRef}
-        type="file"
-        accept=".xlsx,.xls,.csv"
-        className="hidden"
-        onChange={handleOrdersFileChange}
-      />
-      <input
         ref={adsInputRef}
         type="file"
         accept=".xlsx,.xls,.csv"
         className="hidden"
         onChange={handleAdsFileChange}
       />
-
-      {/* 本次导入订单预览（中文字段） */}
-      {lastImportedOrdersPreview.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
-          <div
-            className="px-4 py-3 border-b flex items-center justify-between cursor-pointer"
-            onClick={() => setShowOrdersPreview((v) => !v)}
-          >
-            <div>
-              <div className="text-sm font-semibold text-gray-900">本次导入订单预览</div>
-              <div className="mt-0.5 text-xs text-gray-500">
-                共 {lastImportedOrdersPreview.length} 条记录，以下展示前 20 条。
-              </div>
-            </div>
-            <button className="text-xs text-primary-600 hover:text-primary-700">
-              {showOrdersPreview ? '收起' : '展开'}
-            </button>
-          </div>
-          {showOrdersPreview && (
-            <div className="max-h-72 overflow-auto text-xs">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50 sticky top-0 z-10">
-                  <tr>
-                    {Object.keys(lastImportedOrdersPreview[0]).map((label) => (
-                      <th
-                        key={label}
-                        className="px-3 py-2 text-left font-medium text-gray-500 whitespace-nowrap"
-                      >
-                        {label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {lastImportedOrdersPreview.slice(0, 20).map((row, idx) => (
-                    <tr key={idx} className="hover:bg-gray-50">
-                      {Object.keys(lastImportedOrdersPreview[0]).map((label) => (
-                        <td
-                          key={label}
-                          className="px-3 py-1.5 text-[11px] text-gray-700 whitespace-nowrap"
-                          title={String(row[label] ?? '')}
-                        >
-                          {String(row[label] ?? '')}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
 
       {message.text && (
         <div

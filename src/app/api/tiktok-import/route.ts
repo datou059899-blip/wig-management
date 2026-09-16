@@ -27,6 +27,16 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { type, data } = body;
 
+    if (type === 'orders' || type === 'ads') {
+      return NextResponse.json({
+        error: type === 'orders'
+          ? 'TikTok 订单写入已停用，请使用销售分析订单导入'
+          : 'TikTok Ads 写入已停用，正式 Ads 数据链路尚未启用',
+        code: type === 'orders' ? 'TIKTOK_ORDER_IMPORT_RETIRED' : 'TIKTOK_ADS_IMPORT_DEFERRED',
+        canonicalPath: type === 'orders' ? '/dashboard/product-sales' : '/dashboard/performance',
+      }, { status: 410 });
+    }
+
     // 记录同步日志
     const syncLog = await prisma.tikTokSyncLog.create({
       data: {

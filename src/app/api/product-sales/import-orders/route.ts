@@ -6,7 +6,7 @@ import * as XLSX from 'xlsx'
 import { authOptions } from '@/lib/auth'
 import { buildImportRowRecords, parseImportFile } from '@/lib/import-file-parser'
 import { canManagePage, getSessionPermissionContext } from '@/lib/pagePermissions'
-import { buildProductSkuResolver } from '@/lib/product-sku-resolver'
+import { buildOrderLineIdentityResolver, findOrderFileDuplicates, ORDER_LINE_CLASSIFICATION, ORDER_PLATFORM, OrderLineClassification, parseOrderCalendarDate, parseOrderMerchandiseAmount } from '@/lib/order-data-closure'
 import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
@@ -36,10 +36,12 @@ type OrderFailure = {
 }
 
 type ParsedOrderItem = {
+  skuSubtotalAfterDiscount: Prisma.Decimal
   row: number
   dedupeKey: string
   orderId: string
   skuId: string | null
+  tiktokProductId: string | null
   sellerSku: string
   paidDate: Date
   paidDateStr: string
@@ -58,12 +60,17 @@ type ParsedOrderItem = {
   refundAmount: number
   orderStatus: string
   cancelationReturnType: string
+  lineClassification: OrderLineClassification | null
+  resolvedProductId: string | null
+  canonicalSku: string | null
 }
 
 type ProductOrderItemWriteRow = {
+  skuSubtotalAfterDiscount: Prisma.Decimal
   dedupeKey: string
   orderId: string
   skuId: string | null
+  tiktokProductId: string | null
   sellerSku: string
   paidDate: Date
   paidTime: Date | null
@@ -81,11 +88,15 @@ type ProductOrderItemWriteRow = {
   orderStatus: string | null
   cancelationReturnType: string | null
   productMatched: boolean
+  lineClassification: OrderLineClassification
+  shopKey: string
+  resolvedProductId: string | null
   sourceFileName: string | null
   rawPaidTime: string | null
 }
 
 type AggregatedOrderStat = {
+  merchandiseAmount: Prisma.Decimal | null
   sku: string
   dateStr: string
   productName: string | null
@@ -106,6 +117,7 @@ type AffectedPair = {
 const WRITE_BATCH_SIZE = 200
 const LOOKUP_BATCH_SIZE = 500
 const TIMEOUT_GUARD_MS = 45_000
+const EXPECTED_TIKTOK_SHOP_KEY = 'tiktok-us-sunnymay-primary'
 const SAMPLE_ORDER_AMOUNT_FIELDS = [
   'Order Amount',
   'SKU Unit Original Price',
@@ -137,14 +149,6 @@ function normalizeCell(value: unknown) {
   return typeof value === 'string' ? value.trim() : String(value).trim()
 }
 
-function normalizeSkuForCompare(value: string) {
-  return normalizeCell(value).replace(/\s+/g, '').toUpperCase()
-}
-
-function isSpecialLinkSku(value: string | null | undefined) {
-  return normalizeSkuForCompare(normalizeCell(value)) === 'FG+GQ'
-}
-
 function parseNumber(value: unknown): number {
   if (value === null || value === undefined) return 0
   if (typeof value === 'number') {
@@ -161,18 +165,19 @@ function parseNumber(value: unknown): number {
 }
 
 function formatDateKey(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
+  const year = date.getUTCFullYear()
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(date.getUTCDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
 
 function createDate(dateStr: string): Date {
   const [year, month, day] = dateStr.split('-').map((part) => Number(part))
-  return new Date(year, month - 1, day, 0, 0, 0, 0)
+  return new Date(Date.UTC(year, month - 1, day))
 }
 
 function parseDateValue(value: unknown): { paidDate: Date; paidTime: Date | null; dateStr: string } | null {
+  if (typeof value === 'string') return parseOrderCalendarDate(value)
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return null
     const paidTime = new Date(value)
@@ -624,6 +629,7 @@ async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
     ${item.dedupeKey},
     ${item.orderId},
     ${item.skuId},
+    ${item.tiktokProductId},
     ${item.sellerSku},
     ${item.paidDate},
     ${item.paidTime},
@@ -638,9 +644,13 @@ async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
     ${item.buyerNickname},
     ${item.recipient},
     ${item.refundAmount},
+    ${item.skuSubtotalAfterDiscount},
     ${item.orderStatus},
     ${item.cancelationReturnType},
     ${item.productMatched},
+    ${item.lineClassification},
+    ${item.shopKey},
+    ${item.resolvedProductId},
     ${item.sourceFileName},
     ${item.rawPaidTime},
     ${now},
@@ -653,6 +663,7 @@ async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
       "dedupeKey",
       "orderId",
       "skuId",
+      "tiktokProductId",
       "sellerSku",
       "paidDate",
       "paidTime",
@@ -667,9 +678,13 @@ async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
       "buyerNickname",
       "recipient",
       "refundAmount",
+      "skuSubtotalAfterDiscount",
       "orderStatus",
       "cancelationReturnType",
       "productMatched",
+      "lineClassification",
+      "shopKey",
+      "resolvedProductId",
       "sourceFileName",
       "rawPaidTime",
       "createdAt",
@@ -679,6 +694,7 @@ async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
     ON CONFLICT ("dedupeKey") DO UPDATE SET
       "orderId" = EXCLUDED."orderId",
       "skuId" = EXCLUDED."skuId",
+      "tiktokProductId" = EXCLUDED."tiktokProductId",
       "sellerSku" = EXCLUDED."sellerSku",
       "paidDate" = EXCLUDED."paidDate",
       "paidTime" = EXCLUDED."paidTime",
@@ -693,9 +709,13 @@ async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
       "buyerNickname" = EXCLUDED."buyerNickname",
       "recipient" = EXCLUDED."recipient",
       "refundAmount" = EXCLUDED."refundAmount",
+      "skuSubtotalAfterDiscount" = EXCLUDED."skuSubtotalAfterDiscount",
       "orderStatus" = EXCLUDED."orderStatus",
       "cancelationReturnType" = EXCLUDED."cancelationReturnType",
       "productMatched" = EXCLUDED."productMatched",
+      "lineClassification" = EXCLUDED."lineClassification",
+      "shopKey" = EXCLUDED."shopKey",
+      "resolvedProductId" = EXCLUDED."resolvedProductId",
       "sourceFileName" = EXCLUDED."sourceFileName",
       "rawPaidTime" = EXCLUDED."rawPaidTime",
       "updatedAt" = CURRENT_TIMESTAMP
@@ -719,6 +739,7 @@ async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
     ${item.stockConsumedQty},
     ${item.sampleQty},
     ${item.refundAmount},
+    ${item.merchandiseAmount},
     ${now},
     ${now}
   )`)
@@ -737,6 +758,7 @@ async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
       "stockConsumedQty",
       "sampleQty",
       "refundAmount",
+      "merchandiseAmount",
       "createdAt",
       "updatedAt"
     )
@@ -751,17 +773,28 @@ async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
       "stockConsumedQty" = EXCLUDED."stockConsumedQty",
       "sampleQty" = EXCLUDED."sampleQty",
       "refundAmount" = EXCLUDED."refundAmount",
+      "merchandiseAmount" = EXCLUDED."merchandiseAmount",
       "updatedAt" = CURRENT_TIMESTAMP
   `)
 }
 
-async function deletePerformanceDailyPairs(pairs: AffectedPair[]) {
+async function clearPerformanceDailyOrderFacts(pairs: AffectedPair[]) {
   if (!pairs.length) return
 
   const rows = pairs.map((item) => Prisma.sql`(${item.sku}, ${createDate(item.dateStr)})`)
   await prisma.$executeRaw(Prisma.sql`
-    DELETE FROM "PerformanceDaily" AS pd
-    USING (
+    UPDATE "PerformanceDaily" AS pd SET
+      "orders" = 0,
+      "grossOrders" = 0,
+      "returnQty" = 0,
+      "netOrders" = 0,
+      "canceledQty" = 0,
+      "stockConsumedQty" = 0,
+      "sampleQty" = 0,
+      "refundAmount" = 0,
+      "merchandiseAmount" = NULL,
+      "updatedAt" = CURRENT_TIMESTAMP
+    FROM (
       VALUES ${Prisma.join(rows)}
     ) AS stale("sku", "date")
     WHERE pd."sku" = stale."sku"
@@ -782,6 +815,8 @@ async function loadExistingOrderItems(dedupeKeys: string[]) {
           dedupeKey: true,
           sellerSku: true,
           paidDate: true,
+          resolvedProductId: true,
+          lineClassification: true,
         },
       }),
     ),
@@ -793,10 +828,14 @@ async function loadExistingOrderItems(dedupeKeys: string[]) {
 async function loadAggregatedMatchedOrderItems(
   pairs: AffectedPair[],
   productNameMap: Map<string, string>,
+  sourceSkuMap: Map<string, string>,
+  productSkuById: Map<string, string>,
 ) {
   if (!pairs.length) return [] as AggregatedOrderStat[]
 
   const rows = pairs.map((item) => Prisma.sql`(${item.sku}, ${createDate(item.dateStr)})`)
+  const skuRows = Array.from(sourceSkuMap).map(([sourceSku, canonicalSku]) => Prisma.sql`(${sourceSku}, ${canonicalSku})`)
+  const productRows = Array.from(productSkuById).map(([productId, canonicalSku]) => Prisma.sql`(${productId}, ${canonicalSku})`)
   const result = await prisma.$queryRaw<Array<{
     sku: string
     date: Date
@@ -807,12 +846,18 @@ async function loadAggregatedMatchedOrderItems(
     stockConsumedQty: number | bigint | null
     sampleQty: number | bigint | null
     refundAmount: number | string | null
+    merchandiseAmount: Prisma.Decimal | null
+    missingAmountCount: number | bigint
   }>>(Prisma.sql`
     WITH "affected"("sellerSku", "paidDate") AS (
       VALUES ${Prisma.join(rows)}
+    ), "skuMap"("sourceSku", "canonicalSku") AS (
+      VALUES ${Prisma.join(skuRows)}
+    ), "productMap"("productId", "canonicalSku") AS (
+      VALUES ${Prisma.join(productRows)}
     )
     SELECT
-      poi."sellerSku" AS "sku",
+      COALESCE(pm."canonicalSku", sm."canonicalSku") AS "sku",
       poi."paidDate" AS "date",
       SUM(CASE WHEN poi."isSample" THEN 0 ELSE poi."quantity" END) AS "grossOrders",
       SUM(poi."returnQty") AS "returnQty",
@@ -820,13 +865,20 @@ async function loadAggregatedMatchedOrderItems(
       SUM(poi."canceledQty") AS "canceledQty",
       SUM(poi."stockConsumedQty") AS "stockConsumedQty",
       SUM(poi."sampleQty") AS "sampleQty",
-      SUM(poi."refundAmount") AS "refundAmount"
+      SUM(poi."refundAmount") AS "refundAmount",
+      SUM(poi."skuSubtotalAfterDiscount") AS "merchandiseAmount",
+      COUNT(*) FILTER (WHERE poi."skuSubtotalAfterDiscount" IS NULL) AS "missingAmountCount"
     FROM "ProductOrderItem" AS poi
+    LEFT JOIN "skuMap" AS sm
+      ON sm."sourceSku" = poi."sellerSku"
+    LEFT JOIN "productMap" AS pm
+      ON pm."productId" = poi."resolvedProductId"
     INNER JOIN "affected" AS a
-      ON a."sellerSku" = poi."sellerSku"
+      ON a."sellerSku" = COALESCE(pm."canonicalSku", sm."canonicalSku")
      AND a."paidDate" = poi."paidDate"
     WHERE poi."productMatched" = true
-    GROUP BY poi."sellerSku", poi."paidDate"
+      AND poi."lineClassification" IS DISTINCT FROM 'NON_MERCHANDISE_GIFT'
+    GROUP BY COALESCE(pm."canonicalSku", sm."canonicalSku"), poi."paidDate"
   `)
 
   return result
@@ -843,6 +895,9 @@ async function loadAggregatedMatchedOrderItems(
         stockConsumedQty: Number(item.stockConsumedQty || 0),
         sampleQty: Number(item.sampleQty || 0),
         refundAmount: Number(item.refundAmount || 0),
+        merchandiseAmount: Number(item.missingAmountCount) > 0
+          ? null
+          : item.merchandiseAmount || new Prisma.Decimal('0'),
       }
     })
     .sort((a, b) => a.dateStr.localeCompare(b.dateStr) || a.sku.localeCompare(b.sku))
@@ -944,15 +999,29 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const shopConfig = await prisma.config.findUnique({
+      where: { key: 'tiktok_shop_key' },
+      select: { value: true },
+    })
+    const shopKey = normalizeCell(shopConfig?.value)
+    if (shopKey !== EXPECTED_TIKTOK_SHOP_KEY) {
+      return NextResponse.json({
+        success: false,
+        mode,
+        stage: 'parse-file',
+        error: 'TikTok 店铺上下文未配置或不符合已批准配置，整批已停止且未写入数据库',
+      }, { status: 422 })
+    }
+
     const failures: OrderFailure[] = []
     const skippedRows: OrderFailure[] = []
     const parsedRows: ParsedOrderItem[] = []
-    let specialLinkSkuIgnoredCount = 0
 
     rows.forEach(({ rowNumber, record }) => {
       try {
         const orderId = normalizeCell(record['Order ID'])
         const skuId = normalizeCell(record['SKU ID']) || null
+        const tiktokProductId = normalizeCell(record['Product ID']) || null
         const sellerSku = normalizeCell(record['Seller SKU'])
         const orderDate = resolveOrderDate(record)
         const rawPaidTime = orderDate.rawTime
@@ -965,18 +1034,7 @@ export async function POST(request: NextRequest) {
         const recipient = normalizeCell(record['Recipient'])
         const { isSample } = resolveSampleOrder(record)
         const refundAmount = isSample ? 0 : parseNumber(record['Order Refund Amount'])
-
-        if (!sellerSku) {
-          skippedRows.push({
-            row: rowNumber,
-            sku: '',
-            paidTime: rawPaidTime,
-            quantity,
-            returnQty,
-            reason: 'Seller SKU 为空，已跳过',
-          })
-          return
-        }
+        const skuSubtotalAfterDiscount = parseOrderMerchandiseAmount(record['SKU Subtotal After Discount'])
 
         if (!orderId) {
           failures.push({
@@ -1030,20 +1088,16 @@ export async function POST(request: NextRequest) {
         const canceled = isCanceledOrder(orderStatus, cancelationReturnType)
         const canceledQty = isSample ? 0 : canceled ? quantity : 0
         const netQty = isSample ? 0 : canceled ? 0 : Math.max(quantity - returnQty, 0)
-        const isSpecialSku = isSpecialLinkSku(sellerSku)
-        const stockConsumedQty = isSpecialSku
-          ? 0
-          : resolveStockConsumedQty(quantity, orderStatus, cancelationReturnType)
-        if (isSpecialSku) {
-          specialLinkSkuIgnoredCount += 1
-        }
+        const stockConsumedQty = resolveStockConsumedQty(quantity, orderStatus, cancelationReturnType)
         const sampleQty = isSample ? quantity : 0
 
         parsedRows.push({
+          skuSubtotalAfterDiscount,
           row: rowNumber,
           dedupeKey,
           orderId,
           skuId,
+          tiktokProductId,
           sellerSku,
           paidDate: orderDate.parsedDate.paidDate,
           paidDateStr: orderDate.parsedDate.dateStr,
@@ -1062,6 +1116,9 @@ export async function POST(request: NextRequest) {
           refundAmount,
           orderStatus,
           cancelationReturnType,
+          lineClassification: null,
+          resolvedProductId: null,
+          canonicalSku: null,
         })
       } catch (rowError) {
         console.error(`解析订单行失败: row ${rowNumber}`, rowError)
@@ -1079,18 +1136,33 @@ export async function POST(request: NextRequest) {
     const totalOrderRows = rows.length
     const validRows = parsedRows.length
 
-    const latestItemsByDedupeKey = new Map<string, ParsedOrderItem>()
-    let duplicateInFileCount = 0
+    const duplicateDiagnostic = findOrderFileDuplicates(parsedRows)
+    const duplicateInFileCount = duplicateDiagnostic.duplicateCount
+    if (duplicateInFileCount > 0) {
+      return NextResponse.json({
+        success: false,
+        mode,
+        stage: 'parse-file',
+        error: '上传文件内部存在重复订单行去重键，整批已停止且未写入数据库',
+        duplicateInFileCount,
+        keyTypes: duplicateDiagnostic.keyTypes,
+      }, { status: 400 })
+    }
+    if (failures.length > 0 || skippedRows.length > 0) {
+      return NextResponse.json({
+        success: false,
+        mode,
+        stage: 'parse-file',
+        error: '订单文件存在无效行，整批已停止且未写入数据库',
+        failedCount: failures.length,
+        skippedCount: skippedRows.length,
+        failedRows: failures.slice(0, 20),
+        skippedRows: skippedRows.slice(0, 20),
+      }, { status: 400 })
+    }
 
-    parsedRows.forEach((item) => {
-      if (latestItemsByDedupeKey.has(item.dedupeKey)) {
-        duplicateInFileCount += 1
-      }
-      latestItemsByDedupeKey.set(item.dedupeKey, item)
-    })
-
-    const dedupedItems = Array.from(latestItemsByDedupeKey.values())
-    const uniqueSkus = Array.from(new Set(dedupedItems.map((item) => item.sellerSku)))
+    const dedupedItems = parsedRows
+    const uniqueSkus = Array.from(new Set(dedupedItems.map((item) => item.sellerSku).filter(Boolean)))
     const dedupeKeyCount = dedupedItems.length
 
     if (!dedupedItems.length) {
@@ -1135,9 +1207,7 @@ export async function POST(request: NextRequest) {
           sampleBySku: [],
           sampleByRecipient: [],
           sampleByRecipientAndSku: [],
-          hint: specialLinkSkuIgnoredCount > 0
-            ? `检测到 ${specialLinkSkuIgnoredCount} 行 FG+GQ 特殊链接 SKU，已忽略库存扣减。`
-            : null,
+          hint: null,
         },
         { status: 400 },
       )
@@ -1147,63 +1217,8 @@ export async function POST(request: NextRequest) {
       return createTimeoutResponse('parse-file', dedupeKeyCount, 0)
     }
 
-    stage = 'aggregate'
-    const fileSummary = buildSummary(dedupedItems)
-    const sampleSummary = buildSampleSummary(dedupedItems)
-
-    if (dryRun) {
-      return NextResponse.json({
-        success: true,
-        mode,
-        stage,
-        fileName: sourceFileName,
-        fileSize,
-        totalOrderRows,
-        parsedRows: totalOrderRows,
-        validRows,
-        orderItemCount: dedupeKeyCount,
-        dedupeKeyCount,
-        duplicateInFileCount,
-        uniqueSkuCount: uniqueSkus.length,
-        matchedSkuCount: 0,
-        missingSkuCount: 0,
-        missingSkuRows: 0,
-        skippedCount: skippedRows.length,
-        missingSkus: [],
-        successCount: 0,
-        insertedOrderItemCount: 0,
-        updatedOrderItemCount: 0,
-        aggregatedRecordCount: fileSummary.summaryByDate.length,
-        skippedRows: skippedRows.slice(0, 20),
-        failedCount: failures.length,
-        failedRows: failures.slice(0, 20),
-        summaryByDate: fileSummary.summaryByDate,
-        summaryBySku: fileSummary.summaryBySku,
-        totalGrossOrders: fileSummary.totalGrossOrders,
-        totalReturnQty: fileSummary.totalReturnQty,
-        totalNetOrders: fileSummary.totalNetOrders,
-        totalCanceledQty: fileSummary.totalCanceledQty,
-        totalStockConsumedQty: fileSummary.totalStockConsumedQty,
-        totalRefundAmount: fileSummary.totalRefundAmount,
-        sampleRows: sampleSummary.sampleRows,
-        sampleQty: sampleSummary.sampleQty,
-        sampleSkuCount: sampleSummary.sampleSkuCount,
-        sampleRecipientCount: sampleSummary.sampleRecipientCount,
-        sampleBySku: sampleSummary.sampleBySku,
-        sampleByRecipient: sampleSummary.sampleByRecipient,
-        sampleByRecipientAndSku: sampleSummary.sampleByRecipientAndSku,
-        hint: specialLinkSkuIgnoredCount > 0
-          ? `检测到 ${specialLinkSkuIgnoredCount} 行 FG+GQ 特殊链接 SKU，已忽略库存扣减。`
-          : null,
-      })
-    }
-
-    if (isTimedOut()) {
-      return createTimeoutResponse('aggregate', dedupeKeyCount, 0)
-    }
-
     stage = 'match-products'
-    const [products, aliases] = await Promise.all([
+    const [products, aliases, externalIdentifiers, classificationRules] = await Promise.all([
       prisma.product.findMany({
         select: {
           id: true,
@@ -1221,33 +1236,92 @@ export async function POST(request: NextRequest) {
           },
         },
       }),
+      prisma.productExternalIdentifier.findMany({
+        where: { platform: ORDER_PLATFORM, shopKey },
+        select: { platform: true, shopKey: true, identifierType: true, identifierValue: true, productId: true },
+      }),
+      prisma.orderLineClassificationRule.findMany({
+        where: { platform: ORDER_PLATFORM, shopKey },
+        select: { platform: true, shopKey: true, identityKey: true, classification: true, requireZeroAmount: true },
+      }),
     ])
 
-    const skuResolver = buildProductSkuResolver(
-      products.map((product) => ({
-        id: product.id,
-        sku: product.sku,
-        name: product.name,
-      })),
-      aliases.map((alias) => ({
-        productId: alias.productId,
-        aliasSku: alias.aliasSku,
-      })),
-    )
+    const identityResolver = buildOrderLineIdentityResolver({
+      products,
+      aliases: aliases.map(alias => ({ productId: alias.productId, aliasSku: alias.aliasSku })),
+      externalIdentifiers,
+      classificationRules,
+      platform: ORDER_PLATFORM,
+      shopKey,
+    })
+    const sourceSkuMap = new Map(Array.from(identityResolver.strictSkuResolver.matched).map(([sourceSku, match]) => [sourceSku, match.sku]))
+    const matchedSkuNameMap = new Map(products.flatMap(product => product.sku ? [[product.sku, product.name] as const] : []))
+    const productSkuById = new Map(products.flatMap(product => product.sku ? [[product.id, product.sku] as const] : []))
+    const identityFailures: Array<{ row: number; status: string; sku: string; skuId: string | null; tiktokProductId: string | null }> = []
+    let missingProductIdCorroborationRows = 0
 
-    const matchedSkuMap = new Map(uniqueSkus.map((sku) => [sku, skuResolver.resolveProductBySku(sku)]).filter((entry) => Boolean(entry[1])) as Array<[string, NonNullable<ReturnType<typeof skuResolver.resolveProductBySku>>]>)
-    const matchedSkuNameMap = new Map(
-      Array.from(matchedSkuMap.entries()).map(([sku, match]) => [
-        sku,
-        match.product.name || match.resolvedSku || match.productSku || sku,
-      ]),
-    )
-    const matchedSkuSet = new Set(matchedSkuMap.keys())
+    dedupedItems.forEach(item => {
+      const result = identityResolver.resolve(item)
+      if (result.missingProductIdCorroboration) missingProductIdCorroborationRows += 1
+      if (result.status === ORDER_LINE_CLASSIFICATION.MERCHANDISE) {
+        item.lineClassification = ORDER_LINE_CLASSIFICATION.MERCHANDISE
+        item.resolvedProductId = result.product.id
+        item.canonicalSku = result.product.sku
+        return
+      }
+      if (result.status === ORDER_LINE_CLASSIFICATION.GIFT) {
+        item.lineClassification = ORDER_LINE_CLASSIFICATION.GIFT
+        item.resolvedProductId = null
+        item.canonicalSku = null
+        item.netQty = 0
+        item.stockConsumedQty = 0
+        item.isSample = false
+        item.sampleQty = 0
+        return
+      }
+      identityFailures.push({
+        row: item.row,
+        status: result.status,
+        sku: item.sellerSku,
+        skuId: item.skuId,
+        tiktokProductId: item.tiktokProductId,
+      })
+    })
 
-    const missingSkus = uniqueSkus.filter((sku) => !matchedSkuSet.has(sku))
-    const missingSkuRows = dedupedItems.filter((item) => !matchedSkuSet.has(item.sellerSku)).length
+    const unresolvedRows = identityFailures.filter(item => item.status === 'UNRESOLVED').length
+    const ambiguousRows = identityFailures.filter(item => item.status === 'AMBIGUOUS').length
+    const identityConflictRows = identityFailures.filter(item => item.status === 'IDENTITY_CONFLICT').length
+    const amountConstraintFailedRows = identityFailures.filter(item => item.status === 'AMOUNT_CONSTRAINT_FAILED').length
+    if (identityFailures.length > 0) {
+      return NextResponse.json({
+        success: false,
+        mode,
+        stage,
+        error: '存在未解析、歧义、身份冲突或分类约束失败的订单行，整批已停止且未写入数据库',
+        unresolvedRows,
+        ambiguousRows,
+        identityConflictRows,
+        amountConstraintFailedRows,
+        identityFailures: identityFailures.slice(0, 100),
+      }, { status: 422 })
+    }
 
-    if (checkOnly) {
+    stage = 'aggregate'
+    const merchandiseItems = dedupedItems.filter(item => item.lineClassification === ORDER_LINE_CLASSIFICATION.MERCHANDISE)
+    const fileSummary = buildSummary(merchandiseItems)
+    const sampleSummary = buildSampleSummary(dedupedItems)
+    const merchandiseRows = merchandiseItems.length
+    const giftRows = dedupedItems.filter(item => item.lineClassification === ORDER_LINE_CLASSIFICATION.GIFT).length
+    const jyRows = dedupedItems.filter(item => item.skuId === '1732135082434531723' && item.tiktokProductId === '1732135060990824843')
+    const fgRows = dedupedItems.filter(item => item.sellerSku === 'FG+GQ')
+    const giaRows = dedupedItems.filter(item => !item.sellerSku && item.skuId === '1732408361669792139' && item.tiktokProductId === '1732408351320740235')
+    const sumAmount = (items: ParsedOrderItem[]) => items.reduce((sum, item) => sum.plus(item.skuSubtotalAfterDiscount), new Prisma.Decimal('0'))
+
+    if (isTimedOut()) {
+      return createTimeoutResponse('aggregate', dedupeKeyCount, 0)
+    }
+
+    if (checkOnly || dryRun) {
       return NextResponse.json({
         success: true,
         mode,
@@ -1261,11 +1335,21 @@ export async function POST(request: NextRequest) {
         dedupeKeyCount,
         duplicateInFileCount,
         uniqueSkuCount: uniqueSkus.length,
-        matchedSkuCount: uniqueSkus.length - missingSkus.length,
-        missingSkuCount: missingSkus.length,
-        missingSkuRows,
+        matchedSkuCount: uniqueSkus.length,
+        missingSkuCount: 0,
+        missingSkuRows: 0,
         skippedCount: skippedRows.length,
-        missingSkus,
+        missingSkus: [],
+        merchandiseRows,
+        giftRows,
+        unresolvedRows,
+        ambiguousRows,
+        identityConflictRows,
+        amountConstraintFailedRows,
+        missingProductIdCorroborationRows,
+        giaMaxi: { rows: giaRows.length, resolvedSku: giaRows[0]?.canonicalSku || null, rawAmount: sumAmount(giaRows).toFixed(2) },
+        jy37037: { rows: jyRows.length, rawAmount: sumAmount(jyRows).toFixed(2), operatingContribution: '0.00' },
+        fgGq: { rows: fgRows.length, rawAmount: sumAmount(fgRows).toFixed(2), operatingContribution: '0.00' },
         successCount: 0,
         insertedOrderItemCount: 0,
         updatedOrderItemCount: 0,
@@ -1288,9 +1372,7 @@ export async function POST(request: NextRequest) {
         sampleBySku: sampleSummary.sampleBySku,
         sampleByRecipient: sampleSummary.sampleByRecipient,
         sampleByRecipientAndSku: sampleSummary.sampleByRecipientAndSku,
-        hint: specialLinkSkuIgnoredCount > 0
-          ? `检测到 ${specialLinkSkuIgnoredCount} 行 FG+GQ 特殊链接 SKU，已忽略库存扣减。`
-          : null,
+        hint: null,
       })
     }
 
@@ -1307,24 +1389,31 @@ export async function POST(request: NextRequest) {
     const affectedPairMap = new Map<string, AffectedPair>()
     existingItems.forEach((item) => {
       const dateStr = formatDateKey(new Date(item.paidDate))
-      const key = `${item.sellerSku}__${dateStr}`
+      const canonicalSku = item.resolvedProductId
+        ? productSkuById.get(item.resolvedProductId)
+        : sourceSkuMap.get(item.sellerSku)
+      if (!canonicalSku) return
+      const key = `${canonicalSku}__${dateStr}`
       affectedPairMap.set(key, {
-        sku: item.sellerSku,
+        sku: canonicalSku,
         dateStr,
       })
     })
 
     const orderItemWrites: ProductOrderItemWriteRow[] = dedupedItems.map((item) => {
-      const pairKey = `${item.sellerSku}__${item.paidDateStr}`
-      affectedPairMap.set(pairKey, {
-        sku: item.sellerSku,
-        dateStr: item.paidDateStr,
-      })
+      if (item.lineClassification === ORDER_LINE_CLASSIFICATION.MERCHANDISE && item.canonicalSku) {
+        const pairKey = `${item.canonicalSku}__${item.paidDateStr}`
+        affectedPairMap.set(pairKey, {
+          sku: item.canonicalSku,
+          dateStr: item.paidDateStr,
+        })
+      }
 
       return {
         dedupeKey: item.dedupeKey,
         orderId: item.orderId,
         skuId: item.skuId,
+        tiktokProductId: item.tiktokProductId,
         sellerSku: item.sellerSku,
         paidDate: item.paidDate,
         paidTime: item.paidTime,
@@ -1341,7 +1430,11 @@ export async function POST(request: NextRequest) {
         refundAmount: item.refundAmount,
         orderStatus: item.orderStatus || null,
         cancelationReturnType: item.cancelationReturnType || null,
-        productMatched: matchedSkuSet.has(item.sellerSku),
+        productMatched: item.lineClassification === ORDER_LINE_CLASSIFICATION.MERCHANDISE,
+        lineClassification: item.lineClassification!,
+        shopKey,
+        resolvedProductId: item.resolvedProductId,
+        skuSubtotalAfterDiscount: item.skuSubtotalAfterDiscount,
         sourceFileName: sourceFileName || null,
         rawPaidTime: item.rawPaidTime || null,
       }
@@ -1364,7 +1457,7 @@ export async function POST(request: NextRequest) {
 
     stage = 'rebuild-performance'
     const affectedPairs = Array.from(affectedPairMap.values())
-    const aggregatedItems = await loadAggregatedMatchedOrderItems(affectedPairs, matchedSkuNameMap)
+    const aggregatedItems = await loadAggregatedMatchedOrderItems(affectedPairs, matchedSkuNameMap, sourceSkuMap, productSkuById)
     const aggregatedPairSet = new Set(aggregatedItems.map((item) => `${item.sku}__${item.dateStr}`))
     const stalePairs = affectedPairs.filter((item) => !aggregatedPairSet.has(`${item.sku}__${item.dateStr}`))
 
@@ -1395,7 +1488,7 @@ export async function POST(request: NextRequest) {
         return createTimeoutResponse(stage, processedCount, remainingCount)
       }
 
-      await deletePerformanceDailyPairs(staleBatches[batchIndex])
+      await clearPerformanceDailyOrderFacts(staleBatches[batchIndex])
     }
 
     const writeSummary = buildSummary(
@@ -1417,6 +1510,12 @@ export async function POST(request: NextRequest) {
     )
 
     stage = 'done'
+    const importedBy = session.user?.name || session.user?.email || '系统'
+    await prisma.performanceMeta.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', lastOrdersImportAt: new Date(), lastImportedBy: importedBy },
+      update: { lastOrdersImportAt: new Date(), lastImportedBy: importedBy },
+    })
     return NextResponse.json({
       success: true,
       mode,
@@ -1430,11 +1529,18 @@ export async function POST(request: NextRequest) {
       dedupeKeyCount,
       duplicateInFileCount,
       uniqueSkuCount: uniqueSkus.length,
-      matchedSkuCount: uniqueSkus.length - missingSkus.length,
-      missingSkuCount: missingSkus.length,
-      missingSkuRows,
+      matchedSkuCount: uniqueSkus.length,
+      missingSkuCount: 0,
+      missingSkuRows: 0,
       skippedCount: skippedRows.length,
-      missingSkus,
+      missingSkus: [],
+      merchandiseRows,
+      giftRows,
+      unresolvedRows,
+      ambiguousRows,
+      identityConflictRows,
+      amountConstraintFailedRows,
+      missingProductIdCorroborationRows,
       successCount,
       insertedOrderItemCount,
       updatedOrderItemCount,
@@ -1458,9 +1564,7 @@ export async function POST(request: NextRequest) {
       sampleByRecipient: sampleSummary.sampleByRecipient,
       sampleByRecipientAndSku: sampleSummary.sampleByRecipientAndSku,
       staleRecordCount: stalePairs.length,
-      hint: specialLinkSkuIgnoredCount > 0
-        ? `检测到 ${specialLinkSkuIgnoredCount} 行 FG+GQ 特殊链接 SKU，已忽略库存扣减。`
-        : null,
+      hint: null,
     })
   } catch (error) {
     console.error('导入订单数据失败:', error)
