@@ -13,6 +13,21 @@ function verifyApiKey(request: NextRequest, apiKey: string): boolean {
 
 // 导入订单数据
 export async function POST(request: NextRequest) {
+  const discriminator = await request.clone().json().catch(() => null);
+  const retiredType = discriminator && typeof discriminator === 'object'
+    ? (discriminator as { type?: unknown }).type
+    : null;
+
+  if (retiredType === 'orders' || retiredType === 'ads') {
+    return NextResponse.json({
+      error: retiredType === 'orders'
+        ? 'TikTok 订单写入已停用，请使用销售分析订单导入'
+        : 'TikTok Ads 写入已停用，正式 Ads 数据链路尚未启用',
+      code: retiredType === 'orders' ? 'TIKTOK_ORDER_IMPORT_RETIRED' : 'TIKTOK_ADS_IMPORT_DEFERRED',
+      canonicalPath: retiredType === 'orders' ? '/dashboard/product-sales' : '/dashboard/performance',
+    }, { status: 410 });
+  }
+
   const apiKey = process.env.TIKTOK_SYNC_API_KEY?.trim();
   if (!apiKey) {
     return NextResponse.json({ error: 'TikTok sync is not configured' }, { status: 503 });
