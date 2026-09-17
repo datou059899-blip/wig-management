@@ -91,31 +91,22 @@ type ProductOrderItemWriteRow = {
   lineClassification: OrderLineClassification
   shopKey: string
   resolvedProductId: string | null
+  canonicalSku: string | null
   sourceFileName: string | null
   rawPaidTime: string | null
 }
 
-type AggregatedOrderStat = {
-  merchandiseAmount: Prisma.Decimal | null
-  sku: string
-  dateStr: string
-  productName: string | null
-  grossOrders: number
-  returnQty: number
-  netOrders: number
-  canceledQty: number
-  stockConsumedQty: number
-  sampleQty: number
-  refundAmount: number
+type AtomicImportResult = {
+  insertedOrderItems: number
+  updatedOrderItems: number
+  affectedPerformanceRows: number
+  performanceInserted: number
+  performanceUpdated: number
+  performanceCleared: number
+  metaUpdated: boolean
+  dbExecutionMs: number
 }
 
-type AffectedPair = {
-  sku: string
-  dateStr: string
-}
-
-const WRITE_BATCH_SIZE = 200
-const LOOKUP_BATCH_SIZE = 500
 const TIMEOUT_GUARD_MS = 45_000
 const EXPECTED_TIKTOK_SHOP_KEY = 'tiktok-us-sunnymay-primary'
 const SAMPLE_ORDER_AMOUNT_FIELDS = [
@@ -394,14 +385,6 @@ function buildDedupeKey(orderId: string, skuId: string | null, sellerSku: string
   return null
 }
 
-function chunkArray<T>(items: T[], size: number) {
-  const chunks: T[][] = []
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size))
-  }
-  return chunks
-}
-
 function createTimeoutResponse(stage: Stage, processedCount: number, remainingCount: number) {
   return NextResponse.json(
     {
@@ -618,289 +601,6 @@ function buildSampleSummary(orderItems: Array<{
     sampleByRecipient,
     sampleByRecipientAndSku,
   }
-}
-
-async function bulkUpsertProductOrderItems(batch: ProductOrderItemWriteRow[]) {
-  if (!batch.length) return
-
-  const now = new Date()
-  const rows = batch.map((item) => Prisma.sql`(
-    ${randomUUID()},
-    ${item.dedupeKey},
-    ${item.orderId},
-    ${item.skuId},
-    ${item.tiktokProductId},
-    ${item.sellerSku},
-    ${item.paidDate},
-    ${item.paidTime},
-    ${item.quantity},
-    ${item.returnQty},
-    ${item.netQty},
-    ${item.canceledQty},
-    ${item.stockConsumedQty},
-    ${item.isSample},
-    ${item.sampleQty},
-    ${item.buyerUsername},
-    ${item.buyerNickname},
-    ${item.recipient},
-    ${item.refundAmount},
-    ${item.skuSubtotalAfterDiscount},
-    ${item.orderStatus},
-    ${item.cancelationReturnType},
-    ${item.productMatched},
-    ${item.lineClassification},
-    ${item.shopKey},
-    ${item.resolvedProductId},
-    ${item.sourceFileName},
-    ${item.rawPaidTime},
-    ${now},
-    ${now}
-  )`)
-
-  await prisma.$executeRaw(Prisma.sql`
-    INSERT INTO "ProductOrderItem" (
-      "id",
-      "dedupeKey",
-      "orderId",
-      "skuId",
-      "tiktokProductId",
-      "sellerSku",
-      "paidDate",
-      "paidTime",
-      "quantity",
-      "returnQty",
-      "netQty",
-      "canceledQty",
-      "stockConsumedQty",
-      "isSample",
-      "sampleQty",
-      "buyerUsername",
-      "buyerNickname",
-      "recipient",
-      "refundAmount",
-      "skuSubtotalAfterDiscount",
-      "orderStatus",
-      "cancelationReturnType",
-      "productMatched",
-      "lineClassification",
-      "shopKey",
-      "resolvedProductId",
-      "sourceFileName",
-      "rawPaidTime",
-      "createdAt",
-      "updatedAt"
-    )
-    VALUES ${Prisma.join(rows)}
-    ON CONFLICT ("dedupeKey") DO UPDATE SET
-      "orderId" = EXCLUDED."orderId",
-      "skuId" = EXCLUDED."skuId",
-      "tiktokProductId" = EXCLUDED."tiktokProductId",
-      "sellerSku" = EXCLUDED."sellerSku",
-      "paidDate" = EXCLUDED."paidDate",
-      "paidTime" = EXCLUDED."paidTime",
-      "quantity" = EXCLUDED."quantity",
-      "returnQty" = EXCLUDED."returnQty",
-      "netQty" = EXCLUDED."netQty",
-      "canceledQty" = EXCLUDED."canceledQty",
-      "stockConsumedQty" = EXCLUDED."stockConsumedQty",
-      "isSample" = EXCLUDED."isSample",
-      "sampleQty" = EXCLUDED."sampleQty",
-      "buyerUsername" = EXCLUDED."buyerUsername",
-      "buyerNickname" = EXCLUDED."buyerNickname",
-      "recipient" = EXCLUDED."recipient",
-      "refundAmount" = EXCLUDED."refundAmount",
-      "skuSubtotalAfterDiscount" = EXCLUDED."skuSubtotalAfterDiscount",
-      "orderStatus" = EXCLUDED."orderStatus",
-      "cancelationReturnType" = EXCLUDED."cancelationReturnType",
-      "productMatched" = EXCLUDED."productMatched",
-      "lineClassification" = EXCLUDED."lineClassification",
-      "shopKey" = EXCLUDED."shopKey",
-      "resolvedProductId" = EXCLUDED."resolvedProductId",
-      "sourceFileName" = EXCLUDED."sourceFileName",
-      "rawPaidTime" = EXCLUDED."rawPaidTime",
-      "updatedAt" = CURRENT_TIMESTAMP
-  `)
-}
-
-async function bulkUpsertPerformanceDaily(batch: AggregatedOrderStat[]) {
-  if (!batch.length) return
-
-  const now = new Date()
-  const rows = batch.map((item) => Prisma.sql`(
-    ${randomUUID()},
-    ${item.sku},
-    ${createDate(item.dateStr)},
-    ${item.productName},
-    ${item.netOrders},
-    ${item.grossOrders},
-    ${item.returnQty},
-    ${item.netOrders},
-    ${item.canceledQty},
-    ${item.stockConsumedQty},
-    ${item.sampleQty},
-    ${item.refundAmount},
-    ${item.merchandiseAmount},
-    ${now},
-    ${now}
-  )`)
-
-  await prisma.$executeRaw(Prisma.sql`
-    INSERT INTO "PerformanceDaily" (
-      "id",
-      "sku",
-      "date",
-      "productName",
-      "orders",
-      "grossOrders",
-      "returnQty",
-      "netOrders",
-      "canceledQty",
-      "stockConsumedQty",
-      "sampleQty",
-      "refundAmount",
-      "merchandiseAmount",
-      "createdAt",
-      "updatedAt"
-    )
-    VALUES ${Prisma.join(rows)}
-    ON CONFLICT ("date", "sku") DO UPDATE SET
-      "productName" = EXCLUDED."productName",
-      "orders" = EXCLUDED."orders",
-      "grossOrders" = EXCLUDED."grossOrders",
-      "returnQty" = EXCLUDED."returnQty",
-      "netOrders" = EXCLUDED."netOrders",
-      "canceledQty" = EXCLUDED."canceledQty",
-      "stockConsumedQty" = EXCLUDED."stockConsumedQty",
-      "sampleQty" = EXCLUDED."sampleQty",
-      "refundAmount" = EXCLUDED."refundAmount",
-      "merchandiseAmount" = EXCLUDED."merchandiseAmount",
-      "updatedAt" = CURRENT_TIMESTAMP
-  `)
-}
-
-async function clearPerformanceDailyOrderFacts(pairs: AffectedPair[]) {
-  if (!pairs.length) return
-
-  const rows = pairs.map((item) => Prisma.sql`(${item.sku}, ${createDate(item.dateStr)})`)
-  await prisma.$executeRaw(Prisma.sql`
-    UPDATE "PerformanceDaily" AS pd SET
-      "orders" = 0,
-      "grossOrders" = 0,
-      "returnQty" = 0,
-      "netOrders" = 0,
-      "canceledQty" = 0,
-      "stockConsumedQty" = 0,
-      "sampleQty" = 0,
-      "refundAmount" = 0,
-      "merchandiseAmount" = NULL,
-      "updatedAt" = CURRENT_TIMESTAMP
-    FROM (
-      VALUES ${Prisma.join(rows)}
-    ) AS stale("sku", "date")
-    WHERE pd."sku" = stale."sku"
-      AND pd."date" = stale."date"
-  `)
-}
-
-async function loadExistingOrderItems(dedupeKeys: string[]) {
-  const existing = await Promise.all(
-    chunkArray(dedupeKeys, LOOKUP_BATCH_SIZE).map((batch) =>
-      prisma.productOrderItem.findMany({
-        where: {
-          dedupeKey: {
-            in: batch,
-          },
-        },
-        select: {
-          dedupeKey: true,
-          sellerSku: true,
-          paidDate: true,
-          resolvedProductId: true,
-          lineClassification: true,
-        },
-      }),
-    ),
-  )
-
-  return existing.flat()
-}
-
-async function loadAggregatedMatchedOrderItems(
-  pairs: AffectedPair[],
-  productNameMap: Map<string, string>,
-  sourceSkuMap: Map<string, string>,
-  productSkuById: Map<string, string>,
-) {
-  if (!pairs.length) return [] as AggregatedOrderStat[]
-
-  const rows = pairs.map((item) => Prisma.sql`(${item.sku}, ${createDate(item.dateStr)})`)
-  const skuRows = Array.from(sourceSkuMap).map(([sourceSku, canonicalSku]) => Prisma.sql`(${sourceSku}, ${canonicalSku})`)
-  const productRows = Array.from(productSkuById).map(([productId, canonicalSku]) => Prisma.sql`(${productId}, ${canonicalSku})`)
-  const result = await prisma.$queryRaw<Array<{
-    sku: string
-    date: Date
-    grossOrders: number | bigint | null
-    returnQty: number | bigint | null
-    netOrders: number | bigint | null
-    canceledQty: number | bigint | null
-    stockConsumedQty: number | bigint | null
-    sampleQty: number | bigint | null
-    refundAmount: number | string | null
-    merchandiseAmount: Prisma.Decimal | null
-    missingAmountCount: number | bigint
-  }>>(Prisma.sql`
-    WITH "affected"("sellerSku", "paidDate") AS (
-      VALUES ${Prisma.join(rows)}
-    ), "skuMap"("sourceSku", "canonicalSku") AS (
-      VALUES ${Prisma.join(skuRows)}
-    ), "productMap"("productId", "canonicalSku") AS (
-      VALUES ${Prisma.join(productRows)}
-    )
-    SELECT
-      COALESCE(pm."canonicalSku", sm."canonicalSku") AS "sku",
-      poi."paidDate" AS "date",
-      SUM(CASE WHEN poi."isSample" THEN 0 ELSE poi."quantity" END) AS "grossOrders",
-      SUM(poi."returnQty") AS "returnQty",
-      SUM(poi."netQty") AS "netOrders",
-      SUM(poi."canceledQty") AS "canceledQty",
-      SUM(poi."stockConsumedQty") AS "stockConsumedQty",
-      SUM(poi."sampleQty") AS "sampleQty",
-      SUM(poi."refundAmount") AS "refundAmount",
-      SUM(poi."skuSubtotalAfterDiscount") AS "merchandiseAmount",
-      COUNT(*) FILTER (WHERE poi."skuSubtotalAfterDiscount" IS NULL) AS "missingAmountCount"
-    FROM "ProductOrderItem" AS poi
-    LEFT JOIN "skuMap" AS sm
-      ON sm."sourceSku" = poi."sellerSku"
-    LEFT JOIN "productMap" AS pm
-      ON pm."productId" = poi."resolvedProductId"
-    INNER JOIN "affected" AS a
-      ON a."sellerSku" = COALESCE(pm."canonicalSku", sm."canonicalSku")
-     AND a."paidDate" = poi."paidDate"
-    WHERE poi."productMatched" = true
-      AND poi."lineClassification" IS DISTINCT FROM 'NON_MERCHANDISE_GIFT'
-    GROUP BY COALESCE(pm."canonicalSku", sm."canonicalSku"), poi."paidDate"
-  `)
-
-  return result
-    .map((item) => {
-      const dateStr = formatDateKey(new Date(item.date))
-      return {
-        sku: item.sku,
-        dateStr,
-        productName: productNameMap.get(item.sku) || null,
-        grossOrders: Number(item.grossOrders || 0),
-        returnQty: Number(item.returnQty || 0),
-        netOrders: Number(item.netOrders || 0),
-        canceledQty: Number(item.canceledQty || 0),
-        stockConsumedQty: Number(item.stockConsumedQty || 0),
-        sampleQty: Number(item.sampleQty || 0),
-        refundAmount: Number(item.refundAmount || 0),
-        merchandiseAmount: Number(item.missingAmountCount) > 0
-          ? null
-          : item.merchandiseAmount || new Prisma.Decimal('0'),
-      }
-    })
-    .sort((a, b) => a.dateStr.localeCompare(b.dateStr) || a.sku.localeCompare(b.sku))
 }
 
 export async function POST(request: NextRequest) {
@@ -1255,8 +955,6 @@ export async function POST(request: NextRequest) {
       shopKey,
     })
     const sourceSkuMap = new Map(Array.from(identityResolver.strictSkuResolver.matched).map(([sourceSku, match]) => [sourceSku, match.sku]))
-    const matchedSkuNameMap = new Map(products.flatMap(product => product.sku ? [[product.sku, product.name] as const] : []))
-    const productSkuById = new Map(products.flatMap(product => product.sku ? [[product.id, product.sku] as const] : []))
     const identityFailures: Array<{ row: number; status: string; sku: string; skuId: string | null; tiktokProductId: string | null }> = []
     let missingProductIdCorroborationRows = 0
 
@@ -1380,35 +1078,7 @@ export async function POST(request: NextRequest) {
       return createTimeoutResponse('match-products', dedupeKeyCount, 0)
     }
 
-    stage = 'upsert-order-items'
-    const existingItems = await loadExistingOrderItems(dedupedItems.map((item) => item.dedupeKey))
-    const existingDedupeSet = new Set(existingItems.map((item) => item.dedupeKey))
-    const insertedOrderItemCount = dedupedItems.filter((item) => !existingDedupeSet.has(item.dedupeKey)).length
-    const updatedOrderItemCount = dedupedItems.length - insertedOrderItemCount
-
-    const affectedPairMap = new Map<string, AffectedPair>()
-    existingItems.forEach((item) => {
-      const dateStr = formatDateKey(new Date(item.paidDate))
-      const canonicalSku = item.resolvedProductId
-        ? productSkuById.get(item.resolvedProductId)
-        : sourceSkuMap.get(item.sellerSku)
-      if (!canonicalSku) return
-      const key = `${canonicalSku}__${dateStr}`
-      affectedPairMap.set(key, {
-        sku: canonicalSku,
-        dateStr,
-      })
-    })
-
     const orderItemWrites: ProductOrderItemWriteRow[] = dedupedItems.map((item) => {
-      if (item.lineClassification === ORDER_LINE_CLASSIFICATION.MERCHANDISE && item.canonicalSku) {
-        const pairKey = `${item.canonicalSku}__${item.paidDateStr}`
-        affectedPairMap.set(pairKey, {
-          sku: item.canonicalSku,
-          dateStr: item.paidDateStr,
-        })
-      }
-
       return {
         dedupeKey: item.dedupeKey,
         orderId: item.orderId,
@@ -1434,88 +1104,87 @@ export async function POST(request: NextRequest) {
         lineClassification: item.lineClassification!,
         shopKey,
         resolvedProductId: item.resolvedProductId,
+        canonicalSku: item.canonicalSku,
         skuSubtotalAfterDiscount: item.skuSubtotalAfterDiscount,
         sourceFileName: sourceFileName || null,
         rawPaidTime: item.rawPaidTime || null,
       }
     })
-
-    const orderItemBatches = chunkArray(orderItemWrites, WRITE_BATCH_SIZE)
-    for (let batchIndex = 0; batchIndex < orderItemBatches.length; batchIndex += 1) {
-      if (isTimedOut()) {
-        const processedCount = batchIndex * WRITE_BATCH_SIZE
-        const remainingCount = orderItemWrites.length - processedCount
-        return createTimeoutResponse(stage, processedCount, remainingCount)
-      }
-
-      await bulkUpsertProductOrderItems(orderItemBatches[batchIndex])
-    }
-
-    if (isTimedOut()) {
-      return createTimeoutResponse('upsert-order-items', orderItemWrites.length, 0)
-    }
-
-    stage = 'rebuild-performance'
-    const affectedPairs = Array.from(affectedPairMap.values())
-    const aggregatedItems = await loadAggregatedMatchedOrderItems(affectedPairs, matchedSkuNameMap, sourceSkuMap, productSkuById)
-    const aggregatedPairSet = new Set(aggregatedItems.map((item) => `${item.sku}__${item.dateStr}`))
-    const stalePairs = affectedPairs.filter((item) => !aggregatedPairSet.has(`${item.sku}__${item.dateStr}`))
-
-    if (isTimedOut()) {
-      return createTimeoutResponse(stage, aggregatedItems.length, stalePairs.length)
-    }
-
-    stage = 'write-performance'
-    const performanceBatches = chunkArray(aggregatedItems, WRITE_BATCH_SIZE)
-    let successCount = 0
-
-    for (let batchIndex = 0; batchIndex < performanceBatches.length; batchIndex += 1) {
-      if (isTimedOut()) {
-        const processedCount = batchIndex * WRITE_BATCH_SIZE
-        const remainingCount = aggregatedItems.length - processedCount
-        return createTimeoutResponse(stage, processedCount, remainingCount)
-      }
-
-      await bulkUpsertPerformanceDaily(performanceBatches[batchIndex])
-      successCount += performanceBatches[batchIndex].length
-    }
-
-    const staleBatches = chunkArray(stalePairs, WRITE_BATCH_SIZE)
-    for (let batchIndex = 0; batchIndex < staleBatches.length; batchIndex += 1) {
-      if (isTimedOut()) {
-        const processedCount = successCount + batchIndex * WRITE_BATCH_SIZE
-        const remainingCount = stalePairs.length - batchIndex * WRITE_BATCH_SIZE
-        return createTimeoutResponse(stage, processedCount, remainingCount)
-      }
-
-      await clearPerformanceDailyOrderFacts(staleBatches[batchIndex])
-    }
-
-    const writeSummary = buildSummary(
-      aggregatedItems.map((item) => ({
-        sellerSku: item.sku,
-        paidDateStr: item.dateStr,
-        quantity: item.grossOrders,
+    const importedBy = session.user?.name || session.user?.email || '系统'
+    const payload = {
+      facts: orderItemWrites.map((item) => ({
+        id: randomUUID(),
+        dedupeKey: item.dedupeKey,
+        orderId: item.orderId,
+        skuId: item.skuId,
+        tiktokProductId: item.tiktokProductId,
+        sellerSku: item.sellerSku,
+        paidDate: formatDateKey(item.paidDate),
+        paidTime: item.paidTime?.toISOString() || null,
+        quantity: item.quantity,
         returnQty: item.returnQty,
-        netQty: item.netOrders,
+        netQty: item.netQty,
         canceledQty: item.canceledQty,
         stockConsumedQty: item.stockConsumedQty,
-        isSample: false,
+        isSample: item.isSample,
         sampleQty: item.sampleQty,
-        buyerUsername: '',
-        buyerNickname: '',
-        recipient: '',
+        buyerUsername: item.buyerUsername,
+        buyerNickname: item.buyerNickname,
+        recipient: item.recipient,
         refundAmount: item.refundAmount,
+        skuSubtotalAfterDiscount: item.skuSubtotalAfterDiscount.toFixed(2),
+        orderStatus: item.orderStatus,
+        cancelationReturnType: item.cancelationReturnType,
+        productMatched: item.productMatched,
+        lineClassification: item.lineClassification,
+        resolvedProductId: item.resolvedProductId,
+        canonicalSku: item.canonicalSku,
+        rawPaidTime: item.rawPaidTime,
       })),
-    )
+      skuMap: Array.from(sourceSkuMap, ([sourceSku, canonicalSku]) => ({ sourceSku, canonicalSku })),
+    }
+    const payloadJson = JSON.stringify(payload)
+    const payloadBytes = Buffer.byteLength(payloadJson, 'utf8')
+    const dbInvocationStartedAt = Date.now()
+
+    stage = 'upsert-order-items'
+    const functionRows = await prisma.$queryRaw<AtomicImportResult[]>(Prisma.sql`
+      SELECT *
+      FROM public.finalize_product_order_import_v1(
+        ${ORDER_PLATFORM}::text,
+        ${shopKey}::text,
+        ${importedBy}::text,
+        ${sourceFileName || null}::text,
+        ${payloadJson}::jsonb
+      )
+    `)
+    const functionResult = functionRows[0]
+    if (!functionResult || !functionResult.metaUpdated) {
+      throw new Error('Atomic order import function returned no successful result')
+    }
 
     stage = 'done'
-    const importedBy = session.user?.name || session.user?.email || '系统'
-    await prisma.performanceMeta.upsert({
-      where: { id: 'singleton' },
-      create: { id: 'singleton', lastOrdersImportAt: new Date(), lastImportedBy: importedBy },
-      update: { lastOrdersImportAt: new Date(), lastImportedBy: importedBy },
+    const dbInvocationMs = Date.now() - dbInvocationStartedAt
+    const routeDurationMs = Date.now() - startedAt
+    const insertedOrderItemCount = Number(functionResult.insertedOrderItems)
+    const updatedOrderItemCount = Number(functionResult.updatedOrderItems)
+    const performanceInserted = Number(functionResult.performanceInserted)
+    const performanceUpdated = Number(functionResult.performanceUpdated)
+    const staleRecordCount = Number(functionResult.performanceCleared)
+    const aggregatedRecordCount = performanceInserted + performanceUpdated
+    const successCount = aggregatedRecordCount
+    const writeSummary = buildSummary(merchandiseItems.map((item) => ({
+      ...item,
+      sellerSku: item.canonicalSku!,
+    })))
+
+    console.log('[import-orders] atomic formal import complete', {
+      payloadBytes,
+      dbExecutionMs: Number(functionResult.dbExecutionMs),
+      dbInvocationMs,
+      routeDurationMs,
     })
+
     return NextResponse.json({
       success: true,
       mode,
@@ -1544,7 +1213,10 @@ export async function POST(request: NextRequest) {
       successCount,
       insertedOrderItemCount,
       updatedOrderItemCount,
-      aggregatedRecordCount: aggregatedItems.length,
+      aggregatedRecordCount,
+      affectedPerformanceRows: Number(functionResult.affectedPerformanceRows),
+      performanceInserted,
+      performanceUpdated,
       skippedRows: skippedRows.slice(0, 20),
       failedCount: failures.length,
       failedRows: failures,
@@ -1563,7 +1235,11 @@ export async function POST(request: NextRequest) {
       sampleBySku: sampleSummary.sampleBySku,
       sampleByRecipient: sampleSummary.sampleByRecipient,
       sampleByRecipientAndSku: sampleSummary.sampleByRecipientAndSku,
-      staleRecordCount: stalePairs.length,
+      staleRecordCount,
+      payloadBytes,
+      dbExecutionMs: Number(functionResult.dbExecutionMs),
+      dbInvocationMs,
+      routeDurationMs,
       hint: null,
     })
   } catch (error) {
