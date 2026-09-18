@@ -989,6 +989,7 @@ export async function POST(request: NextRequest) {
     const unresolvedRows = identityFailures.filter(item => item.status === 'UNRESOLVED').length
     const ambiguousRows = identityFailures.filter(item => item.status === 'AMBIGUOUS').length
     const identityConflictRows = identityFailures.filter(item => item.status === 'IDENTITY_CONFLICT').length
+    const hardIdentityConflictRows = identityFailures.filter(item => item.status === 'HARD_IDENTITY_CONFLICT').length
     const amountConstraintFailedRows = identityFailures.filter(item => item.status === 'AMOUNT_CONSTRAINT_FAILED').length
     if (identityFailures.length > 0) {
       return NextResponse.json({
@@ -999,6 +1000,7 @@ export async function POST(request: NextRequest) {
         unresolvedRows,
         ambiguousRows,
         identityConflictRows,
+        hardIdentityConflictRows,
         amountConstraintFailedRows,
         identityFailures: identityFailures.slice(0, 100),
       }, { status: 422 })
@@ -1043,6 +1045,7 @@ export async function POST(request: NextRequest) {
         unresolvedRows,
         ambiguousRows,
         identityConflictRows,
+        hardIdentityConflictRows,
         amountConstraintFailedRows,
         missingProductIdCorroborationRows,
         giaMaxi: { rows: giaRows.length, resolvedSku: giaRows[0]?.canonicalSku || null, rawAmount: sumAmount(giaRows).toFixed(2) },
@@ -1208,6 +1211,7 @@ export async function POST(request: NextRequest) {
       unresolvedRows,
       ambiguousRows,
       identityConflictRows,
+      hardIdentityConflictRows,
       amountConstraintFailedRows,
       missingProductIdCorroborationRows,
       successCount,

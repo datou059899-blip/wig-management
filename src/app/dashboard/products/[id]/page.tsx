@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { ChevronDown } from 'lucide-react'
 import { FunctionalPremiumScope, OverflowMenu, StatusBadge, primaryActionClassName, useDelayedVisibility } from '@/components/dashboard/FunctionalPremium'
+import { useToast } from '@/components/ToastProvider'
 
 type ProductDetailResponse = {
   product: {
@@ -69,10 +70,58 @@ type ProductDetailResponse = {
   }>
 }
 
+type ListingPair = {
+  tiktokProductId: string
+  tiktokSkuId: string
+  value: string
+}
+
+type ListingEvent = {
+  id: string
+  reason: 'SOLD_OUT' | 'LINK_CHANGED' | 'OTHER'
+  platform: string
+  shopKey: string
+  oldTikTokProductId: string | null
+  oldTikTokSkuId: string | null
+  newTikTokProductId: string | null
+  newTikTokSkuId: string | null
+  actualInventoryQty: number | null
+  systemInventoryQty: number | null
+  changedAt: string
+  note: string | null
+  recordedBy: string
+  createdAt: string
+}
+
+type ListingEventContext = {
+  product: { id: string; canonicalSku: string | null }
+  platform: string
+  shopKey: string
+  currentInventory: number
+  confirmedPairs: ListingPair[]
+  currentPair: ListingPair | null
+  events: ListingEvent[]
+  canManage: boolean
+}
+
+type ListingReason = ListingEvent['reason']
+
 const businessStatusLabel: Record<string, string> = {
   ACTIVE: '正常在售',
   OUT_OF_STOCK_DELISTED: '缺货下架',
   DISCONTINUED: '停售',
+}
+
+const listingReasonLabel: Record<ListingReason, string> = {
+  SOLD_OUT: '卖完下架',
+  LINK_CHANGED: '换链接',
+  OTHER: '其他',
+}
+
+function currentLocalDateTimeInput() {
+  const now = new Date()
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+  return local.toISOString().slice(0, 16)
 }
 
 function formatUsd(value: number | null | undefined) {
@@ -93,6 +142,11 @@ function formatNumber(value: number | null | undefined) {
 function formatDate(value: string | null | undefined) {
   if (!value) return '—'
   return new Date(value).toLocaleDateString('zh-CN')
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return '—'
+  return new Date(value).toLocaleString('zh-CN')
 }
 
 function Field({ label, value }: { label: string; value?: string | number | null }) {
@@ -116,9 +170,21 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export default function ProductDetailPage() {
   const params = useParams<{ id: string }>()
   const productId = params?.id
+  const toast = useToast()
   const [data, setData] = useState<ProductDetailResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [listingContext, setListingContext] = useState<ListingEventContext | null>(null)
+  const [listingError, setListingError] = useState('')
+  const [showListingModal, setShowListingModal] = useState(false)
+  const [listingReason, setListingReason] = useState<ListingReason>('SOLD_OUT')
+  const [oldPairValue, setOldPairValue] = useState('')
+  const [newTikTokProductId, setNewTikTokProductId] = useState('')
+  const [newTikTokSkuId, setNewTikTokSkuId] = useState('')
+  const [listingChangedAt, setListingChangedAt] = useState(currentLocalDateTimeInput())
+  const [listingNote, setListingNote] = useState('')
+  const [soldOutConfirmed, setSoldOutConfirmed] = useState(false)
+  const [listingSubmitting, setListingSubmitting] = useState(false)
   const showLoadingSkeleton = useDelayedVisibility(loading)
 
   useEffect(() => {
@@ -144,7 +210,109 @@ export default function ProductDetailPage() {
     }
   }, [productId])
 
+  useEffect(() => {
+    if (!productId) return
+    let cancelled = false
+    async function loadListingEvents() {
+      try {
+        setListingError('')
+        const response = await fetch(`/api/products/${productId}/listing-events`)
+        const result = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(result.error || '加载Listing变更记录失败')
+        if (!cancelled) setListingContext(result)
+      } catch (err) {
+        if (!cancelled) setListingError(err instanceof Error ? err.message : '加载Listing变更记录失败')
+      }
+    }
+    loadListingEvents()
+    return () => {
+      cancelled = true
+    }
+  }, [productId])
+
   const recentPurchases = useMemo(() => (data?.purchases || []).slice(0, 5), [data?.purchases])
+
+  function openListingModal() {
+    if (!listingContext) return
+    setListingReason('SOLD_OUT')
+    setOldPairValue(listingContext.currentPair?.value || (listingContext.confirmedPairs.length === 1 ? listingContext.confirmedPairs[0].value : ''))
+    setNewTikTokProductId('')
+    setNewTikTokSkuId('')
+    setListingChangedAt(currentLocalDateTimeInput())
+    setListingNote('')
+    setSoldOutConfirmed(false)
+    setShowListingModal(true)
+  }
+
+  async function reloadListingContext() {
+    if (!productId) return
+    const response = await fetch(`/api/products/${productId}/listing-events`)
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(result.error || '刷新Listing变更记录失败')
+    setListingContext(result)
+  }
+
+  async function submitListingEvent() {
+    if (!productId || !listingContext) return
+    const oldPair = listingContext.confirmedPairs.find(pair => pair.value === oldPairValue) || null
+    if (listingReason === 'LINK_CHANGED' && !oldPair) {
+      toast.error('旧Listing身份尚未确认，不能记录换链接')
+      return
+    }
+    if (listingReason === 'SOLD_OUT' && !soldOutConfirmed) {
+      toast.error('请先确认仓库实际库存为0')
+      return
+    }
+    const changedAt = new Date(listingChangedAt)
+    if (Number.isNaN(changedAt.getTime())) {
+      toast.error('请选择有效的发生时间')
+      return
+    }
+
+    const body: Record<string, unknown> = {
+      reason: listingReason,
+      platform: listingContext.platform,
+      shopKey: listingContext.shopKey,
+      changedAt: changedAt.toISOString(),
+      note: listingNote,
+    }
+    if (listingReason === 'LINK_CHANGED' && oldPair) {
+      body.oldTikTokProductId = oldPair.tiktokProductId
+      body.oldTikTokSkuId = oldPair.tiktokSkuId
+      body.newTikTokProductId = newTikTokProductId
+      body.newTikTokSkuId = newTikTokSkuId
+    }
+
+    try {
+      setListingSubmitting(true)
+      const response = await fetch(`/api/products/${productId}/listing-events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(result.error || '保存Listing变更失败')
+      await reloadListingContext()
+      if (listingReason === 'SOLD_OUT') {
+        setData(current => current ? {
+          ...current,
+          product: { ...current.product, businessStatus: 'OUT_OF_STOCK_DELISTED' },
+        } : current)
+      }
+      setShowListingModal(false)
+      if (result.idempotent) {
+        toast.info('相同换链接记录已存在，未重复创建')
+      } else if (result.needsAdjustment) {
+        toast.warning(`下架记录已保存，系统库存仍为 ${Math.abs(result.suggestedAdjustmentQty || 0)}，请单独确认库存调整`)
+      } else {
+        toast.success('Listing变更记录已保存')
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '保存Listing变更失败')
+    } finally {
+      setListingSubmitting(false)
+    }
+  }
 
   if (loading) {
     return showLoadingSkeleton ? (
@@ -179,6 +347,11 @@ export default function ProductDetailPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link href="/dashboard/products" className="text-sm font-medium text-blue-600 hover:text-blue-700">← 返回产品库</Link>
         <div className="flex items-center gap-2">
+          {listingContext?.canManage && (
+            <button type="button" onClick={openListingModal} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              记录下架 / 换链接
+            </button>
+          )}
           <Link href="/dashboard/products" className={primaryActionClassName}>编辑基础资料</Link>
           <OverflowMenu items={[
             { label: '商品经营', href: '/dashboard/inventory-purchasing' },
@@ -299,6 +472,40 @@ export default function ProductDetailPage() {
           )}
         </Section>
 
+        <Section title="Listing 变更记录">
+          {listingError ? (
+            <div className="py-1 text-sm text-rose-600">{listingError}</div>
+          ) : listingContext?.events.length ? (
+            <div className="divide-y divide-slate-100">
+              {listingContext.events.map(event => (
+                <div key={event.id} className="grid gap-2 py-3 text-sm md:grid-cols-[140px_minmax(0,1fr)_180px] md:items-start">
+                  <div>
+                    <StatusBadge tone={event.reason === 'SOLD_OUT' ? 'danger' : event.reason === 'LINK_CHANGED' ? 'warning' : 'neutral'}>
+                      {listingReasonLabel[event.reason]}
+                    </StatusBadge>
+                    <div className="mt-1 text-xs text-slate-500">{formatDateTime(event.changedAt)}</div>
+                  </div>
+                  <div className="min-w-0 text-slate-700">
+                    {event.reason === 'LINK_CHANGED' && (
+                      <div className="space-y-1 font-mono text-xs">
+                        <div className="break-all">旧：{event.oldTikTokProductId} / {event.oldTikTokSkuId}</div>
+                        <div className="break-all">新：{event.newTikTokProductId} / {event.newTikTokSkuId}</div>
+                      </div>
+                    )}
+                    {event.reason === 'SOLD_OUT' && (
+                      <div>仓库实际库存 0；记录时系统库存 {event.systemInventoryQty ?? 0}</div>
+                    )}
+                    {event.note && <div className="mt-1 whitespace-pre-wrap text-slate-600">{event.note}</div>}
+                  </div>
+                  <div className="text-xs text-slate-500 md:text-right">记录人：{event.recordedBy}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="py-1 text-sm text-slate-500">暂无 Listing 变更记录</div>
+          )}
+        </Section>
+
         <Section title="产品资料">
           {hasSupplementalData ? (
             <div className="grid gap-4 text-sm md:grid-cols-2">
@@ -363,6 +570,129 @@ export default function ProductDetailPage() {
           </div>
         </aside>
       </div>
+
+      {showListingModal && listingContext && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-2xl">
+            <div className="border-b border-slate-100 px-5 py-4">
+              <h2 className="text-lg font-semibold text-slate-950">记录下架 / 换链接</h2>
+              <p className="mt-1 text-sm text-slate-500">Canonical SKU：{listingContext.product.canonicalSku || '—'}</p>
+            </div>
+
+            <div className="space-y-5 px-5 py-5">
+              <div>
+                <div className="text-sm font-medium text-slate-700">原因</div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                  {(['SOLD_OUT', 'LINK_CHANGED', 'OTHER'] as ListingReason[]).map(reason => (
+                    <button
+                      key={reason}
+                      type="button"
+                      onClick={() => setListingReason(reason)}
+                      className={`rounded-lg border px-3 py-2 text-sm font-medium ${listingReason === reason ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      {listingReasonLabel[reason]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {listingReason === 'LINK_CHANGED' && (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    换链接不会清零库存；旧、新 Listing 将继续归属同一个 canonical SKU。
+                  </div>
+                  <label className="block">
+                    <span className="text-sm font-medium text-slate-700">旧 Listing identity</span>
+                    {listingContext.confirmedPairs.length > 0 ? (
+                      <select
+                        value={oldPairValue}
+                        onChange={event => setOldPairValue(event.target.value)}
+                        className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      >
+                        <option value="">请选择已确认的旧 identity</option>
+                        {listingContext.confirmedPairs.map(pair => (
+                          <option key={pair.value} value={pair.value}>{pair.tiktokProductId} / {pair.tiktokSkuId}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                        当前没有可确认的旧 Listing identity。不能猜测；请先补证，或改用“其他”并填写备注。
+                      </div>
+                    )}
+                  </label>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="text-sm font-medium text-slate-700">新 TikTok Product ID</span>
+                      <input value={newTikTokProductId} onChange={event => setNewTikTokProductId(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    </label>
+                    <label className="block">
+                      <span className="text-sm font-medium text-slate-700">新 TikTok SKU ID</span>
+                      <input value={newTikTokSkuId} onChange={event => setNewTikTokSkuId(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {listingReason === 'SOLD_OUT' && (
+                <div className="space-y-3 rounded-lg border border-slate-200 p-4">
+                  <div className="grid gap-3 text-sm sm:grid-cols-2">
+                    <div><span className="text-slate-500">当前系统库存：</span><strong className="ml-1 text-slate-900">{listingContext.currentInventory}</strong></div>
+                    <div><span className="text-slate-500">仓库实际库存：</span><strong className="ml-1 text-slate-900">0</strong></div>
+                  </div>
+                  {listingContext.currentInventory > 0 ? (
+                    <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      需要独立库存纠偏；建议调整量 {`-${listingContext.currentInventory}`}。本操作不会自动创建调整记录。
+                    </div>
+                  ) : (
+                    <div className="text-sm text-emerald-700">当前系统库存也是 0，无需库存纠偏。</div>
+                  )}
+                  <label className="flex items-start gap-2 text-sm text-slate-700">
+                    <input type="checkbox" checked={soldOutConfirmed} onChange={event => setSoldOutConfirmed(event.target.checked)} className="mt-0.5" />
+                    <span>我已确认仓库实际库存为 0</span>
+                  </label>
+                  {listingContext.currentInventory > 0 && (
+                    <Link href="/dashboard/product-sales" className="inline-block text-sm font-medium text-brand-600 hover:text-brand-700">前往库存调整 →</Link>
+                  )}
+                </div>
+              )}
+
+              <label className="block">
+                <span className="text-sm font-medium text-slate-700">发生时间</span>
+                <input
+                  type="datetime-local"
+                  value={listingChangedAt}
+                  onChange={event => setListingChangedAt(event.target.value)}
+                  className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                />
+                <span className="mt-1 block text-xs text-slate-500">将按浏览器本地时间转换为带时区的 ISO timestamp。</span>
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-medium text-slate-700">备注{listingReason === 'OTHER' ? '（必填）' : '（可选）'}</span>
+                <textarea value={listingNote} onChange={event => setListingNote(event.target.value)} rows={3} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
+              <button type="button" onClick={() => setShowListingModal(false)} disabled={listingSubmitting} className="rounded-lg px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 disabled:opacity-50">取消</button>
+              <button
+                type="button"
+                onClick={submitListingEvent}
+                disabled={
+                  listingSubmitting
+                  || !listingChangedAt
+                  || (listingReason === 'LINK_CHANGED' && (!oldPairValue || !newTikTokProductId.trim() || !newTikTokSkuId.trim()))
+                  || (listingReason === 'SOLD_OUT' && !soldOutConfirmed)
+                  || (listingReason === 'OTHER' && !listingNote.trim())
+                }
+                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {listingSubmitting ? '保存中…' : '保存记录'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </FunctionalPremiumScope>
   )
 }

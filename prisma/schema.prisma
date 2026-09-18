@@ -81,6 +81,7 @@ model Product {
   businessStatus           String      @default("ACTIVE")
   aliases                  ProductSkuAlias[]
   externalIdentifiers      ProductExternalIdentifier[]
+  listingEvents            ProductListingEvent[]
   resolvedOrderItems       ProductOrderItem[] @relation("ResolvedProductOrderItems")
   defaultSupplier          Supplier?   @relation(fields: [defaultSupplierId], references: [id], onDelete: SetNull)
   postedAt                 DateTime?
@@ -207,6 +208,29 @@ model ProductExternalIdentifier {
 
   @@unique([platform, shopKey, identifierType, identifierValue], map: "ProductExternalIdentifier_platform_shopKey_identifierType_ident")
   @@index([productId])
+}
+
+model ProductListingEvent {
+  id                 String   @id @default(cuid())
+  productId          String
+  platform           String   @default("TIKTOK")
+  shopKey            String
+  reason             String
+  oldTikTokProductId String?
+  oldTikTokSkuId     String?
+  newTikTokProductId String?
+  newTikTokSkuId     String?
+  actualInventoryQty Int?
+  systemInventoryQty Int?
+  changedAt          DateTime
+  note               String?
+  recordedBy         String
+  createdAt          DateTime @default(now())
+  product            Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([productId, changedAt])
+  @@index([platform, shopKey, oldTikTokProductId, oldTikTokSkuId])
+  @@index([platform, shopKey, newTikTokProductId, newTikTokSkuId])
 }
 
 model OrderLineClassificationRule {

@@ -47,6 +47,11 @@ export function buildStrictOrderSkuMap(
 }
 
 export const ORDER_PLATFORM = 'TIKTOK'
+export const PRODUCT_EXTERNAL_IDENTIFIER_TYPE = {
+  TIKTOK_SKU_ID: 'TIKTOK_SKU_ID',
+  TIKTOK_PRODUCT_ID: 'TIKTOK_PRODUCT_ID',
+  TIKTOK_PRODUCT_SKU_PAIR: 'TIKTOK_PRODUCT_SKU_PAIR',
+} as const
 export const ORDER_LINE_CLASSIFICATION = {
   MERCHANDISE: 'MERCHANDISE',
   GIFT: 'NON_MERCHANDISE_GIFT',
@@ -78,6 +83,15 @@ export function sellerSkuIdentityKey(sellerSku: string) {
 
 export function tiktokSkuProductIdentityKey(skuId: string, productId: string) {
   return `TIKTOK_SKU_PRODUCT:${skuId}:${productId}`
+}
+
+export function makeTikTokProductSkuPair(productId: string, skuId: string) {
+  const normalizedProductId = productId.trim()
+  const normalizedSkuId = skuId.trim()
+  if (!normalizedProductId || !normalizedSkuId) {
+    throw new Error('TikTok Product ID 和 SKU ID 均不能为空')
+  }
+  return `${normalizedProductId}:${normalizedSkuId}`
 }
 
 export function buildOrderLineIdentityResolver(params: {
@@ -115,35 +129,37 @@ export function buildOrderLineIdentityResolver(params: {
       tiktokProductId: string | null
       skuSubtotalAfterDiscount: Prisma.Decimal
     }) {
-      const productIds = new Set<string>()
-      let productAmbiguous = false
+      const decisiveOwners: Set<string>[] = []
+      let identityAmbiguous = false
       let missingProductIdCorroboration = false
 
       if (input.sellerSku) {
-        if (strictSkuResolver.ambiguous.has(input.sellerSku)) productAmbiguous = true
+        if (strictSkuResolver.ambiguous.has(input.sellerSku)) identityAmbiguous = true
         const match = strictSkuResolver.matched.get(input.sellerSku)
-        if (match) productIds.add(match.productId)
-      } else {
-        const skuOwners = input.skuId
-          ? externalByKey.get(`TIKTOK_SKU_ID:${input.skuId}`) || new Set<string>()
-          : new Set<string>()
-        if (skuOwners.size > 1) productAmbiguous = true
-        skuOwners.forEach(productId => productIds.add(productId))
-
-        const productOwners = input.tiktokProductId
-          ? externalByKey.get(`TIKTOK_PRODUCT_ID:${input.tiktokProductId}`) || new Set<string>()
-          : new Set<string>()
-        if (productOwners.size > 1) productAmbiguous = true
-        if (skuOwners.size === 1 && productOwners.size === 0 && input.tiktokProductId) {
-          missingProductIdCorroboration = true
-        }
-        if (skuOwners.size === 1 && productOwners.size > 0) {
-          productOwners.forEach(productId => productIds.add(productId))
-        }
-        // A Product ID mapping alone is corroboration only and cannot resolve the row.
-        if (skuOwners.size === 0) productIds.clear()
+        if (match) decisiveOwners.push(new Set([match.productId]))
       }
 
+      const pairOwners = input.skuId && input.tiktokProductId
+        ? externalByKey.get(`${PRODUCT_EXTERNAL_IDENTIFIER_TYPE.TIKTOK_PRODUCT_SKU_PAIR}:${makeTikTokProductSkuPair(input.tiktokProductId, input.skuId)}`) || new Set<string>()
+        : new Set<string>()
+      if (pairOwners.size > 1) identityAmbiguous = true
+      if (pairOwners.size > 0) decisiveOwners.push(pairOwners)
+
+      const skuOwners = input.skuId
+        ? externalByKey.get(`${PRODUCT_EXTERNAL_IDENTIFIER_TYPE.TIKTOK_SKU_ID}:${input.skuId}`) || new Set<string>()
+        : new Set<string>()
+      if (skuOwners.size > 1) identityAmbiguous = true
+      if (skuOwners.size > 0) decisiveOwners.push(skuOwners)
+
+      const productOwners = input.tiktokProductId
+        ? externalByKey.get(`${PRODUCT_EXTERNAL_IDENTIFIER_TYPE.TIKTOK_PRODUCT_ID}:${input.tiktokProductId}`) || new Set<string>()
+        : new Set<string>()
+      if (productOwners.size > 1) identityAmbiguous = true
+      if (skuOwners.size === 1 && pairOwners.size === 0 && productOwners.size === 0 && input.tiktokProductId) {
+        missingProductIdCorroboration = true
+      }
+
+      const decisiveProductIds = new Set(decisiveOwners.flatMap(owners => Array.from(owners)))
       const giftIdentityKeys = [
         input.sellerSku ? sellerSkuIdentityKey(input.sellerSku) : null,
         input.skuId && input.tiktokProductId
@@ -153,10 +169,13 @@ export function buildOrderLineIdentityResolver(params: {
       const giftRules = giftIdentityKeys.flatMap(key => rulesByIdentityKey.get(key) || [])
       const giftIdentities = new Set(giftRules.map(rule => rule.identityKey))
 
-      if (productAmbiguous || productIds.size > 1 || giftIdentities.size > 1) {
+      if (identityAmbiguous || giftIdentities.size > 1) {
         return { status: 'AMBIGUOUS' as const, missingProductIdCorroboration }
       }
-      if (productIds.size === 1 && giftIdentities.size === 1) {
+      if (decisiveProductIds.size > 1) {
+        return { status: 'HARD_IDENTITY_CONFLICT' as const, missingProductIdCorroboration }
+      }
+      if (decisiveProductIds.size === 1 && giftIdentities.size === 1) {
         return { status: 'IDENTITY_CONFLICT' as const, missingProductIdCorroboration }
       }
       if (giftIdentities.size === 1) {
@@ -175,8 +194,8 @@ export function buildOrderLineIdentityResolver(params: {
           missingProductIdCorroboration,
         }
       }
-      if (productIds.size === 1) {
-        const product = productsById.get(Array.from(productIds)[0])
+      if (decisiveProductIds.size === 1) {
+        const product = productsById.get(Array.from(decisiveProductIds)[0])
         if (!product?.sku) return { status: 'UNRESOLVED' as const, missingProductIdCorroboration }
         return {
           status: ORDER_LINE_CLASSIFICATION.MERCHANDISE,
