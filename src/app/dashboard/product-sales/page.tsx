@@ -321,6 +321,12 @@ interface OrderImportResult {
   matchedSkuCount?: number
   missingSkuCount?: number
   missingSkuRows?: number
+  merchandiseRows?: number
+  giftRows?: number
+  unresolvedRows?: number
+  ambiguousRows?: number
+  identityConflictRows?: number
+  hardIdentityConflictRows?: number
   skippedCount?: number
   missingSkus?: string[]
   insertedOrderItemCount?: number
@@ -369,6 +375,9 @@ interface OrderIdentityFailureGroup {
 interface OrderIdentityFailurePayload {
   error: string
   fileName: string
+  totalOrderRows: number
+  merchandiseRows: number
+  giftRows: number
   unresolvedRows: number
   ambiguousRows: number
   identityConflictRows: number
@@ -495,6 +504,11 @@ function hasSampleStats(result: OrderImportResult | null) {
     || Array.isArray(result.sampleByRecipient)
     || Array.isArray(result.sampleByRecipientAndSku)
   )
+}
+
+async function getOrderFileFingerprint(file: File) {
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 function formatTrendRangeLabel(range: TrendRange, startDate?: string, endDate?: string) {
@@ -1150,7 +1164,6 @@ export default function ProductSalesPage() {
   const inventoryInputRef = useRef<HTMLInputElement>(null)
   const ordersInputRef = useRef<HTMLInputElement>(null)
   const skuImportInputRef = useRef<HTMLInputElement>(null)
-  const orderImportModeRef = useRef<'import' | 'dryRun' | 'checkOnly'>('import')
 
   const [summary, setSummary] = useState<SummaryData | null>(null)
   const [products, setProducts] = useState<ProductData[]>([])
@@ -1252,6 +1265,9 @@ export default function ProductSalesPage() {
   const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [ordersImportResult, setOrdersImportResult] = useState<OrderImportResult | null>(null)
+  const [pendingOrdersFile, setPendingOrdersFile] = useState<File | null>(null)
+  const [ordersValidationFingerprint, setOrdersValidationFingerprint] = useState<string | null>(null)
+  const [ordersImportConfirmOpen, setOrdersImportConfirmOpen] = useState(false)
   const [orderIdentityFailure, setOrderIdentityFailure] = useState<OrderIdentityFailurePayload | null>(null)
   const [orderSkuCandidate, setOrderSkuCandidate] = useState<OrderSkuCandidateRecord | null>(null)
   const [orderSkuCandidateAction, setOrderSkuCandidateAction] = useState<OrderSkuCandidateAction>('CREATE')
@@ -1287,6 +1303,7 @@ export default function ProductSalesPage() {
     || groupManagerOpen
     || reconcilePreviewOpen
     || Boolean(orderSkuCandidate)
+    || ordersImportConfirmOpen
   )
   const activeUiStates = useMemo(
     () =>
@@ -1889,8 +1906,7 @@ export default function ProductSalesPage() {
     skuImportInputRef.current?.click()
   }
 
-  const handleImportOrders = (mode: 'import' | 'dryRun' | 'checkOnly' = 'import') => {
-    orderImportModeRef.current = mode
+  const handleSelectOrdersFile = () => {
     ordersInputRef.current?.click()
   }
 
@@ -1954,8 +1970,11 @@ export default function ProductSalesPage() {
         throw new Error(buildImportErrorMessage('处理待处理 SKU 失败', response, data || {}, text))
       }
       setOrderSkuCandidateMessage(
-        `${orderSkuCandidate.inputSku} 已处理为 ${String(data?.resolvedCanonicalSku || '-') }，请重新选择原文件执行 checkOnly。`,
+        `${orderSkuCandidate.inputSku} 已处理为 ${String(data?.resolvedCanonicalSku || '-') }，请重新校验当前订单文件。`,
       )
+      setOrdersValidationFingerprint(null)
+      setOrdersImportResult(null)
+      setOrderIdentityFailure(null)
       setOrderSkuCandidate(null)
       setOrderSkuCandidateProductName('')
       setOrderSkuCandidateTargetProductId('')
@@ -2013,28 +2032,65 @@ export default function ProductSalesPage() {
     }
   }
 
-  const handleOrdersFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleOrdersFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
 
-    setImportingOrders(true)
+    setPendingOrdersFile(file)
+    setOrdersValidationFingerprint(null)
+    setOrdersImportConfirmOpen(false)
     setOrdersImportResult(null)
     setOrderIdentityFailure(null)
     setOrderSkuCandidateMessage(null)
     setOrderSkuCandidateError(null)
     setError(null)
     setOrdersError(null)
+    event.target.value = ''
+  }
+
+  const runOrdersImport = async (mode: 'checkOnly' | 'import') => {
+    const file = pendingOrdersFile
+    if (!file) {
+      setOrdersError('请先选择订单文件')
+      return
+    }
+
+    setImportingOrders(true)
+    setOrderSkuCandidateMessage(null)
+    setOrderSkuCandidateError(null)
+    setError(null)
+    setOrdersError(null)
+
+    let fileFingerprint = ''
 
     try {
+      fileFingerprint = await getOrderFileFingerprint(file)
+      if (mode === 'import') {
+        if (!ordersValidationFingerprint || ordersValidationFingerprint !== fileFingerprint) {
+          setOrdersValidationFingerprint(null)
+          setOrdersImportResult(null)
+          throw new Error('订单文件已变化或尚未通过校验，请重新校验订单')
+        }
+        const validation = ordersImportResult
+        const validationPassed = Boolean(
+          validation?.mode === 'checkOnly'
+          && (validation.unresolvedRows || 0) === 0
+          && (validation.ambiguousRows || 0) === 0
+          && (validation.identityConflictRows || 0) === 0
+          && (validation.hardIdentityConflictRows || 0) === 0
+        )
+        if (!validationPassed || orderIdentityFailure) {
+          throw new Error('订单校验未通过，请解决全部身份问题后重新校验')
+        }
+      } else {
+        setOrdersValidationFingerprint(null)
+        setOrdersImportResult(null)
+        setOrderIdentityFailure(null)
+      }
+
       const formData = new FormData()
       formData.append('file', file)
-      const mode = orderImportModeRef.current
-      const query =
-        mode === 'dryRun'
-          ? '?dryRun=1'
-          : mode === 'checkOnly'
-            ? '?checkOnly=1'
-            : ''
+      const query = mode === 'checkOnly' ? '?checkOnly=1' : ''
 
       const response = await fetch(`/api/product-sales/import-orders${query}`, {
         method: 'POST',
@@ -2048,6 +2104,9 @@ export default function ProductSalesPage() {
           setOrderIdentityFailure({
             error: String(payload.error || '订单身份解析失败'),
             fileName: String(payload.fileName || file.name),
+            totalOrderRows: Number(payload.totalOrderRows || 0),
+            merchandiseRows: Number(payload.merchandiseRows || 0),
+            giftRows: Number(payload.giftRows || 0),
             unresolvedRows: Number(payload.unresolvedRows || 0),
             ambiguousRows: Number(payload.ambiguousRows || 0),
             identityConflictRows: Number(payload.identityConflictRows || 0),
@@ -2055,6 +2114,7 @@ export default function ProductSalesPage() {
             amountConstraintFailedRows: Number(payload.amountConstraintFailedRows || 0),
             identityFailureGroups: payload.identityFailureGroups,
           })
+          setOrdersValidationFingerprint(null)
           setOrdersError(String(payload.error || '订单身份解析失败'))
           return
         }
@@ -2076,6 +2136,12 @@ export default function ProductSalesPage() {
         matchedSkuCount: payload.matchedSkuCount || 0,
         missingSkuCount: payload.missingSkuCount || 0,
         missingSkuRows: payload.missingSkuRows || 0,
+        merchandiseRows: payload.merchandiseRows || 0,
+        giftRows: payload.giftRows || 0,
+        unresolvedRows: payload.unresolvedRows || 0,
+        ambiguousRows: payload.ambiguousRows || 0,
+        identityConflictRows: payload.identityConflictRows || 0,
+        hardIdentityConflictRows: payload.hardIdentityConflictRows || 0,
         skippedCount: payload.skippedCount || 0,
         missingSkus: Array.isArray(payload.missingSkus) ? payload.missingSkus : [],
         insertedOrderItemCount: payload.insertedOrderItemCount || 0,
@@ -2107,13 +2173,25 @@ export default function ProductSalesPage() {
         hint: payload.hint || null,
       })
 
-      await refreshAfterMutation()
+      if (mode === 'checkOnly') {
+        const validationPassed = (
+          Number(payload.unresolvedRows || 0) === 0
+          && Number(payload.ambiguousRows || 0) === 0
+          && Number(payload.identityConflictRows || 0) === 0
+          && Number(payload.hardIdentityConflictRows || 0) === 0
+        )
+        setOrdersValidationFingerprint(validationPassed ? fileFingerprint : null)
+      } else {
+        setPendingOrdersFile(null)
+        setOrdersValidationFingerprint(null)
+        await refreshAfterMutation()
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : '导入订单表失败'
+      if (mode === 'checkOnly') setOrdersValidationFingerprint(null)
       setOrdersError(message)
       setError(message)
     } finally {
-      event.target.value = ''
       setImportingOrders(false)
     }
   }
@@ -3216,6 +3294,16 @@ export default function ProductSalesPage() {
   const filteredAdjustments = stockAdjustments.filter((item) => (
     adjustmentFormMode === 'bulk' || !adjustmentFormSku || item.sku === adjustmentFormSku
   ))
+  const ordersValidationPassed = Boolean(
+    pendingOrdersFile
+    && ordersValidationFingerprint
+    && ordersImportResult?.mode === 'checkOnly'
+    && (ordersImportResult.unresolvedRows || 0) === 0
+    && (ordersImportResult.ambiguousRows || 0) === 0
+    && (ordersImportResult.identityConflictRows || 0) === 0
+    && (ordersImportResult.hardIdentityConflictRows || 0) === 0
+    && !orderIdentityFailure
+  )
   const dashboardDailySales = summary
     ? Number(Math.max(summary.weekSales / 7, summary.monthSales / 30).toFixed(2))
     : 0
@@ -3241,11 +3329,11 @@ export default function ProductSalesPage() {
               <div className="flex flex-col items-start gap-2 lg:items-end">
                 <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
                   <button
-                    onClick={() => handleImportOrders('import')}
+                    onClick={handleSelectOrdersFile}
                     className={primaryActionClassName}
                     disabled={importingOrders || importingInventory || loading}
                   >
-                    {importingOrders ? '正在导入订单...' : '导入订单'}
+                    导入订单
                   </button>
                   <OverflowMenu items={[
                     { label: '等级设置', onSelect: openRankSettingsModal, disabled: loading || savingRankSettings },
@@ -3294,6 +3382,51 @@ export default function ProductSalesPage() {
             className="hidden"
             onChange={handleOrdersFileChange}
           />
+
+          {pendingOrdersFile && (
+            <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-slate-900">已选择订单文件</div>
+                  <div className="mt-1 truncate text-sm text-slate-600" title={pendingOrdersFile.name}>
+                    {pendingOrdersFile.name}
+                    <span className="ml-2 text-xs text-slate-400">{(pendingOrdersFile.size / 1024).toFixed(1)} KB</span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void runOrdersImport('checkOnly')}
+                    disabled={importingOrders}
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {importingOrders ? '正在校验…' : '校验订单'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOrdersImportConfirmOpen(true)}
+                    disabled={!ordersValidationPassed || importingOrders}
+                    className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    确认正式导入
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSelectOrdersFile}
+                    disabled={importingOrders}
+                    className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    重新选择
+                  </button>
+                </div>
+              </div>
+              <div className={`mt-3 text-xs ${ordersValidationPassed ? 'text-emerald-700' : 'text-slate-500'}`}>
+                {ordersValidationPassed
+                  ? '校验通过，可以确认正式导入。'
+                  : '必须先完成校验，且所有身份异常均为 0，才能正式导入。'}
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
@@ -3353,6 +3486,12 @@ export default function ProductSalesPage() {
                 <span>阶段 {ordersImportResult.stage || '-'}</span>
                 <span>文件 {ordersImportResult.fileName || '-'}</span>
                 <span>读取订单行数 {ordersImportResult.totalOrderRows} 行</span>
+                <span>商品订单 {ordersImportResult.merchandiseRows || 0}</span>
+                <span>赠品 {ordersImportResult.giftRows || 0}</span>
+                <span>未解析 {ordersImportResult.unresolvedRows || 0}</span>
+                <span>歧义 {ordersImportResult.ambiguousRows || 0}</span>
+                <span>身份冲突 {ordersImportResult.identityConflictRows || 0}</span>
+                <span>硬身份冲突 {ordersImportResult.hardIdentityConflictRows || 0}</span>
                 <span>解析行数 {ordersImportResult.parsedRows || 0}</span>
                 <span>有效订单行数 {ordersImportResult.validRows || 0}</span>
                 <span>本次文件订单明细数 {ordersImportResult.orderItemCount || 0}</span>
@@ -3656,12 +3795,16 @@ export default function ProductSalesPage() {
                 <div>
                   <div className="font-semibold text-slate-900">订单 SKU 身份待处理</div>
                   <div className="mt-1 text-sm text-slate-600">
-                    正式导入已停止且未写入订单、销量或库存事实。处理 SKU 后请重新选择原文件执行 checkOnly。
+                    校验未通过，未写入订单、销量或库存事实。处理 SKU 后请重新校验当前文件。
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+                  <span>总行数 {orderIdentityFailure.totalOrderRows}</span>
+                  <span>商品订单 {orderIdentityFailure.merchandiseRows}</span>
+                  <span>赠品 {orderIdentityFailure.giftRows}</span>
                   <span>未解析 {orderIdentityFailure.unresolvedRows}</span>
                   <span>歧义 {orderIdentityFailure.ambiguousRows}</span>
+                  <span>身份冲突 {orderIdentityFailure.identityConflictRows}</span>
                   <span>硬冲突 {orderIdentityFailure.hardIdentityConflictRows}</span>
                 </div>
               </div>
@@ -4534,6 +4677,48 @@ export default function ProductSalesPage() {
                   </>
                 ) : null}
               </div>
+
+              {ordersImportConfirmOpen && pendingOrdersFile && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+                  onClick={() => !importingOrders && setOrdersImportConfirmOpen(false)}
+                >
+                  <div
+                    className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <h3 className="text-lg font-semibold text-slate-900">确认正式导入订单？</h3>
+                    <p className="mt-3 text-sm leading-6 text-slate-600">
+                      即将把该文件正式写入订单数据。该操作会新增或更新订单明细，并重新计算相关销售数据。是否继续？
+                    </p>
+                    <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                      <div className="truncate" title={pendingOrdersFile.name}>{pendingOrdersFile.name}</div>
+                      <div className="mt-1 text-xs text-emerald-700">订单校验已通过</div>
+                    </div>
+                    <div className="mt-6 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setOrdersImportConfirmOpen(false)}
+                        disabled={importingOrders}
+                        className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOrdersImportConfirmOpen(false)
+                          void runOrdersImport('import')
+                        }}
+                        disabled={!ordersValidationPassed || importingOrders}
+                        className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                      >
+                        确认正式导入
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {orderSkuCandidate && (
                 <div

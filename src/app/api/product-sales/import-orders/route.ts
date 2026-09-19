@@ -994,6 +994,8 @@ export async function POST(request: NextRequest) {
     const identityConflictRows = identityFailures.filter(item => item.status === 'IDENTITY_CONFLICT').length
     const hardIdentityConflictRows = identityFailures.filter(item => item.status === 'HARD_IDENTITY_CONFLICT').length
     const amountConstraintFailedRows = identityFailures.filter(item => item.status === 'AMOUNT_CONSTRAINT_FAILED').length
+    const merchandiseRows = dedupedItems.filter(item => item.lineClassification === ORDER_LINE_CLASSIFICATION.MERCHANDISE).length
+    const giftRows = dedupedItems.filter(item => item.lineClassification === ORDER_LINE_CLASSIFICATION.GIFT).length
     if (identityFailures.length > 0) {
       const identityFailureGroups = groupOrderIdentityFailures({
         failures: identityFailures,
@@ -1015,6 +1017,9 @@ export async function POST(request: NextRequest) {
         identityFailureGroups,
         unresolvedCandidateSuggestions: identityFailureGroups.filter((group) => group.candidateEligible),
         fileName: sourceFileName,
+        totalOrderRows,
+        merchandiseRows,
+        giftRows,
       }, { status: 422 })
     }
 
@@ -1022,8 +1027,6 @@ export async function POST(request: NextRequest) {
     const merchandiseItems = dedupedItems.filter(item => item.lineClassification === ORDER_LINE_CLASSIFICATION.MERCHANDISE)
     const fileSummary = buildSummary(merchandiseItems)
     const sampleSummary = buildSampleSummary(dedupedItems)
-    const merchandiseRows = merchandiseItems.length
-    const giftRows = dedupedItems.filter(item => item.lineClassification === ORDER_LINE_CLASSIFICATION.GIFT).length
     const jyRows = dedupedItems.filter(item => item.skuId === '1732135082434531723' && item.tiktokProductId === '1732135060990824843')
     const fgRows = dedupedItems.filter(item => item.sellerSku === 'FG+GQ')
     const giaRows = dedupedItems.filter(item => !item.sellerSku && item.skuId === '1732408361669792139' && item.tiktokProductId === '1732408351320740235')
