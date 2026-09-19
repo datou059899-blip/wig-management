@@ -949,11 +949,9 @@ export async function POST(request: NextRequest) {
       }),
     ])
 
-    const activeProducts = products.filter((product) => product.isActive)
-    const activeAliases = aliases.filter((alias) => alias.product.isActive)
     const identityResolver = buildOrderLineIdentityResolver({
-      products: activeProducts,
-      aliases: activeAliases.map(alias => ({ productId: alias.productId, aliasSku: alias.aliasSku })),
+      products,
+      aliases: aliases.map(alias => ({ productId: alias.productId, aliasSku: alias.aliasSku })),
       externalIdentifiers,
       classificationRules,
       platform: ORDER_PLATFORM,
