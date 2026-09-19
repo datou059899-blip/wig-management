@@ -42,7 +42,7 @@ export type InventoryPreviewMatchedRow = {
   previousTotalQty: number | null
   diffQty: number | null
   sourceRows?: InventoryPreviewSourceRow[]
-  resolution?: 'duplicate_merge_approved'
+  resolution?: 'duplicate_merge_approved' | 'sku_candidate_created' | 'sku_candidate_mapped' | 'sku_candidate_reactivated' | 'sku_candidate_refreshed'
 }
 
 export type InventoryPreviewUnmatchedRow = {
@@ -57,6 +57,39 @@ export type InventoryPreviewUnmatchedRow = {
   inputProductName?: string
   previousTotalQty?: number | null
   diffQty?: number | null
+}
+
+export const INVENTORY_SKU_CANDIDATE_STATUS = {
+  PENDING: 'PENDING',
+  CREATED: 'CREATED',
+  MAPPED: 'MAPPED',
+  IGNORED: 'IGNORED',
+} as const
+
+export const INVENTORY_SKU_CANDIDATE_DETECTION = {
+  UNKNOWN: 'UNKNOWN_SKU',
+  INACTIVE_CANONICAL: 'EXACT_INACTIVE_CANONICAL_FOUND',
+  INACTIVE_ALIAS: 'EXACT_INACTIVE_ALIAS_FOUND',
+} as const
+
+export const INVENTORY_SKU_CANDIDATE_RESOLUTION = {
+  CREATE: 'CREATE_NEW',
+  MAP: 'MAP_EXISTING',
+  REACTIVATE: 'REACTIVATE_INACTIVE',
+  REFRESH: 'REFRESH_EXACT_MATCH',
+  IGNORE: 'IGNORE',
+} as const
+
+export type InventorySkuCandidateDraft = {
+  rowNumber: number
+  inputSku: string
+  normalizedSku: string
+  totalQty: number
+  productNameSnapshot: string | null
+  sourceFileName: string
+  status: 'PENDING'
+  detectionType: 'UNKNOWN_SKU' | 'EXACT_INACTIVE_CANONICAL_FOUND' | 'EXACT_INACTIVE_ALIAS_FOUND'
+  inactiveProductId: string | null
 }
 
 export type InventorySummaryItem = {
@@ -75,21 +108,49 @@ type StrictSkuProduct = {
   name: string
   sku: string | null
   stock: number
+  isActive: boolean
+  businessStatus: string
   aliases: Array<{ aliasSku: string | null }>
 }
 
 type ParsedInventoryRows = {
   matchedRows: InventoryPreviewMatchedRow[]
   unmatchedRows: InventoryPreviewUnmatchedRow[]
+  candidateRows: InventorySkuCandidateDraft[]
   rowCount: number
   sheetName?: string
 }
 
 export const MAX_IMPORT_STOCK_QTY = 1_000_000
 
-function strictSkuKey(value: string | null | undefined) {
+export function strictSkuKey(value: string | null | undefined) {
   const normalized = normalizeSkuText(value)
   return normalized ? normalized.trim().toUpperCase() : ''
+}
+
+function buildStrictIdentityMaps(products: StrictSkuProduct[]) {
+  const activeCanonical = new Map<string, StrictSkuProduct>()
+  const activeAlias = new Map<string, StrictSkuProduct>()
+  const inactiveCanonical = new Map<string, StrictSkuProduct>()
+  const inactiveAlias = new Map<string, StrictSkuProduct>()
+
+  products.forEach((product) => {
+    const canonicalKey = strictSkuKey(product.sku)
+    if (canonicalKey) {
+      const target = product.isActive ? activeCanonical : inactiveCanonical
+      if (!target.has(canonicalKey)) target.set(canonicalKey, product)
+    }
+  })
+  products.forEach((product) => {
+    product.aliases.forEach((alias) => {
+      const aliasKey = strictSkuKey(alias.aliasSku)
+      if (!aliasKey) return
+      const target = product.isActive ? activeAlias : inactiveAlias
+      if (!target.has(aliasKey)) target.set(aliasKey, product)
+    })
+  })
+
+  return { activeCanonical, activeAlias, inactiveCanonical, inactiveAlias }
 }
 
 function parseInventoryQty(value: ImportCellValue) {
@@ -213,26 +274,6 @@ function pickCell(record: Record<string, ImportCellValue>, names: string[]) {
   return ''
 }
 
-function buildStrictSkuMap(products: StrictSkuProduct[]) {
-  const map = new Map<string, StrictSkuProduct>()
-
-  products.forEach((product) => {
-    const productSkuKey = strictSkuKey(product.sku)
-    if (productSkuKey && !map.has(productSkuKey)) {
-      map.set(productSkuKey, product)
-    }
-
-    product.aliases.forEach((alias) => {
-      const aliasKey = strictSkuKey(alias.aliasSku)
-      if (aliasKey && !map.has(aliasKey)) {
-        map.set(aliasKey, product)
-      }
-    })
-  })
-
-  return map
-}
-
 function uniqueStrictSkus(product: StrictSkuProduct) {
   const values = [product.sku, ...product.aliases.map((alias) => alias.aliasSku)]
   const seen = new Set<string>()
@@ -273,21 +314,24 @@ export async function parseInventoryPreviewFile(file: File, stockCapturedAt: Dat
   const built = buildImportRowRecords(inventorySectionRows, detected)
   const rowRecords = built.rowRecords
   const products = await prisma.product.findMany({
-    where: { isActive: true },
     select: {
       id: true,
       name: true,
       sku: true,
       stock: true,
+      isActive: true,
+      businessStatus: true,
       aliases: { select: { aliasSku: true } },
     },
   })
 
-  const skuMap = buildStrictSkuMap(products)
-  const canonicalSkus = products.flatMap((product) => uniqueStrictSkus(product))
+  const identityMaps = buildStrictIdentityMaps(products)
+  const activeProducts = products.filter((product) => product.isActive)
+  const canonicalSkus = activeProducts.flatMap((product) => uniqueStrictSkus(product))
   const previousStockBySku = await getLatestEffectiveStockBySku(canonicalSkus, stockCapturedAt)
   const matchedRows: InventoryPreviewMatchedRow[] = []
   const unmatchedRows: InventoryPreviewUnmatchedRow[] = []
+  const candidateRows: InventorySkuCandidateDraft[] = []
   let parsedRowCount = 0
 
   rowRecords.forEach(({ rowNumber, record }) => {
@@ -307,9 +351,49 @@ export async function parseInventoryPreviewFile(file: File, stockCapturedAt: Dat
       return
     }
 
-    const product = skuMap.get(strictSkuKey(inputSku))
-    if (!product || !product.sku) {
-      unmatchedRows.push({ rowNumber, inputSku, totalQty: totalQtyResult.value, reason: '未匹配到 canonical SKU 或明确 alias', kind: 'unmatched' })
+    const identityKey = strictSkuKey(inputSku)
+    const product = identityMaps.activeCanonical.get(identityKey) || identityMaps.activeAlias.get(identityKey)
+    if (product && !product.sku) {
+      unmatchedRows.push({
+        rowNumber,
+        inputSku,
+        totalQty: totalQtyResult.value,
+        reason: '已匹配到启用 Product，但该 Product 缺少 canonical SKU，禁止导入',
+        kind: 'unmatched',
+        productId: product.id,
+        productName: product.name,
+        inputProductName,
+      })
+      return
+    }
+    if (!product) {
+      const inactiveCanonical = identityMaps.inactiveCanonical.get(identityKey)
+      const inactiveAlias = identityMaps.inactiveAlias.get(identityKey)
+      const inactiveProduct = inactiveCanonical || inactiveAlias || null
+      const detectionType = inactiveCanonical
+        ? INVENTORY_SKU_CANDIDATE_DETECTION.INACTIVE_CANONICAL
+        : inactiveAlias
+          ? INVENTORY_SKU_CANDIDATE_DETECTION.INACTIVE_ALIAS
+          : INVENTORY_SKU_CANDIDATE_DETECTION.UNKNOWN
+      unmatchedRows.push({
+        rowNumber,
+        inputSku,
+        totalQty: totalQtyResult.value,
+        reason: inactiveProduct ? '发现已停用/历史 Product，需人工处理' : '未匹配到 canonical SKU 或明确 alias',
+        kind: 'unmatched',
+        inputProductName,
+      })
+      candidateRows.push({
+        rowNumber,
+        inputSku,
+        normalizedSku: identityKey,
+        totalQty: totalQtyResult.value,
+        productNameSnapshot: inputProductName || null,
+        sourceFileName: file.name || 'inventory-import',
+        status: INVENTORY_SKU_CANDIDATE_STATUS.PENDING,
+        detectionType,
+        inactiveProductId: inactiveProduct?.id || null,
+      })
       return
     }
 
@@ -363,16 +447,21 @@ export async function parseInventoryPreviewFile(file: File, stockCapturedAt: Dat
   return {
     matchedRows: dedupedMatchedRows,
     unmatchedRows,
+    candidateRows,
     rowCount: parsedRowCount,
     sheetName: initial.sheetName,
   }
 }
 
-export async function getLatestEffectiveStockBySku(skus: string[], beforeDate?: Date) {
+export async function getLatestEffectiveStockBySku(
+  skus: string[],
+  beforeDate?: Date,
+  client: typeof prisma | Prisma.TransactionClient = prisma,
+) {
   const uniqueSkus = Array.from(new Set(skus.map((sku) => normalizeSkuText(sku)).filter(Boolean)))
   if (!uniqueSkus.length) return new Map<string, number | null>()
 
-  const snapshots = await prisma.productInventorySnapshot.findMany({
+  const snapshots = await client.productInventorySnapshot.findMany({
     where: buildEffectiveInventorySnapshotWhere({
       sku: { in: uniqueSkus },
       ...(beforeDate ? { date: { lt: beforeDate } } : {}),

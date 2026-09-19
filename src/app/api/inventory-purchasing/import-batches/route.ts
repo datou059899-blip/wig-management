@@ -9,6 +9,7 @@ import {
   parseInventoryPreviewFile,
   parseStockCapturedAt,
 } from '@/lib/inventoryPurchasing'
+import { getInventorySkuCandidateViewData } from '@/lib/inventorySkuCandidates'
 
 function unauthorized() {
   return NextResponse.json({ error: '未授权访问' }, { status: 401 })
@@ -89,8 +90,12 @@ export async function POST(request: NextRequest) {
         note,
         matchedRows: parsed.matchedRows,
         unmatchedRows: parsed.unmatchedRows,
+        skuCandidates: {
+          create: parsed.candidateRows,
+        },
       },
     })
+    const candidateData = await getInventorySkuCandidateViewData(batch.id)
 
     return NextResponse.json({
       batch: {
@@ -102,6 +107,7 @@ export async function POST(request: NextRequest) {
       },
       matchedRows: parsed.matchedRows,
       unmatchedRows: parsed.unmatchedRows,
+      ...candidateData,
       duplicateConfirmedBatch,
       sheetName: parsed.sheetName ?? null,
     })

@@ -350,6 +350,53 @@ interface OrderImportResult {
   hint?: string | null
 }
 
+interface OrderIdentityFailureGroup {
+  key: string
+  status: string
+  inputSku: string
+  normalizedSku: string
+  tiktokProductId: string | null
+  tiktokSkuId: string | null
+  occurrenceCount: number
+  rows: number[]
+  reason: string
+  candidateEligible: boolean
+  detectionType: 'UNKNOWN_SKU' | 'EXACT_INACTIVE_CANONICAL_FOUND' | 'EXACT_INACTIVE_ALIAS_FOUND' | null
+  inactiveProductId: string | null
+  inactiveProduct: { id: string; sku: string | null; name: string; isActive: boolean } | null
+}
+
+interface OrderIdentityFailurePayload {
+  error: string
+  fileName: string
+  unresolvedRows: number
+  ambiguousRows: number
+  identityConflictRows: number
+  hardIdentityConflictRows: number
+  amountConstraintFailedRows: number
+  identityFailureGroups: OrderIdentityFailureGroup[]
+}
+
+interface OrderSkuCandidateRecord {
+  id: string
+  status: 'PENDING' | 'CREATED' | 'MAPPED'
+  inputSku: string
+  normalizedSku: string
+  tiktokProductId: string
+  tiktokSkuId: string
+  occurrenceCount: number
+  detectionType: 'UNKNOWN_SKU' | 'EXACT_INACTIVE_CANONICAL_FOUND' | 'EXACT_INACTIVE_ALIAS_FOUND'
+  inactiveProduct: {
+    id: string
+    sku: string | null
+    name: string
+    isActive: boolean
+    businessStatus: string
+  } | null
+}
+
+type OrderSkuCandidateAction = 'CREATE' | 'MAP' | 'REACTIVATE'
+
 interface SkuImportIssueRow {
   row: number
   sku: string
@@ -1205,6 +1252,16 @@ export default function ProductSalesPage() {
   const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [ordersImportResult, setOrdersImportResult] = useState<OrderImportResult | null>(null)
+  const [orderIdentityFailure, setOrderIdentityFailure] = useState<OrderIdentityFailurePayload | null>(null)
+  const [orderSkuCandidate, setOrderSkuCandidate] = useState<OrderSkuCandidateRecord | null>(null)
+  const [orderSkuCandidateAction, setOrderSkuCandidateAction] = useState<OrderSkuCandidateAction>('CREATE')
+  const [orderSkuCandidateProductName, setOrderSkuCandidateProductName] = useState('')
+  const [orderSkuCandidateTargetProductId, setOrderSkuCandidateTargetProductId] = useState('')
+  const [orderSkuCandidateConfirmAlias, setOrderSkuCandidateConfirmAlias] = useState(false)
+  const [orderSkuCandidateSaving, setOrderSkuCandidateSaving] = useState(false)
+  const [orderSkuCandidateOpeningKey, setOrderSkuCandidateOpeningKey] = useState<string | null>(null)
+  const [orderSkuCandidateError, setOrderSkuCandidateError] = useState<string | null>(null)
+  const [orderSkuCandidateMessage, setOrderSkuCandidateMessage] = useState<string | null>(null)
   const [skuImportResult, setSkuImportResult] = useState<SkuImportResult | null>(null)
   const [pendingSkuImportFile, setPendingSkuImportFile] = useState<File | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -1229,6 +1286,7 @@ export default function ProductSalesPage() {
     || Boolean(stockEditTarget)
     || groupManagerOpen
     || reconcilePreviewOpen
+    || Boolean(orderSkuCandidate)
   )
   const activeUiStates = useMemo(
     () =>
@@ -1295,6 +1353,15 @@ export default function ProductSalesPage() {
     if (reconcilePreviewLoading) return
     setReconcilePreviewOpen(false)
   }, [reconcilePreviewLoading])
+
+  const closeOrderSkuCandidateModal = useCallback(() => {
+    if (orderSkuCandidateSaving) return
+    setOrderSkuCandidate(null)
+    setOrderSkuCandidateError(null)
+    setOrderSkuCandidateProductName('')
+    setOrderSkuCandidateTargetProductId('')
+    setOrderSkuCandidateConfirmAlias(false)
+  }, [orderSkuCandidateSaving])
 
   const buildRangeParams = (range: TrendRange, startDate = trendStartDate, endDate = trendEndDate) => {
     const params = new URLSearchParams()
@@ -1697,6 +1764,11 @@ export default function ProductSalesPage() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
 
+      if (orderSkuCandidate) {
+        closeOrderSkuCandidateModal()
+        return
+      }
+
       if (groupManagerOpen) {
         closeGroupManagerModal()
         return
@@ -1731,6 +1803,7 @@ export default function ProductSalesPage() {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [
     anyModalOpen,
+    closeOrderSkuCandidateModal,
     closeReconcilePreviewModal,
     closeGroupManagerModal,
     closeRankSettingsModal,
@@ -1738,6 +1811,7 @@ export default function ProductSalesPage() {
     closeStockBaselineModal,
     closeStockEditModal,
     groupManagerOpen,
+    orderSkuCandidate,
     reconcilePreviewOpen,
     rankSettingsOpen,
     stockAdjustmentOpen,
@@ -1820,6 +1894,79 @@ export default function ProductSalesPage() {
     ordersInputRef.current?.click()
   }
 
+  const openOrderSkuCandidate = async (group: OrderIdentityFailureGroup) => {
+    if (!orderIdentityFailure || !group.candidateEligible || !group.tiktokProductId || !group.tiktokSkuId) return
+    setOrderSkuCandidateOpeningKey(group.key)
+    setOrderSkuCandidateError(null)
+    setOrderSkuCandidateMessage(null)
+    try {
+      const response = await fetch('/api/product-sales/order-sku-candidates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inputSku: group.inputSku,
+          tiktokProductId: group.tiktokProductId,
+          tiktokSkuId: group.tiktokSkuId,
+          sourceFileName: orderIdentityFailure.fileName,
+          occurrenceCount: group.occurrenceCount,
+          rows: group.rows,
+        }),
+      })
+      const { data, text } = await parseApiResponse(response)
+      if (!response.ok) {
+        throw new Error(buildImportErrorMessage('创建待处理 SKU 失败', response, data || {}, text))
+      }
+      const candidate = data?.candidate as OrderSkuCandidateRecord | undefined
+      if (!candidate) throw new Error('创建待处理 SKU 失败：响应缺少 candidate')
+      if (candidate.status !== 'PENDING') {
+        setOrderSkuCandidateMessage(`${candidate.inputSku} 已处理，请重新执行 checkOnly。`)
+        return
+      }
+      setOrderSkuCandidate(candidate)
+      setOrderSkuCandidateAction(candidate.detectionType === 'UNKNOWN_SKU' ? 'CREATE' : 'REACTIVATE')
+      setOrderSkuCandidateProductName('')
+      setOrderSkuCandidateTargetProductId('')
+      setOrderSkuCandidateConfirmAlias(false)
+    } catch (err) {
+      setOrderSkuCandidateError(err instanceof Error ? err.message : '创建待处理 SKU 失败')
+    } finally {
+      setOrderSkuCandidateOpeningKey(null)
+    }
+  }
+
+  const resolveCurrentOrderSkuCandidate = async () => {
+    if (!orderSkuCandidate) return
+    setOrderSkuCandidateSaving(true)
+    setOrderSkuCandidateError(null)
+    try {
+      const response = await fetch(`/api/product-sales/order-sku-candidates/${orderSkuCandidate.id}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: orderSkuCandidateAction,
+          productName: orderSkuCandidateProductName,
+          targetProductId: orderSkuCandidateTargetProductId,
+          confirmAlias: orderSkuCandidateConfirmAlias,
+        }),
+      })
+      const { data, text } = await parseApiResponse(response)
+      if (!response.ok) {
+        throw new Error(buildImportErrorMessage('处理待处理 SKU 失败', response, data || {}, text))
+      }
+      setOrderSkuCandidateMessage(
+        `${orderSkuCandidate.inputSku} 已处理为 ${String(data?.resolvedCanonicalSku || '-') }，请重新选择原文件执行 checkOnly。`,
+      )
+      setOrderSkuCandidate(null)
+      setOrderSkuCandidateProductName('')
+      setOrderSkuCandidateTargetProductId('')
+      setOrderSkuCandidateConfirmAlias(false)
+    } catch (err) {
+      setOrderSkuCandidateError(err instanceof Error ? err.message : '处理待处理 SKU 失败')
+    } finally {
+      setOrderSkuCandidateSaving(false)
+    }
+  }
+
   const handleInventoryFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -1872,6 +2019,9 @@ export default function ProductSalesPage() {
 
     setImportingOrders(true)
     setOrdersImportResult(null)
+    setOrderIdentityFailure(null)
+    setOrderSkuCandidateMessage(null)
+    setOrderSkuCandidateError(null)
     setError(null)
     setOrdersError(null)
 
@@ -1894,6 +2044,20 @@ export default function ProductSalesPage() {
       const payload = data || {}
 
       if (!response.ok) {
+        if (response.status === 422 && Array.isArray(payload.identityFailureGroups)) {
+          setOrderIdentityFailure({
+            error: String(payload.error || '订单身份解析失败'),
+            fileName: String(payload.fileName || file.name),
+            unresolvedRows: Number(payload.unresolvedRows || 0),
+            ambiguousRows: Number(payload.ambiguousRows || 0),
+            identityConflictRows: Number(payload.identityConflictRows || 0),
+            hardIdentityConflictRows: Number(payload.hardIdentityConflictRows || 0),
+            amountConstraintFailedRows: Number(payload.amountConstraintFailedRows || 0),
+            identityFailureGroups: payload.identityFailureGroups,
+          })
+          setOrdersError(String(payload.error || '订单身份解析失败'))
+          return
+        }
         throw new Error(buildImportErrorMessage('导入订单表失败', response, payload, text))
       }
 
@@ -3486,7 +3650,79 @@ export default function ProductSalesPage() {
             </div>
           )}
 
-          {ordersError && (
+          {orderIdentityFailure && (
+            <div className="mb-6 rounded-lg border border-amber-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-slate-900">订单 SKU 身份待处理</div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    正式导入已停止且未写入订单、销量或库存事实。处理 SKU 后请重新选择原文件执行 checkOnly。
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+                  <span>未解析 {orderIdentityFailure.unresolvedRows}</span>
+                  <span>歧义 {orderIdentityFailure.ambiguousRows}</span>
+                  <span>硬冲突 {orderIdentityFailure.hardIdentityConflictRows}</span>
+                </div>
+              </div>
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-left text-slate-500">
+                      <th className="px-3 py-2">未解析 SKU</th>
+                      <th className="px-3 py-2">TikTok Product ID</th>
+                      <th className="px-3 py-2">TikTok SKU ID</th>
+                      <th className="px-3 py-2">影响行数</th>
+                      <th className="px-3 py-2">原因</th>
+                      <th className="px-3 py-2 text-right">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orderIdentityFailure.identityFailureGroups.map((group) => (
+                      <tr key={group.key} className="border-b border-slate-100 align-top">
+                        <td className="px-3 py-2 font-medium text-slate-900">{group.inputSku || '—'}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-slate-700">{group.tiktokProductId || '—'}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-slate-700">{group.tiktokSkuId || '—'}</td>
+                        <td className="px-3 py-2 text-slate-700">{group.occurrenceCount}</td>
+                        <td className="px-3 py-2 text-slate-600">
+                          <div>{group.reason}</div>
+                          <div className="mt-1 text-xs text-slate-400">{group.status}</div>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {group.candidateEligible ? (
+                            <button
+                              type="button"
+                              onClick={() => void openOrderSkuCandidate(group)}
+                              disabled={orderSkuCandidateOpeningKey === group.key}
+                              className="whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                            >
+                              {orderSkuCandidateOpeningKey === group.key ? '准备中…' : '处理 SKU'}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-400">需先解决身份冲突</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {orderSkuCandidateMessage && (
+            <div className="mb-6 rounded-lg border border-emerald-200 bg-white px-4 py-3 text-sm text-emerald-700 shadow-sm">
+              {orderSkuCandidateMessage}
+            </div>
+          )}
+
+          {orderSkuCandidateError && !orderSkuCandidate && (
+            <div className="mb-6 rounded-lg border border-red-200 bg-white px-4 py-3 text-sm text-red-700 shadow-sm">
+              {orderSkuCandidateError}
+            </div>
+          )}
+
+          {ordersError && !orderIdentityFailure && (
             <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               {ordersError}
             </div>
@@ -4298,6 +4534,143 @@ export default function ProductSalesPage() {
                   </>
                 ) : null}
               </div>
+
+              {orderSkuCandidate && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+                  onClick={closeOrderSkuCandidateModal}
+                >
+                  <div
+                    className="w-full max-w-xl rounded-xl bg-white p-6 shadow-xl"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900">处理订单待处理 SKU</h3>
+                        <p className="mt-1 text-sm text-slate-600">只处理 Product identity；不会写订单、销量或库存事实。</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={closeOrderSkuCandidateModal}
+                        disabled={orderSkuCandidateSaving}
+                        className="text-sm text-slate-500 hover:text-slate-700 disabled:opacity-50"
+                      >
+                        关闭
+                      </button>
+                    </div>
+
+                    <div className="mt-4 grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm sm:grid-cols-2">
+                      <div><span className="text-slate-500">SKU：</span>{orderSkuCandidate.inputSku}</div>
+                      <div><span className="text-slate-500">影响：</span>{orderSkuCandidate.occurrenceCount} 行</div>
+                      <div className="break-all"><span className="text-slate-500">Product ID：</span>{orderSkuCandidate.tiktokProductId}</div>
+                      <div className="break-all"><span className="text-slate-500">SKU ID：</span>{orderSkuCandidate.tiktokSkuId}</div>
+                    </div>
+
+                    {orderSkuCandidate.detectionType === 'UNKNOWN_SKU' ? (
+                      <div className="mt-4 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setOrderSkuCandidateAction('CREATE')}
+                          className={`rounded-md border px-3 py-2 text-sm font-medium ${orderSkuCandidateAction === 'CREATE' ? 'border-pink-500 bg-pink-50 text-pink-700' : 'border-slate-300 text-slate-700'}`}
+                        >
+                          创建新商品
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setOrderSkuCandidateAction('MAP')}
+                          className={`rounded-md border px-3 py-2 text-sm font-medium ${orderSkuCandidateAction === 'MAP' ? 'border-pink-500 bg-pink-50 text-pink-700' : 'border-slate-300 text-slate-700'}`}
+                        >
+                          映射已有商品
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        <div className="font-medium">发现历史商品</div>
+                        <div className="mt-1">
+                          {orderSkuCandidate.inactiveProduct?.sku || '—'} · {orderSkuCandidate.inactiveProduct?.name || '—'}
+                        </div>
+                        <div className="mt-1 text-xs">
+                          businessStatus：{orderSkuCandidate.inactiveProduct?.businessStatus || '—'}；恢复只修改 isActive，不修改经营状态。
+                        </div>
+                      </div>
+                    )}
+
+                    {orderSkuCandidateAction === 'CREATE' && (
+                      <label className="mt-4 block text-sm text-slate-700">
+                        正式商品名
+                        <input
+                          value={orderSkuCandidateProductName}
+                          onChange={(event) => setOrderSkuCandidateProductName(event.target.value)}
+                          placeholder="人工确认正式商品名"
+                          className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+                        />
+                      </label>
+                    )}
+
+                    {orderSkuCandidateAction === 'MAP' && (
+                      <div className="mt-4 space-y-3">
+                        <label className="block text-sm text-slate-700">
+                          目标 Product
+                          <select
+                            value={orderSkuCandidateTargetProductId}
+                            onChange={(event) => setOrderSkuCandidateTargetProductId(event.target.value)}
+                            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
+                          >
+                            <option value="">请选择现有 Product</option>
+                            {[...products].sort((a, b) => a.sku.localeCompare(b.sku)).map((product) => (
+                              <option key={product.id} value={product.id}>{product.sku} · {product.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="flex items-start gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={orderSkuCandidateConfirmAlias}
+                            onChange={(event) => setOrderSkuCandidateConfirmAlias(event.target.checked)}
+                            className="mt-0.5"
+                          />
+                          <span>确认将 {orderSkuCandidate.inputSku} 永久保存为目标 Product 的 ProductSkuAlias。</span>
+                        </label>
+                      </div>
+                    )}
+
+                    {orderSkuCandidateError && (
+                      <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        {orderSkuCandidateError}
+                      </div>
+                    )}
+
+                    <div className="mt-6 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={closeOrderSkuCandidateModal}
+                        disabled={orderSkuCandidateSaving}
+                        className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void resolveCurrentOrderSkuCandidate()}
+                        disabled={
+                          orderSkuCandidateSaving
+                          || (orderSkuCandidateAction === 'CREATE' && !orderSkuCandidateProductName.trim())
+                          || (orderSkuCandidateAction === 'MAP' && (!orderSkuCandidateTargetProductId || !orderSkuCandidateConfirmAlias))
+                        }
+                        className="rounded-lg bg-pink-600 px-4 py-2 text-sm font-medium text-white hover:bg-pink-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {orderSkuCandidateSaving
+                          ? '处理中…'
+                          : orderSkuCandidateAction === 'REACTIVATE'
+                            ? '恢复原商品'
+                            : orderSkuCandidateAction === 'MAP'
+                              ? '确认映射'
+                              : '创建商品'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {stockBaselineOpen && (
                 <div

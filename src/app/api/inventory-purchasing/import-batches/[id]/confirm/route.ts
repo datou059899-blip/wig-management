@@ -5,126 +5,17 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { canManagePage, getSessionPermissionContext } from '@/lib/pagePermissions'
 import { buildEffectiveInventorySnapshotWhere } from '@/lib/productInventorySnapshots'
+import { prepareInventoryConfirmRows } from '@/lib/inventoryImportConfirm'
 import {
   INVENTORY_BATCH_STATUS,
-  MAX_IMPORT_STOCK_QTY,
-  jsonRows,
-  type InventoryPreviewMatchedRow,
-  type InventoryPreviewUnmatchedRow,
 } from '@/lib/inventoryPurchasing'
 
 const STOCK_CAPTURED_AT_FUTURE_TOLERANCE_MS = 5 * 60 * 1000
 const CONFIRM_TRANSACTION_MAX_WAIT_MS = 10_000
 const CONFIRM_TRANSACTION_TIMEOUT_MS = 30_000
 
-type ConfirmBatchInput = {
-  id: string
-  fileHash: string
-  fileName: string
-  stockCapturedAt: Date
-  matchedRows: Prisma.JsonValue
-  unmatchedRows: Prisma.JsonValue
-}
-
-function prepareConfirmRows(
-  batch: ConfirmBatchInput,
-  ignoreUnmatched: boolean,
-  canonicalSkuByProductId?: Map<string, string>,
-) {
-  const matchedRows = jsonRows<InventoryPreviewMatchedRow>(batch.matchedRows)
-  const unmatchedRows = jsonRows<InventoryPreviewUnmatchedRow>(batch.unmatchedRows)
-  const duplicateRows = unmatchedRows.filter((row) => row.kind === 'duplicate_conflict' || row.reason.includes('重复 SKU 冲突'))
-  if (duplicateRows.length > 0) {
-    return {
-      blocked: true as const,
-      error: '存在未人工确认合并的重复 SKU 冲突，请先在预览中确认合并或修正库存文件',
-      duplicateRows,
-    }
-  }
-
-  if (unmatchedRows.length > 0 && !ignoreUnmatched) {
-    return {
-      blocked: true as const,
-      error: '存在未匹配 SKU，请处理后再确认，或明确选择忽略未匹配 SKU',
-      unmatchedRows,
-    }
-  }
-
-  const rowsWithDatabaseCanonicalSku = matchedRows.map((row) => ({
-    ...row,
-    canonicalSku: canonicalSkuByProductId?.get(row.productId) || row.canonicalSku,
-  }))
-
-  const missingProducts = canonicalSkuByProductId
-    ? matchedRows.filter((row) => !canonicalSkuByProductId.get(row.productId))
-    : []
-  if (missingProducts.length > 0) {
-    return {
-      blocked: true as const,
-      error: '存在无法重新确认 Product.sku 的匹配行，禁止确认导入',
-      missingProducts: missingProducts.map((row) => ({
-        rowNumber: row.rowNumber,
-        canonicalSku: row.canonicalSku,
-        productId: row.productId,
-      })),
-    }
-  }
-
-  const matchedSkuCounts = new Map<string, number>()
-  rowsWithDatabaseCanonicalSku.forEach((row) => {
-    const key = row.canonicalSku.trim().toUpperCase()
-    matchedSkuCounts.set(key, (matchedSkuCounts.get(key) || 0) + 1)
-  })
-  const duplicateMatchedSkus = Array.from(matchedSkuCounts.entries()).filter(([, count]) => count > 1)
-  if (duplicateMatchedSkus.length > 0) {
-    return {
-      blocked: true as const,
-      error: '预览中仍存在重复 canonical SKU，禁止确认导入',
-      duplicateMatchedSkus: duplicateMatchedSkus.map(([sku, count]) => ({ sku, count })),
-    }
-  }
-
-  const invalidRows = rowsWithDatabaseCanonicalSku.filter((row) => (
-    !row.productId ||
-    !row.canonicalSku ||
-    !Number.isSafeInteger(row.totalQty) ||
-    row.totalQty < 0 ||
-    row.totalQty > MAX_IMPORT_STOCK_QTY
-  ))
-  if (invalidRows.length > 0) {
-    return {
-      blocked: true as const,
-      error: '存在库存数量或 SKU 信息异常的匹配行，禁止确认导入',
-      invalidRows: invalidRows.map((row) => ({
-        rowNumber: row.rowNumber,
-        canonicalSku: row.canonicalSku,
-        totalQty: row.totalQty,
-        productId: row.productId,
-      })),
-    }
-  }
-
-  const matchedSkus = Array.from(new Set(rowsWithDatabaseCanonicalSku.map((row) => row.canonicalSku).filter(Boolean)))
-  const snapshotCreateData = rowsWithDatabaseCanonicalSku.map((row) => ({
-    sku: row.canonicalSku,
-    date: batch.stockCapturedAt,
-    availableQty: 0,
-    lockedQty: 0,
-    totalQty: row.totalQty,
-    sourceFileName: batch.fileName,
-    importBatchId: batch.id,
-  }))
-
-  return {
-    blocked: false as const,
-    matchedRows: rowsWithDatabaseCanonicalSku,
-    matchedSkus,
-    snapshotCreateData,
-  }
-}
-
 export async function POST(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: { id: string } },
 ) {
   const session = await getServerSession(authOptions)
@@ -134,11 +25,15 @@ export async function POST(
   }
 
   const { id } = params
-  const body = await request.json().catch(() => ({}))
-  const ignoreUnmatched = Boolean(body?.ignoreUnmatched)
-
   try {
-    const batch = await prisma.inventoryImportBatch.findUnique({ where: { id } })
+    const batch = await prisma.inventoryImportBatch.findUnique({
+      where: { id },
+      include: {
+        skuCandidates: {
+          select: { rowNumber: true, normalizedSku: true, status: true, resolvedProductId: true, resolvedCanonicalSku: true },
+        },
+      },
+    })
     if (!batch) {
       throw new Error('导入批次不存在')
     }
@@ -146,7 +41,7 @@ export async function POST(
       throw new Error('只有 PREVIEW 状态的批次可以确认导入')
     }
 
-    const precheck = prepareConfirmRows(batch, ignoreUnmatched)
+    const precheck = prepareInventoryConfirmRows(batch)
     if (precheck.blocked) {
       return NextResponse.json(precheck, { status: 409 })
     }
@@ -166,6 +61,9 @@ export async function POST(
           stockCapturedAt: true,
           matchedRows: true,
           unmatchedRows: true,
+          skuCandidates: {
+            select: { rowNumber: true, normalizedSku: true, status: true, resolvedProductId: true, resolvedCanonicalSku: true },
+          },
         },
       })
       if (!lockedBatch) {
@@ -178,7 +76,7 @@ export async function POST(
         throw new Error('导入批次状态已变化，请重新打开预览后再确认')
       }
 
-      const finalRows = prepareConfirmRows(lockedBatch, ignoreUnmatched)
+      const finalRows = prepareInventoryConfirmRows(lockedBatch)
       if (finalRows.blocked) {
         return finalRows
       }
@@ -199,7 +97,7 @@ export async function POST(
       const canonicalSkuByProductId = new Map(
         products.flatMap((product) => (product.sku ? [[product.id, product.sku] as const] : [])),
       )
-      const finalRowsWithDatabaseSku = prepareConfirmRows(lockedBatch, ignoreUnmatched, canonicalSkuByProductId)
+      const finalRowsWithDatabaseSku = prepareInventoryConfirmRows(lockedBatch, canonicalSkuByProductId)
       if (finalRowsWithDatabaseSku.blocked) {
         return finalRowsWithDatabaseSku
       }

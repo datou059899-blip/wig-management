@@ -182,7 +182,7 @@ type MatchedRow = {
   previousTotalQty: number | null
   diffQty: number | null
   sourceRows?: SourceRow[]
-  resolution?: 'duplicate_merge_approved'
+  resolution?: 'duplicate_merge_approved' | 'sku_candidate_created' | 'sku_candidate_mapped' | 'sku_candidate_reactivated' | 'sku_candidate_refreshed'
 }
 
 type UnmatchedRow = {
@@ -198,6 +198,49 @@ type UnmatchedRow = {
   previousTotalQty?: number | null
   diffQty?: number | null
 }
+
+type InventorySkuCandidateStatus = 'PENDING' | 'CREATED' | 'MAPPED' | 'IGNORED'
+type InventorySkuCandidateDetection = 'UNKNOWN_SKU' | 'EXACT_INACTIVE_CANONICAL_FOUND' | 'EXACT_INACTIVE_ALIAS_FOUND'
+
+type InventorySkuCandidate = {
+  id: string
+  importBatchId: string
+  rowNumber: number
+  inputSku: string
+  normalizedSku: string
+  totalQty: number
+  productNameSnapshot: string | null
+  sourceFileName: string
+  status: InventorySkuCandidateStatus
+  detectionType: InventorySkuCandidateDetection
+  inactiveProductId: string | null
+  resolvedProductId: string | null
+  resolvedCanonicalSku: string | null
+  resolutionType: string | null
+  note: string | null
+  resolvedBy: string | null
+  resolvedAt: string | null
+  otherPreviewBatchCount: number
+  inactiveProduct: {
+    id: string
+    name: string
+    sku: string | null
+    businessStatus: string
+    isActive: boolean
+    currentInventory: number
+  } | null
+  resolvedProduct: { id: string; name: string; sku: string | null; isActive: boolean } | null
+}
+
+type InventorySkuCandidateSummary = {
+  total: number
+  pending: number
+  created: number
+  mapped: number
+  ignored: number
+}
+
+type CandidateAction = 'CREATE' | 'MAP' | 'REACTIVATE' | 'IGNORE'
 
 function formatDateTime(value: string | null) {
   if (!value) return '—'
@@ -430,7 +473,12 @@ export default function InventoryPurchasingPage() {
   const [previewBatch, setPreviewBatch] = useState<ImportBatch | null>(null)
   const [matchedRows, setMatchedRows] = useState<MatchedRow[]>([])
   const [unmatchedRows, setUnmatchedRows] = useState<UnmatchedRow[]>([])
-  const [ignoreUnmatched, setIgnoreUnmatched] = useState(false)
+  const [skuCandidates, setSkuCandidates] = useState<InventorySkuCandidate[]>([])
+  const [candidateSummary, setCandidateSummary] = useState<InventorySkuCandidateSummary>({ total: 0, pending: 0, created: 0, mapped: 0, ignored: 0 })
+  const [candidateAction, setCandidateAction] = useState<{ candidate: InventorySkuCandidate; action: CandidateAction } | null>(null)
+  const [candidateProductName, setCandidateProductName] = useState('')
+  const [candidateTargetProductId, setCandidateTargetProductId] = useState('')
+  const [candidateNote, setCandidateNote] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [stockCapturedAt, setStockCapturedAt] = useState(getDefaultCapturedAt)
   const [note, setNote] = useState('')
@@ -548,6 +596,13 @@ export default function InventoryPurchasingPage() {
   const regularUnmatchedRows = useMemo(() => {
     return unmatchedRows.filter((row) => row.kind !== 'duplicate_conflict' && !row.reason.includes('重复 SKU 冲突'))
   }, [unmatchedRows])
+
+  const blockingUnmatchedRows = useMemo(() => {
+    return regularUnmatchedRows.filter((row) => {
+      const candidate = skuCandidates.find((item) => item.rowNumber === row.rowNumber)
+      return candidate?.status !== 'IGNORED'
+    })
+  }, [regularUnmatchedRows, skuCandidates])
 
   const unresolvedDuplicateCount = duplicateGroups.length
   const previewTotalStockQty = useMemo(() => {
@@ -741,6 +796,28 @@ export default function InventoryPurchasingPage() {
     }
   }
 
+  function applyInventoryPreviewData(data: {
+    batch: ImportBatch
+    matchedRows?: MatchedRow[]
+    unmatchedRows?: UnmatchedRow[]
+    candidates?: InventorySkuCandidate[]
+    candidateSummary?: InventorySkuCandidateSummary
+  }) {
+    setPreviewBatch(data.batch)
+    setMatchedRows(data.matchedRows || [])
+    setUnmatchedRows(data.unmatchedRows || [])
+    setSkuCandidates(data.candidates || [])
+    setCandidateSummary(data.candidateSummary || { total: 0, pending: 0, created: 0, mapped: 0, ignored: 0 })
+  }
+
+  async function reloadPreviewBatch(batchId: string) {
+    const response = await fetch(`/api/inventory-purchasing/import-batches/${batchId}`)
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || '读取批次详情失败')
+    applyInventoryPreviewData(data)
+    return data
+  }
+
   async function handlePreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
@@ -766,10 +843,7 @@ export default function InventoryPurchasingPage() {
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || '生成预览失败')
-      setPreviewBatch(data.batch)
-      setMatchedRows(data.matchedRows || [])
-      setUnmatchedRows(data.unmatchedRows || [])
-      setIgnoreUnmatched(false)
+      applyInventoryPreviewData(data)
       setMessage(data.duplicateConfirmedBatch ? '预览已生成，但相同文件已确认导入过，不能再次确认。' : '预览已生成，请核对后确认导入。')
       await loadBatches()
     } catch (err) {
@@ -789,12 +863,12 @@ export default function InventoryPurchasingPage() {
       setError('存在未人工确认合并的重复 SKU，请先处理 duplicate group。')
       return
     }
-    if (regularUnmatchedRows.length > 0 && !ignoreUnmatched) {
-      setError('存在未匹配 SKU。请勾选“确认忽略未匹配 SKU”后再导入。')
+    if (candidateSummary.pending > 0) {
+      setError('存在待处理的新 SKU，请逐条创建、映射、恢复或忽略后再确认。')
       return
     }
-    if (regularUnmatchedRows.length > 0) {
-      setError('存在未匹配 SKU，不能确认导入。')
+    if (blockingUnmatchedRows.length > 0) {
+      setError('仍存在未解决的库存预览异常，不能确认导入。')
       return
     }
 
@@ -804,8 +878,6 @@ export default function InventoryPurchasingPage() {
     try {
       const response = await fetch(`/api/inventory-purchasing/import-batches/${previewBatch.id}/confirm`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ignoreUnmatched: false }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || '确认导入失败')
@@ -814,6 +886,8 @@ export default function InventoryPurchasingPage() {
       setPreviewBatch(null)
       setMatchedRows([])
       setUnmatchedRows([])
+      setSkuCandidates([])
+      setCandidateSummary({ total: 0, pending: 0, created: 0, mapped: 0, ignored: 0 })
       await refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : '确认导入失败')
@@ -885,15 +959,95 @@ export default function InventoryPurchasingPage() {
     setError('')
     setMessage('')
     try {
-      const response = await fetch(`/api/inventory-purchasing/import-batches/${batchId}`)
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || '读取批次详情失败')
-      setPreviewBatch(data.batch)
-      setMatchedRows(data.matchedRows || [])
-      setUnmatchedRows(data.unmatchedRows || [])
+      await reloadPreviewBatch(batchId)
       setActiveTab('import')
     } catch (err) {
       setError(err instanceof Error ? err.message : '读取批次详情失败')
+    }
+  }
+
+  function openCandidateAction(candidate: InventorySkuCandidate, action: CandidateAction) {
+    setCandidateAction({ candidate, action })
+    setCandidateProductName(candidate.productNameSnapshot || '')
+    setCandidateTargetProductId('')
+    setCandidateNote('')
+  }
+
+  async function handleResolveCandidate() {
+    if (!previewBatch || !candidateAction) return
+    if (!canManageInventory) {
+      setError('仅管理员/老板可处理新 SKU 候选。')
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      const response = await fetch(
+        `/api/inventory-purchasing/import-batches/${previewBatch.id}/candidates/${candidateAction.candidate.id}/resolve`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: candidateAction.action,
+            productName: candidateProductName,
+            targetProductId: candidateTargetProductId,
+            confirmAlias: candidateAction.action === 'MAP',
+            note: candidateNote,
+          }),
+        },
+      )
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || '处理新 SKU 候选失败')
+      const actionLabel = candidateAction.action === 'CREATE'
+        ? '已创建正式商品'
+        : candidateAction.action === 'MAP'
+          ? '已映射到现有商品'
+          : candidateAction.action === 'REACTIVATE'
+            ? '已恢复历史商品'
+            : '已忽略该 SKU'
+      setCandidateAction(null)
+      await reloadPreviewBatch(previewBatch.id)
+      await loadBatches()
+      await loadProductBusiness()
+      setMessage(actionLabel)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '处理新 SKU 候选失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleRefreshCandidateMatches() {
+    if (!previewBatch) return
+    setLoading(true)
+    setError('')
+    try {
+      const previewResponse = await fetch(`/api/inventory-purchasing/import-batches/${previewBatch.id}/candidates/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apply: false }),
+      })
+      const previewData = await previewResponse.json()
+      if (!previewResponse.ok) throw new Error(previewData.error || '重新检查失败')
+      if (!previewData.matches?.length) {
+        setMessage('当前没有可通过 canonical SKU 或 Alias 精确重新匹配的候选。')
+        return
+      }
+      if (!window.confirm(`发现 ${previewData.matches.length} 条精确匹配，确认只更新当前 PREVIEW 批次？`)) return
+      const applyResponse = await fetch(`/api/inventory-purchasing/import-batches/${previewBatch.id}/candidates/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apply: true }),
+      })
+      const applyData = await applyResponse.json()
+      if (!applyResponse.ok) throw new Error(applyData.error || '应用精确匹配失败')
+      await reloadPreviewBatch(previewBatch.id)
+      await loadBatches()
+      setMessage(`已精确重新匹配 ${applyData.appliedCandidateIds?.length || 0} 条候选。`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '重新检查失败')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -1688,14 +1842,14 @@ export default function InventoryPurchasingPage() {
                     <div>
                       <h2 className="text-lg font-semibold text-slate-900">导入预览</h2>
                       <p className="mt-1 text-sm text-slate-500">
-                        {previewBatch.fileName}｜可确认 SKU {matchedRows.length} 个｜未匹配 {regularUnmatchedRows.length} 行｜未解决重复 {unresolvedDuplicateCount} 组
+                        {previewBatch.fileName}｜匹配 {matchedRows.length}｜原始未匹配 {regularUnmatchedRows.length}｜待处理新 SKU {candidateSummary.pending}｜已忽略 {candidateSummary.ignored}
                       </p>
                     </div>
                     {previewBatch.status === 'PREVIEW' && (
                       <button
                         type="button"
                         onClick={() => setShowConfirmImportModal(true)}
-                        disabled={!canManageInventory || loading}
+                        disabled={!canManageInventory || loading || candidateSummary.pending > 0 || blockingUnmatchedRows.length > 0 || unresolvedDuplicateCount > 0}
                         className="rounded-lg bg-pink-600 px-4 py-2 text-sm font-semibold text-white hover:bg-pink-700 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {canManageInventory ? '确认导入快照' : '仅管理员/老板可确认'}
@@ -1709,13 +1863,73 @@ export default function InventoryPurchasingPage() {
                     </div>
                   )}
 
-                  {regularUnmatchedRows.length > 0 && (
+                  {blockingUnmatchedRows.length > 0 && (
                     <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                      <p className="text-sm font-semibold text-amber-800">存在未匹配 SKU，默认阻止确认导入。</p>
-                      <label className="mt-3 flex items-center gap-2 text-sm text-amber-900">
-                        <input type="checkbox" checked={ignoreUnmatched} onChange={(event) => setIgnoreUnmatched(event.target.checked)} />
-                        我确认忽略未匹配 SKU，本批次只导入已匹配行
-                      </label>
+                      <p className="text-sm font-semibold text-amber-800">存在未解决的库存预览异常，必须逐条处理后才能确认导入。</p>
+                    </div>
+                  )}
+
+                  {skuCandidates.length > 0 && (
+                    <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
+                      <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-900">新 SKU 待处理</h3>
+                          <p className="mt-1 text-xs text-slate-500">
+                            待处理 {candidateSummary.pending}｜已创建 {candidateSummary.created}｜已映射 {candidateSummary.mapped}｜已忽略 {candidateSummary.ignored}
+                          </p>
+                        </div>
+                        {previewBatch.status === 'PREVIEW' && (
+                          <button type="button" onClick={handleRefreshCandidateMatches} disabled={!canManageInventory || loading || candidateSummary.pending === 0} className={secondaryActionClassName}>
+                            重新检查精确匹配
+                          </button>
+                        )}
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {skuCandidates.map((candidate) => {
+                          const inactiveIdentity = candidate.detectionType !== 'UNKNOWN_SKU'
+                          return (
+                            <div key={candidate.id} className="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(0,1.2fr)_120px_minmax(0,1fr)_auto] lg:items-center">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-semibold text-slate-900">{candidate.inputSku}</span>
+                                  <StatusBadge tone={candidate.status === 'PENDING' ? 'warning' : candidate.status === 'IGNORED' ? 'neutral' : 'success'}>{candidate.status}</StatusBadge>
+                                  {inactiveIdentity && <StatusBadge tone="warning">发现历史商品</StatusBadge>}
+                                </div>
+                                <p className="mt-1 truncate text-sm text-slate-600">{candidate.productNameSnapshot || '未提供商品名'} · 第 {candidate.rowNumber} 行 · {candidate.sourceFileName}</p>
+                                {candidate.otherPreviewBatchCount > 0 && <p className="mt-1 text-xs text-amber-700">另有 {candidate.otherPreviewBatchCount} 个 PREVIEW 批次包含该 SKU</p>}
+                              </div>
+                              <div className="text-sm tabular-nums text-slate-700">库存 {candidate.totalQty}</div>
+                              <div className="text-sm text-slate-600">
+                                {candidate.inactiveProduct ? (
+                                  <>
+                                    <p className="font-medium text-slate-900">{candidate.inactiveProduct.name}</p>
+                                    <p>{candidate.inactiveProduct.sku || '无 canonical SKU'} · {candidate.inactiveProduct.businessStatus}</p>
+                                    <p>当前正式库存 {candidate.inactiveProduct.currentInventory}</p>
+                                  </>
+                                ) : candidate.resolvedProduct ? (
+                                  <p>已关联 {candidate.resolvedProduct.sku || '—'} · {candidate.resolvedProduct.name}</p>
+                                ) : (
+                                  <p>{candidate.detectionType}</p>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap justify-end gap-2">
+                                {candidate.status === 'PENDING' && previewBatch.status === 'PREVIEW' && !inactiveIdentity && (
+                                  <>
+                                    <button type="button" onClick={() => openCandidateAction(candidate, 'CREATE')} disabled={!canManageInventory || loading} className={primaryActionClassName}>创建新商品</button>
+                                    <button type="button" onClick={() => openCandidateAction(candidate, 'MAP')} disabled={!canManageInventory || loading} className={secondaryActionClassName}>映射已有商品</button>
+                                  </>
+                                )}
+                                {candidate.status === 'PENDING' && previewBatch.status === 'PREVIEW' && inactiveIdentity && (
+                                  <button type="button" onClick={() => openCandidateAction(candidate, 'REACTIVATE')} disabled={!canManageInventory || loading} className={primaryActionClassName}>恢复原商品</button>
+                                )}
+                                {candidate.status === 'PENDING' && previewBatch.status === 'PREVIEW' && (
+                                  <button type="button" onClick={() => openCandidateAction(candidate, 'IGNORE')} disabled={!canManageInventory || loading} className={ghostActionClassName}>忽略</button>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
                     </div>
                   )}
 
@@ -1889,9 +2103,19 @@ export default function InventoryPurchasingPage() {
                     </div>
                     <div className="flex justify-between gap-4">
                       <span className="text-slate-500">未匹配数量</span>
-                      <span className={regularUnmatchedRows.length > 0 ? 'font-semibold text-amber-700' : 'font-semibold text-slate-900'}>
-                        {regularUnmatchedRows.length.toLocaleString('zh-CN')}
+                      <span className={blockingUnmatchedRows.length > 0 ? 'font-semibold text-amber-700' : 'font-semibold text-slate-900'}>
+                        {blockingUnmatchedRows.length.toLocaleString('zh-CN')}
                       </span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-500">待处理新 SKU</span>
+                      <span className={candidateSummary.pending > 0 ? 'font-semibold text-amber-700' : 'font-semibold text-slate-900'}>
+                        {candidateSummary.pending.toLocaleString('zh-CN')}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-slate-500">已人工忽略</span>
+                      <span className="font-semibold text-slate-900">{candidateSummary.ignored.toLocaleString('zh-CN')}</span>
                     </div>
                     <div className="flex justify-between gap-4">
                       <span className="text-slate-500">未解决重复数量</span>
@@ -1907,9 +2131,9 @@ export default function InventoryPurchasingPage() {
                     <p className="mt-1">导入后可通过批次回滚。</p>
                   </div>
 
-                  {(regularUnmatchedRows.length > 0 || unresolvedDuplicateCount > 0) && (
+                  {(blockingUnmatchedRows.length > 0 || candidateSummary.pending > 0 || unresolvedDuplicateCount > 0) && (
                     <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                      仅当未匹配数量 = 0 且未解决重复数量 = 0 时，才可以确认导入。
+                      仅当待处理新 SKU、未解决异常和重复冲突都为 0 时，才可以确认导入。
                     </p>
                   )}
 
@@ -1925,10 +2149,81 @@ export default function InventoryPurchasingPage() {
                     <button
                       type="button"
                       onClick={handleConfirm}
-                      disabled={loading || regularUnmatchedRows.length > 0 || unresolvedDuplicateCount > 0}
+                      disabled={loading || candidateSummary.pending > 0 || blockingUnmatchedRows.length > 0 || unresolvedDuplicateCount > 0}
                       className="rounded-lg bg-pink-600 px-4 py-2 text-sm font-semibold text-white hover:bg-pink-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {loading ? '导入中...' : '确认导入'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {candidateAction && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
+                <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    {candidateAction.action === 'CREATE' ? '创建正式商品' : candidateAction.action === 'MAP' ? '映射已有商品' : candidateAction.action === 'REACTIVATE' ? '恢复历史商品' : '忽略新 SKU'}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">SKU {candidateAction.candidate.inputSku} · 库存 {candidateAction.candidate.totalQty}</p>
+
+                  {candidateAction.action === 'CREATE' && (
+                    <div className="mt-5 space-y-4">
+                      <label className="block text-sm font-medium text-slate-700">
+                        正式 SKU
+                        <input value={candidateAction.candidate.inputSku} readOnly className="mt-2 block w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
+                      </label>
+                      <label className="block text-sm font-medium text-slate-700">
+                        正式商品名
+                        <input value={candidateProductName} onChange={(event) => setCandidateProductName(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                      </label>
+                      <p className="text-xs text-slate-500">商品将以 ACTIVE、isActive=true、legacy stock=0 创建；本操作不会生成库存快照。</p>
+                    </div>
+                  )}
+
+                  {candidateAction.action === 'MAP' && (
+                    <div className="mt-5 space-y-4">
+                      <label className="block text-sm font-medium text-slate-700">
+                        选择启用中的 Product
+                        <select value={candidateTargetProductId} onChange={(event) => setCandidateTargetProductId(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                          <option value="">请选择</option>
+                          {businessItems.map((item) => <option key={item.productId} value={item.productId}>{item.sku} · {item.name}</option>)}
+                        </select>
+                      </label>
+                      <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                        如果该 SKU 尚不是目标商品的 canonical SKU 或 Alias，确认后会永久创建 ProductSkuAlias；不会只做本批次临时映射。
+                      </p>
+                    </div>
+                  )}
+
+                  {candidateAction.action === 'REACTIVATE' && candidateAction.candidate.inactiveProduct && (
+                    <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                      <p className="font-semibold">{candidateAction.candidate.inactiveProduct.name} · {candidateAction.candidate.inactiveProduct.sku || '无 canonical SKU'}</p>
+                      <p className="mt-1">当前 businessStatus：{candidateAction.candidate.inactiveProduct.businessStatus}</p>
+                      <p className="mt-1">当前正式库存：{candidateAction.candidate.inactiveProduct.currentInventory}</p>
+                      <p className="mt-2">只恢复 Product.isActive；不会修改 businessStatus，也不会创建库存快照。</p>
+                    </div>
+                  )}
+
+                  {candidateAction.action === 'IGNORE' && (
+                    <div className="mt-5 space-y-3">
+                      <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">忽略后，本批库存不会包含该 SKU 的数量。</p>
+                      <label className="block text-sm font-medium text-slate-700">
+                        忽略原因
+                        <textarea value={candidateNote} onChange={(event) => setCandidateNote(event.target.value)} rows={3} className="mt-2 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                      </label>
+                    </div>
+                  )}
+
+                  <div className="mt-6 flex justify-end gap-2">
+                    <button type="button" onClick={() => setCandidateAction(null)} disabled={loading} className={secondaryActionClassName}>取消</button>
+                    <button
+                      type="button"
+                      onClick={handleResolveCandidate}
+                      disabled={loading || (candidateAction.action === 'CREATE' && !candidateProductName.trim()) || (candidateAction.action === 'MAP' && !candidateTargetProductId) || (candidateAction.action === 'IGNORE' && !candidateNote.trim())}
+                      className={primaryActionClassName}
+                    >
+                      {loading ? '处理中...' : candidateAction.action === 'IGNORE' ? '确认忽略' : '确认处理'}
                     </button>
                   </div>
                 </div>

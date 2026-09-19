@@ -11,6 +11,7 @@ import {
   type InventoryPreviewSourceRow,
   type InventoryPreviewUnmatchedRow,
 } from '@/lib/inventoryPurchasing'
+import { getInventorySkuCandidateViewData } from '@/lib/inventorySkuCandidates'
 
 export async function GET(
   _request: NextRequest,
@@ -31,6 +32,8 @@ export async function GET(
     return NextResponse.json({ error: '导入批次不存在' }, { status: 404 })
   }
 
+  const candidateData = await getInventorySkuCandidateViewData(batch.id)
+
   return NextResponse.json({
     batch: {
       ...batch,
@@ -43,6 +46,7 @@ export async function GET(
     },
     matchedRows: jsonRows<InventoryPreviewMatchedRow>(batch.matchedRows),
     unmatchedRows: jsonRows<InventoryPreviewUnmatchedRow>(batch.unmatchedRows),
+    ...candidateData,
   })
 }
 

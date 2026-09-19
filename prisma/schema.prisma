@@ -82,6 +82,10 @@ model Product {
   aliases                  ProductSkuAlias[]
   externalIdentifiers      ProductExternalIdentifier[]
   listingEvents            ProductListingEvent[]
+  inactiveInventorySkuCandidates InventorySkuCandidate[] @relation("InactiveInventorySkuCandidateProduct")
+  resolvedInventorySkuCandidates InventorySkuCandidate[] @relation("ResolvedInventorySkuCandidateProduct")
+  inactiveOrderSkuCandidates     OrderSkuCandidate[]     @relation("InactiveOrderSkuCandidateProduct")
+  resolvedOrderSkuCandidates     OrderSkuCandidate[]     @relation("ResolvedOrderSkuCandidateProduct")
   resolvedOrderItems       ProductOrderItem[] @relation("ResolvedProductOrderItems")
   defaultSupplier          Supplier?   @relation(fields: [defaultSupplierId], references: [id], onDelete: SetNull)
   postedAt                 DateTime?
@@ -288,10 +292,73 @@ model InventoryImportBatch {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   snapshots       ProductInventorySnapshot[]
+  skuCandidates   InventorySkuCandidate[]
 
   @@index([fileHash])
   @@index([status])
   @@index([stockCapturedAt])
+}
+
+model InventorySkuCandidate {
+  id                   String   @id @default(cuid())
+  importBatchId        String
+  rowNumber            Int
+  inputSku             String
+  normalizedSku        String
+  totalQty             Int
+  productNameSnapshot  String?
+  sourceFileName       String
+  status               String   @default("PENDING")
+  detectionType        String   @default("UNKNOWN_SKU")
+  inactiveProductId    String?
+  resolvedProductId    String?
+  resolvedCanonicalSku String?
+  resolutionType       String?
+  note                 String?
+  resolvedBy           String?
+  resolvedAt           DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  importBatch     InventoryImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
+  inactiveProduct Product?             @relation("InactiveInventorySkuCandidateProduct", fields: [inactiveProductId], references: [id], onDelete: Restrict)
+  resolvedProduct Product?             @relation("ResolvedInventorySkuCandidateProduct", fields: [resolvedProductId], references: [id], onDelete: Restrict)
+
+  @@unique([importBatchId, rowNumber])
+  @@index([normalizedSku])
+  @@index([status])
+  @@index([importBatchId])
+}
+
+model OrderSkuCandidate {
+  id                   String   @id @default(cuid())
+  platform             String   @default("TIKTOK")
+  shopKey              String
+  inputSku             String
+  normalizedSku        String
+  tiktokProductId      String
+  tiktokSkuId          String
+  sourceFileName       String
+  occurrenceCount      Int
+  evidence             Json     @default("[]")
+  status               String   @default("PENDING")
+  detectionType        String   @default("UNKNOWN_SKU")
+  inactiveProductId    String?
+  resolvedProductId    String?
+  resolvedCanonicalSku String?
+  resolutionType       String?
+  note                 String?
+  resolvedBy           String?
+  resolvedAt           DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  inactiveProduct Product? @relation("InactiveOrderSkuCandidateProduct", fields: [inactiveProductId], references: [id], onDelete: Restrict)
+  resolvedProduct Product? @relation("ResolvedOrderSkuCandidateProduct", fields: [resolvedProductId], references: [id], onDelete: Restrict)
+
+  @@unique([platform, shopKey, normalizedSku, tiktokProductId, tiktokSkuId])
+  @@index([shopKey, normalizedSku])
+  @@index([status])
 }
 
 model Supplier {

@@ -7,6 +7,7 @@ import { authOptions } from '@/lib/auth'
 import { buildImportRowRecords, parseImportFile } from '@/lib/import-file-parser'
 import { canManagePage, getSessionPermissionContext } from '@/lib/pagePermissions'
 import { buildOrderLineIdentityResolver, findOrderFileDuplicates, ORDER_LINE_CLASSIFICATION, ORDER_PLATFORM, OrderLineClassification, parseOrderCalendarDate, parseOrderMerchandiseAmount } from '@/lib/order-data-closure'
+import { groupOrderIdentityFailures } from '@/lib/orderSkuCandidates'
 import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
@@ -924,6 +925,7 @@ export async function POST(request: NextRequest) {
           id: true,
           sku: true,
           name: true,
+          isActive: true,
         },
       }),
       prisma.productSkuAlias.findMany({
@@ -932,6 +934,7 @@ export async function POST(request: NextRequest) {
             select: {
               id: true,
               name: true,
+              isActive: true,
             },
           },
         },
@@ -946,9 +949,11 @@ export async function POST(request: NextRequest) {
       }),
     ])
 
+    const activeProducts = products.filter((product) => product.isActive)
+    const activeAliases = aliases.filter((alias) => alias.product.isActive)
     const identityResolver = buildOrderLineIdentityResolver({
-      products,
-      aliases: aliases.map(alias => ({ productId: alias.productId, aliasSku: alias.aliasSku })),
+      products: activeProducts,
+      aliases: activeAliases.map(alias => ({ productId: alias.productId, aliasSku: alias.aliasSku })),
       externalIdentifiers,
       classificationRules,
       platform: ORDER_PLATFORM,
@@ -992,6 +997,12 @@ export async function POST(request: NextRequest) {
     const hardIdentityConflictRows = identityFailures.filter(item => item.status === 'HARD_IDENTITY_CONFLICT').length
     const amountConstraintFailedRows = identityFailures.filter(item => item.status === 'AMOUNT_CONSTRAINT_FAILED').length
     if (identityFailures.length > 0) {
+      const identityFailureGroups = groupOrderIdentityFailures({
+        failures: identityFailures,
+        products,
+        aliases: aliases.map((alias) => ({ productId: alias.productId, aliasSku: alias.aliasSku })),
+        externalIdentifiers,
+      })
       return NextResponse.json({
         success: false,
         mode,
@@ -1003,6 +1014,9 @@ export async function POST(request: NextRequest) {
         hardIdentityConflictRows,
         amountConstraintFailedRows,
         identityFailures: identityFailures.slice(0, 100),
+        identityFailureGroups,
+        unresolvedCandidateSuggestions: identityFailureGroups.filter((group) => group.candidateEligible),
+        fileName: sourceFileName,
       }, { status: 422 })
     }
 
